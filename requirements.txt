@@ -4,3 +4,7 @@ requests
 phonenumbers
 pycountry
 beautifulsoup4
+python-telegram-bot
+yt-dlp
+pycountry
+beautifulsoup4
