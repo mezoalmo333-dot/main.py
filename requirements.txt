@@ -1,5 +1,5 @@
 cloudscraper
+pyTelegramBotAPI
 requests
 phonenumbers
 beautifulsoup4
-#I updated 
