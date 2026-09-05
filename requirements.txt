@@ -1,4 +1,0 @@
-cloudscraper
-requests
-phonenumbers
-beautifulsoup4
