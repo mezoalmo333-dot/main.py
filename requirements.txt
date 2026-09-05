@@ -2,4 +2,5 @@ cloudscraper
 pyTelegramBotAPI
 requests
 phonenumbers
+pycountry
 beautifulsoup4
