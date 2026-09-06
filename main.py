@@ -6044,6 +6044,7 @@ def main():
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("referrals", referrals_command))
     app.add_handler(CommandHandler("top", top_command))
+    app.add_handler(CommandHandler("emoji", premium_emoji_command))
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, handle_url))
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.PHOTO | filters.VIDEO), handle_url))
@@ -6054,6 +6055,341 @@ def main():
     print("======================================")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
+
+
+# ============================================================
+# PREMIUM EMOJI PRO PATCH V4
+# ============================================================
+# هذا القسم يضيف: التقاط Premium Emoji من الرسالة نفسها بدون ID،
+# تحويل الإيموجي العادي في الأزرار إلى أيقونات Premium، ومركز إدارة
+# للإيموجيات مع توزيع تلقائي على الأزرار. لا يحذف أي وظيفة سابقة.
+
+_ORIGINAL_TELEGRAM_INLINE_KEYBOARD_BUTTON = InlineKeyboardButton
+
+_PREMIUM_BUTTON_EMOJI_FALLBACKS = [
+    str(x) for x in (AVAILABLE_CUSTOM_EMOJI_IDS or BOT_CUSTOM_EMOJI_IDS or CUSTOM_EMOJI_IDS)
+    if str(x).isdigit()
+]
+if not _PREMIUM_BUTTON_EMOJI_FALLBACKS:
+    _PREMIUM_BUTTON_EMOJI_FALLBACKS = [
+        "5890978075201509010", "5891033729387731017",
+        "5890946721940248671", "5888585967396198556"
+    ]
+
+# Emoji ranges used only for button labels. Text messages keep their normal
+# Unicode characters unless they are explicitly rendered as Premium Emoji.
+_PLAIN_BUTTON_EMOJI_RE = re.compile(
+    r"[\U0001F1E6-\U0001F1FF\U0001F300-\U0001FAFF\u2600-\u27BF\u2300-\u23FF]",
+    re.UNICODE
+)
+
+def _premium_library_ids():
+    settings = db.setdefault("settings", {})
+    library = settings.setdefault("custom_emoji_library", [])
+    if not isinstance(library, list):
+        library = []
+        settings["custom_emoji_library"] = library
+    result = []
+    for eid in list(AVAILABLE_CUSTOM_EMOJI_IDS) + list(BOT_CUSTOM_EMOJI_IDS) + list(library):
+        eid = str(eid).strip()
+        if eid.isdigit() and eid not in result:
+            result.append(eid)
+    for eid in result:
+        if eid not in library:
+            library.append(eid)
+    return result
+
+def _remember_custom_emoji_ids(ids):
+    settings = db.setdefault("settings", {})
+    library = settings.setdefault("custom_emoji_library", [])
+    if not isinstance(library, list):
+        library = []
+        settings["custom_emoji_library"] = library
+    changed = False
+    for eid in ids or []:
+        eid = str(eid).strip()
+        if eid.isdigit() and eid not in library:
+            library.append(eid)
+            changed = True
+    if changed:
+        try:
+            save_db(db)
+        except Exception:
+            logger.exception("Could not save custom emoji library")
+    return changed
+
+def _utf16_to_py_index(text, offset):
+    raw = str(text or "")
+    units = 0
+    for index, char in enumerate(raw):
+        if units >= int(offset):
+            return index
+        units += 2 if ord(char) > 0xFFFF else 1
+    return len(raw)
+
+def _message_with_auto_premium_markup(message):
+    """Convert Premium Emoji entities in an incoming admin message automatically.
+
+    The admin can simply send a Premium Emoji while editing a message. Telegram
+    sends its real custom_emoji_id in the entity, so no manual ID is required.
+    """
+    if not message:
+        return "", []
+    text = message.text or message.caption or ""
+    if not text:
+        return "", []
+
+    entities = message.entities if message.text is not None else message.caption_entities
+    entities = entities or []
+    custom_entities = []
+    for entity in entities:
+        etype = str(getattr(entity, "type", "")).lower()
+        eid = getattr(entity, "custom_emoji_id", None)
+        if (etype == "custom_emoji" or etype.endswith("custom_emoji")) and eid:
+            custom_entities.append(entity)
+
+    if not custom_entities:
+        # Also make mapped ordinary emoji work without requiring an ID.
+        return _render_custom_emoji_markup(_replace_plain_emojis(text)), []
+
+    custom_entities.sort(key=lambda e: (int(getattr(e, "offset", 0)), -int(getattr(e, "length", 0))))
+    pieces = []
+    cursor_units = 0
+    remembered = []
+    for entity in custom_entities:
+        start_units = int(getattr(entity, "offset", 0))
+        end_units = start_units + int(getattr(entity, "length", 0))
+        start = _utf16_to_py_index(text, start_units)
+        end = _utf16_to_py_index(text, end_units)
+        cursor = _utf16_to_py_index(text, cursor_units)
+        if start < cursor:
+            continue
+        pieces.append(text[cursor:start])
+        eid = str(getattr(entity, "custom_emoji_id", "")).strip()
+        glyph = text[start:end] or "⭐"
+        pieces.append(f'<tg-emoji emoji-id="{html.escape(eid, quote=True)}">{html.escape(glyph)}</tg-emoji>')
+        remembered.append(eid)
+        cursor_units = end_units
+    pieces.append(text[_utf16_to_py_index(text, cursor_units):])
+    _remember_custom_emoji_ids(remembered)
+    return _render_custom_emoji_markup("".join(pieces)), remembered
+
+def _sanitize_button_label(raw_text):
+    """Remove ordinary emoji glyphs from button labels and return a Premium icon."""
+    value = str(raw_text or "")
+    found = _REQUESTED_EMOJI_RE.findall(value) if "_REQUESTED_EMOJI_RE" in globals() else []
+    icon = None
+    if found:
+        icon = REQUESTED_CUSTOM_EMOJI_MAP.get(found[0])
+        value = _REQUESTED_EMOJI_RE.sub("", value)
+    # Remove every remaining common Unicode emoji from button text.
+    value = _PLAIN_BUTTON_EMOJI_RE.sub("", value)
+    value = re.sub(r"[ \t]{2,}", " ", value).strip()
+    if not icon:
+        library = _premium_library_ids()
+        if library:
+            # Stable per-label selection; avoids making every button identical.
+            icon = library[abs(hash(value)) % len(library)]
+    return value or "زر", icon
+
+def _premium_button_wrapper(*args, **kwargs):
+    # Keep compatibility with all python-telegram-bot constructor forms used
+    # by the original file.
+    data = dict(kwargs)
+    if args:
+        if "text" not in data:
+            data["text"] = args[0]
+        if len(args) > 1 and "url" not in data and "callback_data" not in data:
+            data["url"] = args[1]
+    raw_text = data.get("text", "")
+    clean_text, auto_icon = _sanitize_button_label(raw_text)
+    data["text"] = clean_text
+    supplied_icon = str(data.get("icon_custom_emoji_id") or "").strip()
+    if not supplied_icon:
+        data["icon_custom_emoji_id"] = auto_icon or _PREMIUM_BUTTON_EMOJI_FALLBACKS[0]
+    try:
+        return _ORIGINAL_TELEGRAM_INLINE_KEYBOARD_BUTTON(**data)
+    except TypeError:
+        data.pop("style", None)
+        try:
+            return _ORIGINAL_TELEGRAM_INLINE_KEYBOARD_BUTTON(**data)
+        except TypeError:
+            data.pop("icon_custom_emoji_id", None)
+            return _ORIGINAL_TELEGRAM_INLINE_KEYBOARD_BUTTON(**data)
+
+# All buttons created by the original code after this point pass through this
+# compatibility wrapper, including buttons not using _make_button().
+InlineKeyboardButton = _premium_button_wrapper
+
+def _auto_fill_missing_button_emojis(unique=True):
+    library = _premium_library_ids()
+    if not library:
+        return 0
+    settings = db.setdefault("settings", {})
+    buttons = settings.setdefault("button_settings", {})
+    used = set()
+    if unique:
+        for item in buttons.values():
+            if isinstance(item, dict) and str(item.get("emoji_id", "")).isdigit():
+                used.add(str(item.get("emoji_id")))
+    changed = 0
+    pos = 0
+    for key, (default_text, default_emoji) in BUTTON_DEFAULTS.items():
+        item = buttons.setdefault(key, {"text": default_text, "emoji_id": default_emoji})
+        if not isinstance(item, dict):
+            item = {"text": default_text, "emoji_id": default_emoji}
+            buttons[key] = item
+        eid = str(item.get("emoji_id", "") or "").strip()
+        if eid.isdigit():
+            continue
+        candidates = [x for x in library if x not in used] if unique else library
+        if not candidates:
+            candidates = library
+        eid = candidates[pos % len(candidates)]
+        pos += 1
+        item["emoji_id"] = eid
+        used.add(eid)
+        changed += 1
+    if changed:
+        save_db(db)
+    return changed
+
+def _premium_emoji_center_text():
+    library = _premium_library_ids()
+    assigned = 0
+    for key in BUTTON_DEFAULTS:
+        if button_emoji(key, ""):
+            assigned += 1
+    return _replace_plain_emojis(
+        f"{EMOJI_5} <b>مركز Premium Emoji PRO</b> {EMOJI_5}\n\n"
+        f"{EMOJI_4} المكتبة: <b>{len(library)}</b> إيموجي\n"
+        f"{EMOJI_2} الأزرار التي لها Premium Emoji: <b>{assigned}</b> / <b>{len(BUTTON_DEFAULTS)}</b>\n\n"
+        "✨ أرسل أي Premium Emoji أثناء تعديل رسالة، وسيتم التقاط الـ ID تلقائياً.\n"
+        "🎨 يمكنك أيضاً تعبئة الأزرار الناقصة تلقائياً بإيموجيات مختلفة.\n"
+        "🧹 إزالة الإيموجي من الأزرار أصبحت تمنع الإيموجي العادي من الظهور."
+    )
+
+def _premium_emoji_center_keyboard():
+    return InlineKeyboardMarkup([
+        [_make_button("✨ تعبئة كل الأزرار تلقائياً", "premium_fill_buttons", key="admin_buttons")],
+        [_make_button("🎲 إعادة توزيع Premium Emoji", "premium_reassign_buttons", key="admin_buttons")],
+        [_make_button("📚 عرض مكتبة الإيموجيات", "premium_show_library", key="admin_buttons")],
+        [_make_button("🔙 رجوع للوحة الأدمن", "admin_panel", key="back_home")],
+    ])
+
+# Extend the admin callback without replacing any existing callback behavior.
+_ORIGINAL_ADMIN_CALLBACK_PRO = admin_callback
+async def admin_callback(update, context, data):
+    query = update.callback_query
+    if data == "admin_emoji_center":
+        await query.edit_message_text(_premium_emoji_center_text(), parse_mode="HTML", reply_markup=_premium_emoji_center_keyboard())
+        return
+    if data == "premium_fill_buttons":
+        changed = _auto_fill_missing_button_emojis(unique=True)
+        await query.answer(f"تمت إضافة Premium Emoji إلى {changed} زر.", show_alert=True)
+        await query.edit_message_text(_premium_emoji_center_text(), parse_mode="HTML", reply_markup=_premium_emoji_center_keyboard())
+        return
+    if data == "premium_reassign_buttons":
+        settings = db.setdefault("settings", {})
+        buttons = settings.setdefault("button_settings", {})
+        library = _premium_library_ids()
+        if library:
+            for index, key in enumerate(BUTTON_DEFAULTS):
+                item = buttons.setdefault(key, {})
+                item["emoji_id"] = library[index % len(library)]
+            save_db(db)
+        await query.answer("تمت إعادة توزيع Premium Emoji.", show_alert=True)
+        await query.edit_message_text(_premium_emoji_center_text(), parse_mode="HTML", reply_markup=_premium_emoji_center_keyboard())
+        return
+    if data == "premium_show_library":
+        library = _premium_library_ids()
+        rows = []
+        for i in range(0, len(library), 2):
+            row = []
+            for eid in library[i:i+2]:
+                row.append(_make_button("⭐", callback_data="premium_noop", key="admin_buttons", emoji_id=eid))
+            rows.append(row)
+        rows.append([_make_button("🔙 رجوع", "admin_emoji_center", key="back_home")])
+        await query.edit_message_text(
+            _replace_plain_emojis(f"{EMOJI_5} <b>مكتبة Premium Emoji</b> {EMOJI_5}\n\nالإجمالي: <b>{len(library)}</b>\nاضغط أي إيموجي لعرضه/استخدامه لاحقاً."),
+            parse_mode="HTML", reply_markup=InlineKeyboardMarkup(rows)
+        )
+        return
+    if data == "premium_noop":
+        await query.answer("Premium Emoji محفوظ في المكتبة.", show_alert=False)
+        return
+    await _ORIGINAL_ADMIN_CALLBACK_PRO(update, context, data)
+
+# Add the Premium Emoji center to the existing admin keyboard without removing
+# any existing button.
+_ORIGINAL_ADMIN_KEYBOARD_PRO = admin_keyboard
+def admin_keyboard():
+    markup = _ORIGINAL_ADMIN_KEYBOARD_PRO()
+    rows = list(markup.inline_keyboard)
+    rows.insert(-1 if rows else 0, [_make_button("🎨 مركز Premium Emoji PRO", "admin_emoji_center", key="admin_buttons")])
+    return InlineKeyboardMarkup(rows)
+
+# Automatic capture of Telegram custom-emoji entities for editable messages.
+_ORIGINAL_HANDLE_ADMIN_MESSAGE_PRO = handle_admin_message
+async def handle_admin_message(update, context):
+    message = update.effective_message
+    user = update.effective_user
+    action = context.user_data.get("admin_action") if user else None
+    if message and user and is_admin(user.id) and isinstance(action, str) and action.startswith("message_edit:"):
+        key = action.split(":", 1)[1]
+        if key in MESSAGE_DEFAULTS and (message.text is not None or message.caption is not None):
+            raw_text, captured = _message_with_auto_premium_markup(message)
+            if raw_text:
+                # Store markup rather than forcing the admin to type an ID.
+                if set_message_setting(key, raw_text):
+                    context.user_data.pop("admin_action", None)
+                    await message.reply_text(
+                        _replace_plain_emojis(
+                            f"{EMOJI_6} <b>تم حفظ الرسالة تلقائياً.</b>\n\n"
+                            f"{EMOJI_4} تم التقاط <b>{len(captured)}</b> Premium Emoji من رسالتك بدون ID.\n\n"
+                            f"<b>المعاينة:</b>\n{raw_text}"
+                        ),
+                        parse_mode="HTML", reply_markup=message_editor_keyboard()
+                    )
+                    return True
+    return await _ORIGINAL_HANDLE_ADMIN_MESSAGE_PRO(update, context)
+
+# Ensure the new router accepts the added callbacks.
+_ORIGINAL_BUTTON_CALLBACK_PRO = button_callback
+async def button_callback(update, context):
+    query = update.callback_query
+    if query and query.data in {"admin_emoji_center", "premium_fill_buttons", "premium_reassign_buttons", "premium_show_library", "premium_noop"}:
+        user = update.effective_user
+        if not user or not is_admin(user.id):
+            await query.answer("🚫 هذه اللوحة خاصة بالأدمن.", show_alert=True)
+            return
+        await admin_callback(update, context, query.data)
+        return
+    return await _ORIGINAL_BUTTON_CALLBACK_PRO(update, context)
+
+# New admin command for the Premium Emoji center.
+_ORIGINAL_POST_INIT_PRO = _post_init
+async def _post_init(application):
+    await _ORIGINAL_POST_INIT_PRO(application)
+    try:
+        from telegram import BotCommand, BotCommandScopeChat
+        ids = {int(ADMIN_ID), *get_admins()}
+        for aid in ids:
+            await application.bot.set_my_commands(
+                [BotCommand("start", "فتح البوت"), BotCommand("referrals", "نظام الإحالات"),
+                 BotCommand("top", "المتصدرون"), BotCommand("help", "المساعدة"),
+                 BotCommand("admin", "لوحة الأدمن"), BotCommand("emoji", "مركز Premium Emoji"),
+                 BotCommand("cancel", "إلغاء العملية")],
+                scope=BotCommandScopeChat(chat_id=aid)
+            )
+    except Exception as e:
+        logger.warning("Premium emoji command setup failed: %s", e)
+
+async def premium_emoji_command(update, context):
+    user = update.effective_user
+    if not user or not is_admin(user.id):
+        return
+    await update.effective_message.reply_text(_premium_emoji_center_text(), parse_mode="HTML", reply_markup=_premium_emoji_center_keyboard())
 
 
 # ============================================================
