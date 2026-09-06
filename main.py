@@ -6329,18 +6329,97 @@ def admin_keyboard():
     rows.insert(-1 if rows else 0, [_make_button("🎨 مركز Premium Emoji PRO", "admin_emoji_center", key="admin_buttons")])
     return InlineKeyboardMarkup(rows)
 
-# Automatic capture of Telegram custom-emoji entities for editable messages.
+# Automatic capture of Telegram custom-emoji entities for editable messages/buttons.
 _ORIGINAL_HANDLE_ADMIN_MESSAGE_PRO = handle_admin_message
+
+def _extract_message_custom_emoji_ids(message):
+    """Return real Telegram Premium/custom emoji IDs from a text/caption entity list."""
+    if not message:
+        return []
+    entities = message.entities if message.text is not None else message.caption_entities
+    result = []
+    for entity in (entities or []):
+        etype = str(getattr(entity, "type", "")).lower()
+        eid = str(getattr(entity, "custom_emoji_id", "") or "").strip()
+        if eid and (etype == "custom_emoji" or etype.endswith("custom_emoji")):
+            result.append(eid)
+    if result:
+        _remember_custom_emoji_ids(result)
+        try:
+            save_db(db)
+        except Exception:
+            pass
+    return result
+
+def _remove_custom_emoji_entities_from_text(message, text):
+    """Remove Premium emoji glyphs from a button label using Telegram UTF-16 offsets."""
+    if not message or not text:
+        return str(text or "")
+    entities = message.entities if message.text is not None else message.caption_entities
+    spans = []
+    for entity in (entities or []):
+        etype = str(getattr(entity, "type", "")).lower()
+        if etype != "custom_emoji" and not etype.endswith("custom_emoji"):
+            continue
+        start = _utf16_to_py_index(text, int(getattr(entity, "offset", 0) or 0))
+        end = _utf16_to_py_index(text, int(getattr(entity, "offset", 0) or 0) + int(getattr(entity, "length", 0) or 0))
+        spans.append((start, end))
+    for start, end in reversed(sorted(spans)):
+        text = text[:start] + text[end:]
+    return text.strip()
+
 async def handle_admin_message(update, context):
     message = update.effective_message
     user = update.effective_user
     action = context.user_data.get("admin_action") if user else None
+
+    # ============================================================
+    # BUTTON EDIT — automatic Premium Emoji capture
+    # ============================================================
+    # The old handler required: Button Name|CUSTOM_EMOJI_ID.
+    # Now the admin can simply send the actual Premium Emoji from
+    # Telegram's emoji picker. Telegram supplies custom_emoji_id
+    # in message.entities, so no manual ID is needed.
+    if (message and user and is_admin(user.id) and isinstance(action, str)
+            and action.startswith("button_edit:") and message.text is not None):
+        key = action.split(":", 1)[1]
+        if key in BUTTON_DEFAULTS:
+            captured_ids = _extract_message_custom_emoji_ids(message)
+            value = message.text.strip()
+
+            if captured_ids:
+                # Remove the Premium Emoji itself from the visible button label.
+                new_text = _remove_custom_emoji_entities_from_text(message, value).strip()
+                # If the admin sent only the Premium Emoji, keep the current button name.
+                if not new_text:
+                    try:
+                        new_text = str(get_button_setting(key).get("text") or BUTTON_DEFAULTS[key][0]).strip()
+                    except Exception:
+                        new_text = str(BUTTON_DEFAULTS[key][0]).strip()
+
+                new_emoji = captured_ids[0]
+                if set_button_setting(key, new_text, new_emoji):
+                    context.user_data.pop("admin_action", None)
+                    await message.reply_text(
+                        _replace_plain_emojis(
+                            f"{EMOJI_6} <b>تم تحديث الزر تلقائياً.</b>\n\n"
+                            f"{EMOJI_4} الاسم: <b>{html.escape(new_text)}</b>\n"
+                            f"{EMOJI_7} Premium Emoji: تم التقاطه تلقائياً بدون كتابة ID.\n\n"
+                            f"<b>Emoji ID:</b> <code>{html.escape(new_emoji)}</code>"
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=button_editor_keyboard()
+                    )
+                    return True
+
+    # ============================================================
+    # MESSAGE EDIT — automatic Premium Emoji capture
+    # ============================================================
     if message and user and is_admin(user.id) and isinstance(action, str) and action.startswith("message_edit:"):
         key = action.split(":", 1)[1]
         if key in MESSAGE_DEFAULTS and (message.text is not None or message.caption is not None):
             raw_text, captured = _message_with_auto_premium_markup(message)
             if raw_text:
-                # Store markup rather than forcing the admin to type an ID.
                 if set_message_setting(key, raw_text):
                     context.user_data.pop("admin_action", None)
                     await message.reply_text(
@@ -6352,6 +6431,7 @@ async def handle_admin_message(update, context):
                         parse_mode="HTML", reply_markup=message_editor_keyboard()
                     )
                     return True
+
     return await _ORIGINAL_HANDLE_ADMIN_MESSAGE_PRO(update, context)
 
 # Ensure the new router accepts the added callbacks.
