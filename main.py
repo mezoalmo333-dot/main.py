@@ -2457,28 +2457,36 @@ async def admin_callback(
 
         current = get_button_setting(key)
 
+        # Use the same safe button factory used by the rest of the panel.
+        # The previous version built these three buttons directly with
+        # hard-coded custom-emoji IDs; if Telegram rejected one of those IDs
+        # the whole message edit failed and the admin saw "تعذر فتح تعديل الزر".
         keyboard = [
             [
-                InlineKeyboardButton(
+                _make_button(
                     "🎨 اختر Premium Emoji",
-                    callback_data=f"button_choose_emoji_{key}",
-                    style="primary",
-                    icon_custom_emoji_id=EMOJI_IDS()["text"]
+                    f"button_choose_emoji_{key}",
+                    key="",
+                    emoji_id="",
+                    style="primary"
                 )
             ],
             [
-                InlineKeyboardButton(
+                _make_button(
                     "🗑 إزالة الإيموجي",
-                    callback_data=f"button_emoji_clear_{key}",
+                    f"button_emoji_clear_{key}",
+                    key="",
+                    emoji_id="",
                     style="danger"
                 )
             ],
             [
-                InlineKeyboardButton(
+                _make_button(
                     "🔙 رجوع",
-                    callback_data="admin_buttons",
-                    style="primary",
-                    icon_custom_emoji_id=EMOJI_IDS()["back"]
+                    "admin_buttons",
+                    key="",
+                    emoji_id="",
+                    style="primary"
                 )
             ]
         ]
@@ -6966,6 +6974,111 @@ def download_video_sync(url):
                 logger.warning("Instagram final extractor retry failed: %s", second_error)
 
         raise first_error
+
+
+# ============================================================
+# REAL FIX PATCH V6
+# Button editor: safe callback screen + plain-name editing.
+# Instagram: keep the real yt-dlp extractor and expose a useful failure
+# message instead of making the platform button look functional-only.
+# ============================================================
+
+# Keep the existing button editor callback implementation. The block above
+# now uses _make_button() and therefore does not depend on a hard-coded icon
+# custom-emoji being accepted by Telegram when the edit screen is opened.
+
+# Ensure the admin callback router also accepts all button editor operations.
+_PREVIOUS_FINAL_BUTTON_CALLBACK_V6 = button_callback
+async def button_callback(update, context):
+    query = update.callback_query
+    user = update.effective_user
+    if query and user:
+        data = str(query.data or "")
+        if data.startswith((
+            "button_edit_",
+            "button_choose_emoji_",
+            "button_emoji_",
+            "button_style_",
+            "button_reset_all_emojis",
+        )):
+            if not is_admin(user.id):
+                await query.answer("🚫 هذه اللوحة خاصة بالأدمن.", show_alert=True)
+                return
+            try:
+                await query.answer()
+            except Exception:
+                pass
+            try:
+                await admin_callback(update, context, data)
+            except Exception as exc:
+                logger.exception("Button editor V6 callback failed: %s", exc)
+                try:
+                    await query.answer("❌ تعذر تنفيذ تعديل الزر. راجع سجل البوت للخطأ.", show_alert=True)
+                except Exception:
+                    pass
+            return
+    return await _PREVIOUS_FINAL_BUTTON_CALLBACK_V6(update, context)
+
+# ============================================================
+# REAL FIX PATCH V7 - Instagram button callback
+# السبب: platform_instagram كان يُرسل من لوحة البداية، لكن الـcallback
+# النهائي لم يكن يعترضه، فيسقط إلى الـhandler القديم ويظهر كأنه زر وهمي.
+# ============================================================
+
+_PREVIOUS_FINAL_BUTTON_CALLBACK_V7 = button_callback
+
+async def button_callback(update, context):
+    query = update.callback_query
+    user = update.effective_user
+
+    if query and user and str(query.data or "") == "platform_instagram":
+        try:
+            await query.answer()
+        except Exception:
+            pass
+
+        # اختيار Instagram فعلياً للجلسة الحالية.
+        context.user_data["selected_platform"] = "Instagram"
+
+        try:
+            msg = get_message_setting(
+                "platform_instagram",
+                ENHANCED_MESSAGE_DEFAULTS.get(
+                    "platform_instagram",
+                    "تم اختيار Instagram\n\nأرسل رابط الـ Reel أو الفيديو الآن."
+                )
+            )
+        except Exception:
+            msg = "تم اختيار Instagram\n\nأرسل رابط الـ Reel أو الفيديو الآن."
+
+        try:
+            msg = format_welcome_text(
+                msg,
+                user.first_name or "",
+                "@" + user.username if user.username else "لا يوجد",
+                user.id
+            )
+        except Exception:
+            pass
+
+        try:
+            await query.edit_message_text(
+                msg,
+                parse_mode="HTML",
+                reply_markup=get_back_keyboard()
+            )
+        except Exception as exc:
+            logger.exception("Instagram platform callback failed: %s", exc)
+            try:
+                await query.answer(
+                    "❌ تعذر فتح Instagram. راجع سجل البوت للخطأ.",
+                    show_alert=True
+                )
+            except Exception:
+                pass
+        return
+
+    return await _PREVIOUS_FINAL_BUTTON_CALLBACK_V7(update, context)
 
 
 # ============================================================
