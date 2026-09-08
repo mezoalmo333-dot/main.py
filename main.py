@@ -1066,7 +1066,6 @@ def format_welcome_text(
 BUTTON_DEFAULTS = {
     "platform_tiktok": ("TikTok", "5391044040860906456"),
     "platform_facebook": ("Facebook", "5269427536453984598"),
-    "platform_instagram": ("Instagram", "5269682734820777950"),
     "back_home": ("🔙 رجوع", ""),
     "admin_stats": ("📊 الإحصائيات", ""),
     "admin_broadcast": ("📢 إذاعة", "5890969691425347748"),
@@ -1248,7 +1247,6 @@ def message_editor_keyboard():
         "home": "🏠 الرئيسية",
         "new_user_welcome": "👋 العضو الجديد",
         "platform_tiktok": "🎵 TikTok",
-    "platform_instagram": "📷 Instagram",
         "download_status": "⏳ بدء التحميل",
         "sending_status": "📤 إرسال الفيديو",
         "success": "✅ نجاح التحميل",
@@ -4261,14 +4259,6 @@ def is_facebook_url(url):
     ))
 
 
-def is_instagram_url(url):
-    return bool(re.search(
-        r"(?:https?://)?(?:www\.)?instagram\.com/(?:reel|reels|p|tv|share/reel|share/p)(?:/|$)",
-        str(url or ""),
-        re.IGNORECASE
-    ))
-
-
 # ============================================================
 # إعدادات yt-dlp
 # ============================================================
@@ -4346,7 +4336,7 @@ def make_ydl_opts(youtube_mode=False, facebook_mode=False):
     }
 
     if not youtube_mode:
-        # Facebook / Instagram public downloads do not need an API.
+        # Facebook public downloads do not need an API.
         # Cookies are optional and are only used if the admin supplies them.
         cookie_candidates = []
 
@@ -4354,20 +4344,12 @@ def make_ydl_opts(youtube_mode=False, facebook_mode=False):
         if env_fb:
             cookie_candidates.append(env_fb)
 
-        env_ig = os.getenv("INSTAGRAM_COOKIES_FILE", "").strip()
-        if env_ig:
-            cookie_candidates.append(env_ig)
-
         base_dir = os.path.dirname(os.path.abspath(__file__))
         cookie_candidates.extend([
             os.path.join(base_dir, "facebook_cookies.txt"),
             os.path.join(base_dir, "fb_cookies.txt"),
-            os.path.join(base_dir, "instagram_cookies.txt"),
-            os.path.join(base_dir, "ig_cookies.txt"),
             os.path.join(gettempdir(), "facebook_cookies.txt"),
             os.path.join(gettempdir(), "fb_cookies.txt"),
-            os.path.join(gettempdir(), "instagram_cookies.txt"),
-            os.path.join(gettempdir(), "ig_cookies.txt"),
         ])
 
         for cookie_path in cookie_candidates:
@@ -4427,21 +4409,6 @@ def make_ydl_opts(youtube_mode=False, facebook_mode=False):
     return opts
 
 
-# Instagram format compatibility patch.
-_ORIGINAL_MAKE_YDL_OPTS_INSTAGRAM = make_ydl_opts
-
-def make_ydl_opts(youtube_mode=False, facebook_mode=False, instagram_mode=False):
-    opts = _ORIGINAL_MAKE_YDL_OPTS_INSTAGRAM(
-        youtube_mode=youtube_mode,
-        facebook_mode=facebook_mode
-    )
-    if instagram_mode:
-        # Public Instagram media normally works without API/cookies.
-        # Prefer a directly downloadable single file; fall back to best.
-        opts["format"] = "best[ext=mp4]/best"
-        opts["noplaylist"] = True
-    return opts
-
 
 # ============================================================
 # تحميل الفيديو
@@ -4453,8 +4420,7 @@ def download_video_sync(url):
 
         opts = make_ydl_opts(
             youtube_mode=youtube_mode,
-            facebook_mode=facebook_mode,
-            instagram_mode=is_instagram_url(url)
+            facebook_mode=facebook_mode
         )
 
         if force_best:
@@ -4651,39 +4617,6 @@ def download_video_sync(url):
 
                 return extract_and_find_file()
 
-        if is_instagram_url(url) and (
-            "requested content is not available" in error_text
-            or "empty media response" in error_text
-            or "login required" in error_text
-            or "unable to extract" in error_text
-        ):
-            logger.warning("Instagram extractor error detected; trying yt-dlp update.")
-            try:
-                if update_yt_dlp_tiktok_fallback():
-                    return extract_and_find_file()
-            except Exception as instagram_update_error:
-                logger.warning("Instagram yt-dlp update retry failed: %s", instagram_update_error)
-
-        if is_instagram_url(url) and (
-            "requested format is not available" in error_text
-            or "no video formats found" in error_text
-            or "unable to extract" in error_text
-            or "format" in error_text
-            or "login" in error_text
-            or "rate-limit" in error_text
-            or "rate limit" in error_text
-        ):
-            logger.warning("Instagram extraction/format failed; retrying with best.")
-            try:
-                return extract_and_find_file(
-                    force_best=True
-                )
-            except Exception as instagram_retry_error:
-                logger.warning(
-                    "Instagram best-format retry failed: %s",
-                    instagram_retry_error
-                )
-
         raise
 
 
@@ -4813,17 +4746,6 @@ async def handle_url(
             await update.effective_message.reply_text(
                 f"{EMOJI_3} "
                 f"هذا ليس رابط Facebook صحيحاً. أرسل رابط فيديو أو Reels من Facebook."
-            )
-
-            return
-
-    elif platform == "Instagram":
-
-        if not is_instagram_url(url):
-
-            await update.effective_message.reply_text(
-                f"{EMOJI_3} "
-                f"هذا ليس رابط Instagram صحيحاً. أرسل رابط Reel أو Post أو فيديو من Instagram."
             )
 
             return
@@ -5232,7 +5154,6 @@ ENHANCED_MESSAGE_DEFAULTS = {
     "home": "",
     "new_user_welcome": "",
     "platform_tiktok": "تم اختيار TikTok\n\nأرسل رابط الفيديو الآن.",
-    "platform_instagram": "تم اختيار Instagram\n\nأرسل رابط الـ Reel أو الفيديو الآن.",
     "download_status": "⏳ جاري تحميل الفيديو، يرجى الانتظار...",
     "sending_status": "🚀 جاري إرسال الفيديو...",
     "success": "✅ تم تحميل الفيديو بنجاح\n\nالمصدر: {platform}",
@@ -5634,10 +5555,6 @@ def get_platform_keyboard():
             _make_button(button_text("platform_facebook", "Facebook"), "platform_facebook",
                          key="platform_facebook", emoji_id=button_emoji("platform_facebook", "5269427536453984598")),
         ],
-        [
-            _make_button(button_text("platform_instagram", "Instagram"), "platform_instagram",
-                         key="platform_instagram", emoji_id=button_emoji("platform_instagram", "5269682734820777950")),
-        ],
         [_make_button("🎁 نظام الإحالات", "referrals", key="referrals")],
     ])
 
@@ -5654,7 +5571,6 @@ MESSAGE_LABELS = {
     "new_user_welcome": "👋 ترحيب العضو الجديد",
     "platform_tiktok": "🎵 اختيار TikTok",
     "platform_facebook": "📘 اختيار Facebook",
-    "platform_instagram": "📷 اختيار Instagram",
     "download_status": "⏳ بدء التحميل",
     "sending_status": "📤 إرسال الفيديو",
     "success": "✅ نجاح التحميل",
@@ -6242,16 +6158,6 @@ async def handle_url(update, context):
     if user and _maintenance_enabled() and not is_admin(user.id):
         await update.effective_message.reply_text(_maintenance_text(), parse_mode="HTML")
         return
-
-    # Instagram: validate the selected platform before entering the downloader.
-    if user and not is_admin(user.id):
-        selected = context.user_data.get("selected_platform")
-        url = (update.effective_message.text or "").strip() if update.effective_message else ""
-        if selected == "Instagram" and url and not is_instagram_url(url):
-            await update.effective_message.reply_text(
-                "❌ هذا ليس رابط Instagram صحيحاً. أرسل رابط Reel أو Post أو فيديو من Instagram."
-            )
-            return
 
     return await _ORIGINAL_HANDLE_URL(update, context)
 
@@ -6869,7 +6775,6 @@ async def premium_emoji_command(update, context):
 # 1) button_edit_* must be routed to admin_callback; otherwise Telegram
 #    falls through to the old callback handler and shows:
 #    "تعذر تنفيذ الأمر، حاول مرة أخرى."
-# 2) Instagram gets a stricter single-file fallback and useful error text.
 # ============================================================
 
 # Keep the previous callback implementation intact and only add the missing
@@ -6910,77 +6815,10 @@ async def button_callback(update, context):
     return await _PREVIOUS_FINAL_BUTTON_CALLBACK_V5(update, context)
 
 
-# Instagram-specific options. The extractor itself is still yt-dlp (not a
-# fake button). Public media can work without cookies, while login/rate-limit
-# protected media needs a valid Instagram cookies.txt file.
-_PREVIOUS_MAKE_YDL_OPTS_V5 = make_ydl_opts
-
-def make_ydl_opts(youtube_mode=False, facebook_mode=False, instagram_mode=False):
-    opts = _PREVIOUS_MAKE_YDL_OPTS_V5(
-        youtube_mode=youtube_mode,
-        facebook_mode=facebook_mode,
-        instagram_mode=instagram_mode,
-    )
-    if instagram_mode:
-        # Prefer one file containing both video+audio so ffmpeg is not required.
-        opts["format"] = "best[ext=mp4][acodec!=none][vcodec!=none]/best[acodec!=none][vcodec!=none]/best"
-        opts["noplaylist"] = True
-        opts.setdefault("http_headers", {})["Referer"] = "https://www.instagram.com/"
-        opts["http_headers"]["User-Agent"] = (
-            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
-        )
-    return opts
-
-
-# Keep the original downloader and add a final Instagram retry using the most
-# permissive single-file format. This is intentionally appended so no existing
-# downloader code is deleted.
-_PREVIOUS_DOWNLOAD_VIDEO_SYNC_V5 = download_video_sync
-
-def download_video_sync(url):
-    if not is_instagram_url(url):
-        return _PREVIOUS_DOWNLOAD_VIDEO_SYNC_V5(url)
-
-    try:
-        return _PREVIOUS_DOWNLOAD_VIDEO_SYNC_V5(url)
-    except Exception as first_error:
-        first_text = str(first_error).lower()
-        instagram_auth_error = any(token in first_text for token in (
-            "login required", "rate-limit", "rate limit", "requested content is not available",
-            "main webpage is locked behind the login page", "empty media response",
-            "no video formats found", "requested format is not available",
-        ))
-
-        # One final direct extractor pass after yt-dlp's normal retries.
-        # This is useful when the first extractor pass chose a format that is
-        # unavailable for the particular Instagram response.
-        if instagram_auth_error or "format" in first_text or "unable to extract" in first_text:
-            opts = make_ydl_opts(instagram_mode=True)
-            opts["format"] = "best"
-            opts["noplaylist"] = True
-            try:
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                    prepared = ydl.prepare_filename(info)
-                    candidates = [prepared]
-                    root, _ = os.path.splitext(prepared)
-                    for ext in (".mp4", ".webm", ".mkv", ".mov"):
-                        candidates.append(root + ext)
-                    for candidate in candidates:
-                        if os.path.isfile(candidate):
-                            return candidate
-            except Exception as second_error:
-                logger.warning("Instagram final extractor retry failed: %s", second_error)
-
-        raise first_error
-
 
 # ============================================================
 # REAL FIX PATCH V6
 # Button editor: safe callback screen + plain-name editing.
-# Instagram: keep the real yt-dlp extractor and expose a useful failure
-# message instead of making the platform button look functional-only.
 # ============================================================
 
 # Keep the existing button editor callback implementation. The block above
@@ -7019,71 +6857,170 @@ async def button_callback(update, context):
             return
     return await _PREVIOUS_FINAL_BUTTON_CALLBACK_V6(update, context)
 
-# ============================================================
-# REAL FIX PATCH V7 - Instagram button callback
-# السبب: platform_instagram كان يُرسل من لوحة البداية، لكن الـcallback
-# النهائي لم يكن يعترضه، فيسقط إلى الـhandler القديم ويظهر كأنه زر وهمي.
-# ============================================================
 
-_PREVIOUS_FINAL_BUTTON_CALLBACK_V7 = button_callback
+# ============================================================
+# FINAL REAL FIX V2
+# - Force-remove Instagram from the runtime UI/settings.
+# - Open button editor through a completely plain Telegram keyboard so a
+#   broken/unsupported Premium Emoji can never prevent the editor from opening.
+# - Keep the existing name/emoji saving handler intact.
+# ============================================================
+try:
+    # The previous generated build could retain an old Instagram setting in
+    # an existing JSON database. Remove that runtime entry as well.
+    if isinstance(globals().get("BUTTON_DEFAULTS"), dict):
+        BUTTON_DEFAULTS.pop("platform_instagram", None)
+    if isinstance(globals().get("db"), dict):
+        _bs = db.setdefault("settings", {}).setdefault("button_settings", {})
+        if isinstance(_bs, dict):
+            _bs.pop("platform_instagram", None)
+        save_db(db)
+except Exception as _instagram_cleanup_error:
+    logger.warning("Instagram runtime cleanup failed: %s", _instagram_cleanup_error)
+
+
+def _plain_button_editor_keyboard():
+    """Editor navigation that never uses custom emoji/style fields."""
+    rows = []
+    rows.append([
+        _ORIGINAL_TELEGRAM_INLINE_KEYBOARD_BUTTON(text="🎨 اختر Premium Emoji", callback_data="button_choose_emoji___editor")
+    ])
+    rows.append([
+        _ORIGINAL_TELEGRAM_INLINE_KEYBOARD_BUTTON(text="🗑 إزالة الإيموجي", callback_data="button_emoji_clear___editor")
+    ])
+    rows.append([
+        _ORIGINAL_TELEGRAM_INLINE_KEYBOARD_BUTTON(text="🔙 رجوع", callback_data="admin_buttons")
+    ])
+    return InlineKeyboardMarkup(rows)
+
+
+# Save the currently effective callback and add a final, isolated route.
+_PREVIOUS_BUTTON_CALLBACK_FINAL_V2 = button_callback
 
 async def button_callback(update, context):
     query = update.callback_query
     user = update.effective_user
+    if query and user:
+        data = str(query.data or "")
 
-    if query and user and str(query.data or "") == "platform_instagram":
-        try:
-            await query.answer()
-        except Exception:
-            pass
+        if data.startswith("button_edit_"):
+            if not is_admin(user.id):
+                await query.answer("🚫 هذه اللوحة خاصة بالأدمن.", show_alert=True)
+                return
 
-        # اختيار Instagram فعلياً للجلسة الحالية.
-        context.user_data["selected_platform"] = "Instagram"
+            key = data[len("button_edit_"):]
+            if key not in BUTTON_DEFAULTS:
+                await query.answer("❌ هذا الزر غير موجود في النسخة الحالية.", show_alert=True)
+                return
 
-        try:
-            msg = get_message_setting(
-                "platform_instagram",
-                ENHANCED_MESSAGE_DEFAULTS.get(
-                    "platform_instagram",
-                    "تم اختيار Instagram\n\nأرسل رابط الـ Reel أو الفيديو الآن."
-                )
-            )
-        except Exception:
-            msg = "تم اختيار Instagram\n\nأرسل رابط الـ Reel أو الفيديو الآن."
+            current = get_button_setting(key)
+            context.user_data["admin_action"] = f"button_edit:{key}"
 
-        try:
-            msg = format_welcome_text(
-                msg,
-                user.first_name or "",
-                "@" + user.username if user.username else "لا يوجد",
-                user.id
-            )
-        except Exception:
-            pass
-
-        try:
-            await query.edit_message_text(
-                msg,
-                parse_mode="HTML",
-                reply_markup=get_back_keyboard()
-            )
-        except Exception as exc:
-            logger.exception("Instagram platform callback failed: %s", exc)
+            # IMPORTANT: do not call button_editor_keyboard() here. The full
+            # editor contains many dynamic/custom-emoji buttons; this screen
+            # must remain usable even if one Premium Emoji ID is rejected by
+            # Telegram.
             try:
-                await query.answer(
-                    "❌ تعذر فتح Instagram. راجع سجل البوت للخطأ.",
-                    show_alert=True
-                )
+                await query.answer()
             except Exception:
                 pass
+
+            try:
+                await query.edit_message_text(
+                    "✏️ <b>تعديل الزر</b>\n\n"
+                    f"الاسم الحالي: <b>{html.escape(str(current.get('text') or 'زر'))}</b>\n"
+                    f"Premium Emoji الحالي: <code>{html.escape(str(current.get('emoji_id') or 'لا يوجد'))}</code>\n\n"
+                    "أرسل الاسم الجديد فقط.\n"
+                    "ويمكنك أيضاً إرسال: <code>الاسم|emoji_id</code>\n\n"
+                    "أو اضغط على اختيار Premium Emoji ثم أرسل Premium Emoji الحقيقي من Telegram.",
+                    parse_mode="HTML",
+                    reply_markup=_plain_button_editor_keyboard(),
+                )
+            except Exception as exc:
+                logger.exception("FINAL button editor open failed for %s: %s", key, exc)
+                # If editing the old admin message itself fails, send a fresh
+                # message instead of showing the generic callback error.
+                try:
+                    await query.message.reply_text(
+                        "✏️ <b>تعديل الزر</b>\n\n"
+                        f"الاسم الحالي: <b>{html.escape(str(current.get('text') or 'زر'))}</b>\n\n"
+                        "أرسل الاسم الجديد الآن.",
+                        parse_mode="HTML",
+                        reply_markup=_plain_button_editor_keyboard(),
+                    )
+                    return
+                except Exception:
+                    await query.answer("❌ تعذر فتح محرر الزر. راجع سجل البوت.", show_alert=True)
+            return
+
+    return await _PREVIOUS_BUTTON_CALLBACK_FINAL_V2(update, context)
+
+
+# The two special editor buttons above use a harmless sentinel key. Handle
+# them here so they cannot fall through to an older callback implementation.
+_PREVIOUS_ADMIN_CALLBACK_FINAL_V2 = admin_callback
+
+async def admin_callback(update, context, data):
+    if data == "button_choose_emoji___editor":
+        query = update.callback_query
+        user = update.effective_user
+        if not user or not is_admin(user.id):
+            await query.answer("🚫 هذه اللوحة خاصة بالأدمن.", show_alert=True)
+            return
+        action = str(context.user_data.get("admin_action") or "")
+        if not action.startswith("button_edit:"):
+            await query.answer("❌ اختر الزر أولاً.", show_alert=True)
+            return
+        key = action.split(":", 1)[1]
+        if key not in BUTTON_DEFAULTS:
+            await query.answer("❌ الزر غير موجود.", show_alert=True)
+            return
+        await query.answer()
+        await query.edit_message_text(
+            "🎨 <b>Premium Emoji للزر</b>\n\n"
+            f"الزر: <b>{html.escape(get_button_setting(key).get('text', 'زر'))}</b>\n\n"
+            "أرسل الآن Premium Emoji الحقيقي من Telegram، وسيتم التقاط الـID تلقائياً.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [_ORIGINAL_TELEGRAM_INLINE_KEYBOARD_BUTTON(text="🔙 رجوع", callback_data=f"button_edit_{key}")]
+            ])
+        )
+        context.user_data["admin_action"] = f"premium_assign_emoji:{key}"
         return
 
-    return await _PREVIOUS_FINAL_BUTTON_CALLBACK_V7(update, context)
+    if data == "button_emoji_clear___editor":
+        query = update.callback_query
+        user = update.effective_user
+        if not user or not is_admin(user.id):
+            await query.answer("🚫 هذه اللوحة خاصة بالأدمن.", show_alert=True)
+            return
+        action = str(context.user_data.get("admin_action") or "")
+        if not action.startswith("button_edit:"):
+            await query.answer("❌ اختر الزر أولاً.", show_alert=True)
+            return
+        key = action.split(":", 1)[1]
+        if key in BUTTON_DEFAULTS:
+            current = get_button_setting(key)
+            set_button_setting(key, current.get("text", BUTTON_DEFAULTS[key][0]), "")
+            context.user_data["admin_action"] = f"button_edit:{key}"
+            await query.answer("✅ تمت إزالة Premium Emoji من الزر.", show_alert=True)
+            await query.edit_message_text(
+                "✏️ <b>تعديل الزر</b>\n\n"
+                f"الاسم الحالي: <b>{html.escape(str(current.get('text') or 'زر'))}</b>\n"
+                "Premium Emoji الحالي: <code>لا يوجد</code>\n\n"
+                "أرسل الاسم الجديد أو اختر Premium Emoji.",
+                parse_mode="HTML",
+                reply_markup=_plain_button_editor_keyboard(),
+            )
+            return
+
+    return await _PREVIOUS_ADMIN_CALLBACK_FINAL_V2(update, context, data)
 
 
 # ============================================================
 # Entry Point
 # ============================================================
+
 
 if __name__ == "__main__":
     main()
