@@ -1066,6 +1066,7 @@ def format_welcome_text(
 BUTTON_DEFAULTS = {
     "platform_tiktok": ("TikTok", "5391044040860906456"),
     "platform_facebook": ("Facebook", "5269427536453984598"),
+    "platform_instagram": ("Instagram", "5269682734820777950"),
     "back_home": ("🔙 رجوع", ""),
     "admin_stats": ("📊 الإحصائيات", ""),
     "admin_broadcast": ("📢 إذاعة", "5890969691425347748"),
@@ -1247,6 +1248,7 @@ def message_editor_keyboard():
         "home": "🏠 الرئيسية",
         "new_user_welcome": "👋 العضو الجديد",
         "platform_tiktok": "🎵 TikTok",
+    "platform_instagram": "📷 Instagram",
         "download_status": "⏳ بدء التحميل",
         "sending_status": "📤 إرسال الفيديو",
         "success": "✅ نجاح التحميل",
@@ -4251,6 +4253,14 @@ def is_facebook_url(url):
     ))
 
 
+def is_instagram_url(url):
+    return bool(re.search(
+        r"(?:https?://)?(?:www\.)?instagram\.com/(?:reel|reels|p|tv|share/reel|share/p)(?:/|$)",
+        str(url or ""),
+        re.IGNORECASE
+    ))
+
+
 # ============================================================
 # إعدادات yt-dlp
 # ============================================================
@@ -4328,21 +4338,34 @@ def make_ydl_opts(youtube_mode=False, facebook_mode=False):
     }
 
     if not youtube_mode:
-        fb_cookie_candidates = []
+        # Facebook / Instagram public downloads do not need an API.
+        # Cookies are optional and are only used if the admin supplies them.
+        cookie_candidates = []
+
         env_fb = os.getenv("FACEBOOK_COOKIES_FILE", "").strip()
         if env_fb:
-            fb_cookie_candidates.append(env_fb)
+            cookie_candidates.append(env_fb)
+
+        env_ig = os.getenv("INSTAGRAM_COOKIES_FILE", "").strip()
+        if env_ig:
+            cookie_candidates.append(env_ig)
+
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        fb_cookie_candidates.extend([
+        cookie_candidates.extend([
             os.path.join(base_dir, "facebook_cookies.txt"),
             os.path.join(base_dir, "fb_cookies.txt"),
+            os.path.join(base_dir, "instagram_cookies.txt"),
+            os.path.join(base_dir, "ig_cookies.txt"),
             os.path.join(gettempdir(), "facebook_cookies.txt"),
             os.path.join(gettempdir(), "fb_cookies.txt"),
+            os.path.join(gettempdir(), "instagram_cookies.txt"),
+            os.path.join(gettempdir(), "ig_cookies.txt"),
         ])
-        for fb_path in fb_cookie_candidates:
+
+        for cookie_path in cookie_candidates:
             try:
-                if os.path.isfile(fb_path) and os.path.getsize(fb_path) > 20:
-                    opts["cookiefile"] = fb_path
+                if os.path.isfile(cookie_path) and os.path.getsize(cookie_path) > 20:
+                    opts["cookiefile"] = cookie_path
                     break
             except OSError:
                 pass
@@ -4396,6 +4419,22 @@ def make_ydl_opts(youtube_mode=False, facebook_mode=False):
     return opts
 
 
+# Instagram format compatibility patch.
+_ORIGINAL_MAKE_YDL_OPTS_INSTAGRAM = make_ydl_opts
+
+def make_ydl_opts(youtube_mode=False, facebook_mode=False, instagram_mode=False):
+    opts = _ORIGINAL_MAKE_YDL_OPTS_INSTAGRAM(
+        youtube_mode=youtube_mode,
+        facebook_mode=facebook_mode
+    )
+    if instagram_mode:
+        # Public Instagram media normally works without API/cookies.
+        # Prefer a directly downloadable single file; fall back to best.
+        opts["format"] = "best[ext=mp4]/best"
+        opts["noplaylist"] = True
+    return opts
+
+
 # ============================================================
 # تحميل الفيديو
 # ============================================================
@@ -4406,7 +4445,8 @@ def download_video_sync(url):
 
         opts = make_ydl_opts(
             youtube_mode=youtube_mode,
-            facebook_mode=facebook_mode
+            facebook_mode=facebook_mode,
+            instagram_mode=is_instagram_url(url)
         )
 
         if force_best:
@@ -4603,6 +4643,26 @@ def download_video_sync(url):
 
                 return extract_and_find_file()
 
+        if is_instagram_url(url) and (
+            "requested format is not available" in error_text
+            or "no video formats found" in error_text
+            or "unable to extract" in error_text
+            or "format" in error_text
+            or "login" in error_text
+            or "rate-limit" in error_text
+            or "rate limit" in error_text
+        ):
+            logger.warning("Instagram extraction/format failed; retrying with best.")
+            try:
+                return extract_and_find_file(
+                    force_best=True
+                )
+            except Exception as instagram_retry_error:
+                logger.warning(
+                    "Instagram best-format retry failed: %s",
+                    instagram_retry_error
+                )
+
         raise
 
 
@@ -4732,6 +4792,17 @@ async def handle_url(
             await update.effective_message.reply_text(
                 f"{EMOJI_3} "
                 f"هذا ليس رابط Facebook صحيحاً. أرسل رابط فيديو أو Reels من Facebook."
+            )
+
+            return
+
+    elif platform == "Instagram":
+
+        if not is_instagram_url(url):
+
+            await update.effective_message.reply_text(
+                f"{EMOJI_3} "
+                f"هذا ليس رابط Instagram صحيحاً. أرسل رابط Reel أو Post أو فيديو من Instagram."
             )
 
             return
@@ -5140,6 +5211,7 @@ ENHANCED_MESSAGE_DEFAULTS = {
     "home": "",
     "new_user_welcome": "",
     "platform_tiktok": "تم اختيار TikTok\n\nأرسل رابط الفيديو الآن.",
+    "platform_instagram": "تم اختيار Instagram\n\nأرسل رابط الـ Reel أو الفيديو الآن.",
     "download_status": "⏳ جاري تحميل الفيديو، يرجى الانتظار...",
     "sending_status": "🚀 جاري إرسال الفيديو...",
     "success": "✅ تم تحميل الفيديو بنجاح\n\nالمصدر: {platform}",
@@ -5226,7 +5298,10 @@ def _enhanced_message(key, fallback=None, **values):
         return _replace_plain_emojis(_render_custom_emoji_markup(fallback))
 
 def _button_style(key, fallback="primary"):
-    value = str(db["settings"].get("button_styles", {}).get(key, fallback) or fallback).lower()
+    styles = db["settings"].get("button_styles", {})
+    value = str(styles.get(key, "") or "").lower().strip()
+    if not value:
+        value = str(styles.get("__all__", fallback) or fallback).lower().strip()
     return "primary" if value == "default" else (value if value in {"primary", "success", "danger"} else fallback)
 
 # Premium Emoji requested by the owner: glyph -> Telegram custom emoji ID.
@@ -5453,12 +5528,29 @@ def maintenance_keyboard():
         [_make_button("🔙 رجوع", "admin_panel", key="back_home")],
     ])
 
+def reset_referral_leaderboard():
+    """تصفير أرقام الإحالات والمتصدرين مع الإبقاء على جميع المستخدمين."""
+    users = db.setdefault("users", {})
+    for uid, info in users.items():
+        if not isinstance(info, dict):
+            continue
+        info["referrals"] = 0
+        info["referral_points"] = 0
+        info.pop("referred_by", None)
+
+    settings = db.setdefault("settings", {})
+    settings["referral_claimed_users"] = []
+    settings["referral_reset_at"] = time.time()
+    save_db(db)
+
+
 def referrals_admin_keyboard():
     enabled = bool(db["settings"].get("referrals_enabled", True))
     return InlineKeyboardMarkup([
         [_make_button("🟢 تفعيل" if not enabled else "🔴 تعطيل", "referrals_toggle", key="admin_referrals")],
         [_make_button("🔢 نقاط الإحالة", "referral_points_set", key="admin_referrals")],
         [_make_button("🏆 عدد المتصدرين", "referral_limit_set", key="admin_referrals")],
+        [_make_button("🧹 تصفير المتصدرين", "referral_reset_leaderboard", key="admin_referrals", style="danger", emoji_id="")],
         [_make_button("🔙 رجوع", "admin_panel", key="back_home")],
     ])
 
@@ -5512,8 +5604,12 @@ def get_platform_keyboard():
         [
             _make_button(button_text("platform_tiktok", "TikTok"), "platform_tiktok",
                          key="platform_tiktok", emoji_id=button_emoji("platform_tiktok", "")),
-            _make_button("Facebook", "platform_facebook",
-                         key="platform_facebook", emoji_id="5269427536453984598"),
+            _make_button(button_text("platform_facebook", "Facebook"), "platform_facebook",
+                         key="platform_facebook", emoji_id=button_emoji("platform_facebook", "5269427536453984598")),
+        ],
+        [
+            _make_button(button_text("platform_instagram", "Instagram"), "platform_instagram",
+                         key="platform_instagram", emoji_id=button_emoji("platform_instagram", "5269682734820777950")),
         ],
         [_make_button("🎁 نظام الإحالات", "referrals", key="referrals")],
     ])
@@ -5531,6 +5627,7 @@ MESSAGE_LABELS = {
     "new_user_welcome": "👋 ترحيب العضو الجديد",
     "platform_tiktok": "🎵 اختيار TikTok",
     "platform_facebook": "📘 اختيار Facebook",
+    "platform_instagram": "📷 اختيار Instagram",
     "download_status": "⏳ بدء التحميل",
     "sending_status": "📤 إرسال الفيديو",
     "success": "✅ نجاح التحميل",
@@ -5592,12 +5689,17 @@ def button_editor_text():
     return _replace_plain_emojis((
         f"{EMOJI_5} <b>تخصيص الأزرار والألوان</b> {EMOJI_5}\n\n"
         "غيّر اسم الزر والإيموجي المميز من الأزرار الحالية، "
-        "وغيّر النمط من 🎨.\n\n"
-        "الشفاف/العادي = زر Telegram طبيعي بدون لون مميز."
+        "وغيّر اللون من 🎨.\n"
+        "يوجد أيضاً لون عام يطبّق على جميع الأزرار التي لا تملك لوناً خاصاً.\n\n"
+        "الأنماط المتاحة: أساسي / نجاح / تحذير."
     ))
 
 def button_editor_keyboard():
     rows = []
+    rows.append([
+        _make_button("🎨 اللون العام لكل الأزرار", "button_style_menu___all__", key="admin_buttons"),
+        _make_button("⚙️ إعادة اللون العام", "button_style_reset___all__", key="admin_buttons"),
+    ])
     for key, (default_text, default_emoji) in BUTTON_DEFAULTS.items():
         current = get_button_setting(key)
         rows.append([
@@ -5605,7 +5707,11 @@ def button_editor_keyboard():
                          emoji_id=current["emoji_id"] or ""),
             _make_button("🎨", f"button_style_menu_{key}", key="admin_buttons")
         ])
-    for key, label in [("referrals", "🎁 الإحالات"), ("referral_stats", "📊 إحالاتي"), ("referral_leaders", "🏆 المتصدرون")]:
+    for key, label in [
+        ("referrals", "🎁 الإحالات"),
+        ("referral_stats", "📊 إحالاتي"),
+        ("referral_leaders", "🏆 المتصدرون"),
+    ]:
         rows.append([_make_button(label, f"button_style_menu_{key}", key="admin_buttons", emoji_id="")])
     rows.append([_make_button("🧹 إزالة Premium Emoji من كل الأزرار", "button_reset_all_emojis", style="danger", emoji_id="")])
     rows.append([_make_button("🔙 رجوع للوحة الأدمن", "admin_panel", key="back_home")])
@@ -5737,6 +5843,25 @@ async def admin_callback(update, context, data):
             "🎁 <b>نظام الإحالات</b>\n\n"
             f"الحالة: <b>{'مفعّل' if db['settings']['referrals_enabled'] else 'متوقف'}</b>",
             parse_mode="HTML", reply_markup=referrals_admin_keyboard()
+        )
+        return
+
+    if data == "referral_reset_leaderboard":
+        if not is_admin(user.id):
+            await query.answer("🚫 هذه اللوحة خاصة بالأدمن.", show_alert=True)
+            return
+
+        reset_referral_leaderboard()
+
+        await query.answer("✅ تم تصفير المتصدرين والإحالات.", show_alert=True)
+        await query.edit_message_text(
+            "🎁 <b>نظام الإحالات</b>\n\n"
+            f"الحالة: <b>{'مفعّل' if db['settings'].get('referrals_enabled', True) else 'متوقف'}</b>\n"
+            f"النقاط لكل إحالة: <b>{int(db['settings'].get('referral_points', 1) or 1)}</b>\n"
+            f"المتصدرون: <b>{int(db['settings'].get('referral_leaders_limit', 10) or 10)}</b>\n\n"
+            "🧹 تم تصفير جميع نقاط وإحالات المتصدرين مع الإبقاء على المستخدمين.",
+            parse_mode="HTML",
+            reply_markup=referrals_admin_keyboard()
         )
         return
 
@@ -6081,6 +6206,17 @@ async def handle_url(update, context):
     if user and _maintenance_enabled() and not is_admin(user.id):
         await update.effective_message.reply_text(_maintenance_text(), parse_mode="HTML")
         return
+
+    # Instagram: validate the selected platform before entering the downloader.
+    if user and not is_admin(user.id):
+        selected = context.user_data.get("selected_platform")
+        url = (update.effective_message.text or "").strip() if update.effective_message else ""
+        if selected == "Instagram" and url and not is_instagram_url(url):
+            await update.effective_message.reply_text(
+                "❌ هذا ليس رابط Instagram صحيحاً. أرسل رابط Reel أو Post أو فيديو من Instagram."
+            )
+            return
+
     return await _ORIGINAL_HANDLE_URL(update, context)
 
 # -------------------- Telegram command menu --------------------
