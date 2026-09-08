@@ -4287,7 +4287,7 @@ def get_youtube_cookies_file():
     return None
 
 
-def make_ydl_opts(youtube_mode=False):
+def make_ydl_opts(youtube_mode=False, facebook_mode=False):
     opts = {
         "outtmpl": os.path.join(
             gettempdir(),
@@ -4346,12 +4346,19 @@ def make_ydl_opts(youtube_mode=False):
                     break
             except OSError:
                 pass
-        opts["format"] = (
-            "best[ext=mp4][acodec!=none][vcodec!=none][filesize<50M]/"
-            "best[ext=mp4][acodec!=none][vcodec!=none]/"
-            "best[acodec!=none][vcodec!=none][filesize<50M]/"
-            "best[acodec!=none][vcodec!=none]"
-        )
+        if facebook_mode:
+            # Facebook لا يضمن وجود صيغة MP4 تحتوي على صوت وفيديو معاً،
+            # لذلك لا نطلب ext/acodec/vcodec/filesize بشكل صارم؛ هذا كان سبب
+            # الخطأ: Requested format is not available. نختار أفضل صيغة
+            # متاحة ثم نتحقق من حجم الملف بعد التحميل.
+            opts["format"] = "best[filesize<50M]/best"
+        else:
+            opts["format"] = (
+                "best[ext=mp4][acodec!=none][vcodec!=none][filesize<50M]/"
+                "best[ext=mp4][acodec!=none][vcodec!=none]/"
+                "best[acodec!=none][vcodec!=none][filesize<50M]/"
+                "best[acodec!=none][vcodec!=none]"
+            )
 
     if youtube_mode:
         # لا نطلب video-only + audio-only لأن دمجهما يحتاج ffmpeg.
@@ -4395,11 +4402,16 @@ def make_ydl_opts(youtube_mode=False):
 
 def download_video_sync(url):
 
-    def extract_and_find_file(youtube_mode=False):
+    def extract_and_find_file(youtube_mode=False, facebook_mode=False, force_best=False):
 
         opts = make_ydl_opts(
-            youtube_mode=youtube_mode
+            youtube_mode=youtube_mode,
+            facebook_mode=facebook_mode
         )
+
+        if force_best:
+            # Fallback أخير لفيسبوك إذا أعاد yt-dlp خطأ في اختيار الصيغة.
+            opts["format"] = "best"
 
         with yt_dlp.YoutubeDL(
             opts
@@ -4503,9 +4515,13 @@ def download_video_sync(url):
                 "لم يتم العثور على الملف بعد التحميل."
             )
 
+    facebook_mode = is_facebook_url(url)
+
     try:
 
-        return extract_and_find_file()
+        return extract_and_find_file(
+            facebook_mode=facebook_mode
+        )
 
     except Exception as e:
 
@@ -4548,6 +4564,26 @@ def download_video_sync(url):
 
                 return extract_and_find_file(
                     youtube_mode=True
+                )
+
+        if facebook_mode and (
+            "requested format is not available" in error_text
+            or "no video formats found" in error_text
+            or "unable to extract" in error_text
+            or "format" in error_text
+        ):
+            logger.warning(
+                "Facebook format selection failed; retrying with plain best format."
+            )
+            try:
+                return extract_and_find_file(
+                    facebook_mode=True,
+                    force_best=True
+                )
+            except Exception as facebook_retry_error:
+                logger.warning(
+                    "Facebook best-format retry failed: %s",
+                    facebook_retry_error
                 )
 
         if (
