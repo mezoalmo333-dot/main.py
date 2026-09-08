@@ -5558,7 +5558,7 @@ def reset_referral_leaderboard():
         info.pop("referred_by", None)
 
     settings = db.setdefault("settings", {})
-    settings["referral_claimed_users"] = []
+    settings["referral_claimed_users"] = {}
     settings["referral_reset_at"] = time.time()
     save_db(db)
 
@@ -6853,6 +6853,119 @@ async def premium_emoji_command(update, context):
     if not user or not is_admin(user.id):
         return
     await update.effective_message.reply_text(_premium_emoji_center_text(), parse_mode="HTML", reply_markup=_premium_emoji_center_keyboard())
+
+
+
+# ============================================================
+# REAL FIX PATCH V5
+# 1) button_edit_* must be routed to admin_callback; otherwise Telegram
+#    falls through to the old callback handler and shows:
+#    "تعذر تنفيذ الأمر، حاول مرة أخرى."
+# 2) Instagram gets a stricter single-file fallback and useful error text.
+# ============================================================
+
+# Keep the previous callback implementation intact and only add the missing
+# admin route. This does not remove or replace any existing feature.
+_PREVIOUS_FINAL_BUTTON_CALLBACK_V5 = button_callback
+
+async def button_callback(update, context):
+    query = update.callback_query
+    user = update.effective_user
+    if not query or not user:
+        return
+
+    data = str(query.data or "")
+
+    # The button editor uses button_edit_<key>. The older router did not list
+    # this prefix, so it incorrectly fell through to the user callback.
+    if data.startswith("button_edit_"):
+        try:
+            await query.answer()
+        except Exception:
+            pass
+        if not is_admin(user.id):
+            try:
+                await query.answer("🚫 هذه اللوحة خاصة بالأدمن.", show_alert=True)
+            except Exception:
+                pass
+            return
+        try:
+            await admin_callback(update, context, data)
+        except Exception as exc:
+            logger.exception("Button editor callback failed: %s", exc)
+            try:
+                await query.answer("❌ تعذر فتح تعديل الزر.", show_alert=True)
+            except Exception:
+                pass
+        return
+
+    return await _PREVIOUS_FINAL_BUTTON_CALLBACK_V5(update, context)
+
+
+# Instagram-specific options. The extractor itself is still yt-dlp (not a
+# fake button). Public media can work without cookies, while login/rate-limit
+# protected media needs a valid Instagram cookies.txt file.
+_PREVIOUS_MAKE_YDL_OPTS_V5 = make_ydl_opts
+
+def make_ydl_opts(youtube_mode=False, facebook_mode=False, instagram_mode=False):
+    opts = _PREVIOUS_MAKE_YDL_OPTS_V5(
+        youtube_mode=youtube_mode,
+        facebook_mode=facebook_mode,
+        instagram_mode=instagram_mode,
+    )
+    if instagram_mode:
+        # Prefer one file containing both video+audio so ffmpeg is not required.
+        opts["format"] = "best[ext=mp4][acodec!=none][vcodec!=none]/best[acodec!=none][vcodec!=none]/best"
+        opts["noplaylist"] = True
+        opts.setdefault("http_headers", {})["Referer"] = "https://www.instagram.com/"
+        opts["http_headers"]["User-Agent"] = (
+            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+        )
+    return opts
+
+
+# Keep the original downloader and add a final Instagram retry using the most
+# permissive single-file format. This is intentionally appended so no existing
+# downloader code is deleted.
+_PREVIOUS_DOWNLOAD_VIDEO_SYNC_V5 = download_video_sync
+
+def download_video_sync(url):
+    if not is_instagram_url(url):
+        return _PREVIOUS_DOWNLOAD_VIDEO_SYNC_V5(url)
+
+    try:
+        return _PREVIOUS_DOWNLOAD_VIDEO_SYNC_V5(url)
+    except Exception as first_error:
+        first_text = str(first_error).lower()
+        instagram_auth_error = any(token in first_text for token in (
+            "login required", "rate-limit", "rate limit", "requested content is not available",
+            "main webpage is locked behind the login page", "empty media response",
+            "no video formats found", "requested format is not available",
+        ))
+
+        # One final direct extractor pass after yt-dlp's normal retries.
+        # This is useful when the first extractor pass chose a format that is
+        # unavailable for the particular Instagram response.
+        if instagram_auth_error or "format" in first_text or "unable to extract" in first_text:
+            opts = make_ydl_opts(instagram_mode=True)
+            opts["format"] = "best"
+            opts["noplaylist"] = True
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    prepared = ydl.prepare_filename(info)
+                    candidates = [prepared]
+                    root, _ = os.path.splitext(prepared)
+                    for ext in (".mp4", ".webm", ".mkv", ".mov"):
+                        candidates.append(root + ext)
+                    for candidate in candidates:
+                        if os.path.isfile(candidate):
+                            return candidate
+            except Exception as second_error:
+                logger.warning("Instagram final extractor retry failed: %s", second_error)
+
+        raise first_error
 
 
 # ============================================================
