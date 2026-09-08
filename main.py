@@ -1279,11 +1279,11 @@ def message_editor_keyboard():
 
 
 def button_emoji_keyboard(key):
+    library = _premium_library_ids() if "_premium_library_ids" in globals() else list(AVAILABLE_CUSTOM_EMOJI_IDS)
     rows = []
-    # 2 per row; the emoji itself is rendered by Telegram from its ID.
-    for i in range(0, len(AVAILABLE_CUSTOM_EMOJI_IDS), 2):
+    for i in range(0, len(library), 2):
         row = []
-        for emoji_id in AVAILABLE_CUSTOM_EMOJI_IDS[i:i + 2]:
+        for emoji_id in library[i:i + 2]:
             row.append(InlineKeyboardButton(
                 "✨ اختيار",
                 callback_data=f"button_emoji_{key}_{emoji_id}",
@@ -1307,7 +1307,6 @@ def button_emoji_keyboard(key):
         )
     ])
     return InlineKeyboardMarkup(rows)
-
 
 def button_editor_text():
     lines = [
@@ -2420,8 +2419,9 @@ async def admin_callback(
             await query.answer("إيموجي غير صالح.", show_alert=True)
             return
         key, emoji_id = parts
-        if key not in BUTTON_DEFAULTS or emoji_id not in AVAILABLE_CUSTOM_EMOJI_IDS:
-            await query.answer("الإيموجي غير متاح.", show_alert=True)
+        available_now = set(_premium_library_ids()) if "_premium_library_ids" in globals() else set(AVAILABLE_CUSTOM_EMOJI_IDS)
+        if key not in BUTTON_DEFAULTS or emoji_id not in available_now:
+            await query.answer("الإيموجي غير محفوظ في مكتبة البوت.", show_alert=True)
             return
         current = get_button_setting(key)
         set_button_setting(key, current["text"], emoji_id)
@@ -4644,6 +4644,19 @@ def download_video_sync(url):
                 return extract_and_find_file()
 
         if is_instagram_url(url) and (
+            "requested content is not available" in error_text
+            or "empty media response" in error_text
+            or "login required" in error_text
+            or "unable to extract" in error_text
+        ):
+            logger.warning("Instagram extractor error detected; trying yt-dlp update.")
+            try:
+                if update_yt_dlp_tiktok_fallback():
+                    return extract_and_find_file()
+            except Exception as instagram_update_error:
+                logger.warning("Instagram yt-dlp update retry failed: %s", instagram_update_error)
+
+        if is_instagram_url(url) and (
             "requested format is not available" in error_text
             or "no video formats found" in error_text
             or "unable to extract" in error_text
@@ -5389,7 +5402,13 @@ def _make_button(text, callback_data=None, url=None, key="", emoji_id=None, styl
 
     # Default: primary. Add/enable => success. Delete/disable/ban/remove => danger.
     action_key = f"{key} {callback_data or ''} {raw_text}".lower()
-    if style is not None:
+    # A configured global style is a real runtime override for every button
+    # created through this helper. Per-button styles are used only when no
+    # global style is configured.
+    global_style = str(db.get("settings", {}).get("button_styles", {}).get("__all__", "") or "").lower().strip()
+    if global_style in {"primary", "success", "danger"}:
+        chosen = global_style
+    elif style is not None:
         chosen = style
     elif any(x in action_key for x in ("enable", "activate", "add_", "add ", "تفعيل", "إضافة", "مفعّل", "مفعلة", "مفعّلة")):
         chosen = "success"
@@ -5664,7 +5683,7 @@ def message_editor_keyboard():
 # -------------------- Button styles --------------------
 
 def set_button_style(key, style):
-    if key not in BUTTON_DEFAULTS and key not in {"referrals", "referral_stats", "referral_leaders", "admin_maintenance", "admin_referrals", "admin_copy_source"}:
+    if key not in BUTTON_DEFAULTS and key not in {"__all__", "referrals", "referral_stats", "referral_leaders", "admin_maintenance", "admin_referrals", "admin_copy_source"}:
         return False
     if style not in {"default", "primary", "success", "danger"}:
         return False
@@ -5925,6 +5944,15 @@ async def admin_callback(update, context, data):
             button_editor_text(),
             parse_mode="HTML",
             reply_markup=button_editor_keyboard()
+        )
+        return
+
+    if data == "button_style_reset___all__":
+        db.setdefault("settings", {}).setdefault("button_styles", {}).pop("__all__", None)
+        save_db(db)
+        await query.answer("✅ تمت إعادة اللون العام.", show_alert=True)
+        await query.edit_message_text(
+            button_editor_text(), parse_mode="HTML", reply_markup=button_editor_keyboard()
         )
         return
 
@@ -6456,8 +6484,8 @@ def _premium_button_wrapper(*args, **kwargs):
 # compatibility wrapper, including buttons not using _make_button().
 InlineKeyboardButton = _premium_button_wrapper
 
-def _auto_fill_missing_button_emojis(unique=True):
-    library = _premium_library_ids()
+def _auto_fill_missing_button_emojis(unique=True, library_override=None):
+    library = list(library_override) if library_override is not None else _premium_library_ids()
     if not library:
         return 0
     settings = db.setdefault("settings", {})
@@ -6489,8 +6517,35 @@ def _auto_fill_missing_button_emojis(unique=True):
         save_db(db)
     return changed
 
+def _premium_assign_keyboard():
+    rows = []
+    for key, (label, _eid) in BUTTON_DEFAULTS.items():
+        rows.append([_make_button(
+            button_text(key, label),
+            f"premium_assign_{key}",
+            key=key,
+            emoji_id=button_emoji(key, "")
+        )])
+    rows.append([_make_button("🔙 رجوع", "admin_emoji_center", key="back_home")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _captured_premium_library_ids():
+    """Only IDs actually captured from Telegram custom_emoji entities."""
+    raw = db.setdefault("settings", {}).setdefault("custom_emoji_library", [])
+    if not isinstance(raw, list):
+        raw = []
+        db["settings"]["custom_emoji_library"] = raw
+    result = []
+    for eid in raw:
+        eid = str(eid).strip()
+        if eid.isdigit() and eid not in result:
+            result.append(eid)
+    return result
+
+
 def _premium_emoji_center_text():
-    library = _premium_library_ids()
+    library = _captured_premium_library_ids()
     assigned = 0
     for key in BUTTON_DEFAULTS:
         if button_emoji(key, ""):
@@ -6506,9 +6561,11 @@ def _premium_emoji_center_text():
 
 def _premium_emoji_center_keyboard():
     return InlineKeyboardMarkup([
-        [_make_button("✨ تعبئة كل الأزرار تلقائياً", "premium_fill_buttons", key="admin_buttons")],
-        [_make_button("🎲 إعادة توزيع Premium Emoji", "premium_reassign_buttons", key="admin_buttons")],
+        [_make_button("📥 إضافة Premium Emoji فعلي", "premium_capture", key="admin_buttons")],
+        [_make_button("🎯 تعيين Premium Emoji لزر", "premium_assign_menu", key="admin_buttons")],
         [_make_button("📚 عرض مكتبة الإيموجيات", "premium_show_library", key="admin_buttons")],
+        [_make_button("✨ تعبئة الأزرار من المكتبة", "premium_fill_buttons", key="admin_buttons")],
+        [_make_button("🎲 إعادة توزيع Premium Emoji", "premium_reassign_buttons", key="admin_buttons")],
         [_make_button("🔙 رجوع للوحة الأدمن", "admin_panel", key="back_home")],
     ])
 
@@ -6517,17 +6574,59 @@ _ORIGINAL_ADMIN_CALLBACK_PRO = admin_callback
 async def admin_callback(update, context, data):
     query = update.callback_query
     if data == "admin_emoji_center":
+        context.user_data.pop("admin_action", None)
         await query.edit_message_text(_premium_emoji_center_text(), parse_mode="HTML", reply_markup=_premium_emoji_center_keyboard())
         return
+
+    if data == "premium_capture":
+        context.user_data["admin_action"] = "premium_capture_global"
+        await query.edit_message_text(
+            "📥 <b>إضافة Premium Emoji حقيقي</b>\n\n"
+            "أرسل الآن Premium Emoji من لوحة الإيموجي في Telegram.\n"
+            "سيتم التقاط <code>custom_emoji_id</code> الحقيقي تلقائياً وحفظه في مكتبة البوت.\n\n"
+            "يمكنك إرسال أكثر من إيموجي في رسالة واحدة.\n"
+            "للإلغاء: /cancel",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[_make_button("🔙 رجوع", "admin_emoji_center", key="back_home")]])
+        )
+        return
+
+    if data == "premium_assign_menu":
+        context.user_data.pop("admin_action", None)
+        await query.edit_message_text(
+            "🎯 <b>اختر الزر الذي تريد تغيير Premium Emoji الخاص به</b>",
+            parse_mode="HTML",
+            reply_markup=_premium_assign_keyboard()
+        )
+        return
+
+    if data.startswith("premium_assign_"):
+        key = data.replace("premium_assign_", "", 1)
+        if key not in BUTTON_DEFAULTS:
+            await query.answer("الزر غير موجود.", show_alert=True)
+            return
+        context.user_data["admin_action"] = f"premium_assign_emoji:{key}"
+        await query.edit_message_text(
+            f"🎯 <b>تعيين Premium Emoji</b>\n\n"
+            f"الزر: <b>{html.escape(button_text(key, BUTTON_DEFAULTS[key][0]))}</b>\n\n"
+            "أرسل الآن Premium Emoji الحقيقي من Telegram، وسيتم حفظه للزر مباشرة بدون كتابة ID.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[_make_button("🔙 رجوع", "premium_assign_menu", key="back_home")]])
+        )
+        return
     if data == "premium_fill_buttons":
-        changed = _auto_fill_missing_button_emojis(unique=True)
+        library = _captured_premium_library_ids()
+        if not library:
+            await query.answer("❌ لا توجد Premium Emoji ملتقطة بعد. استخدم إضافة Premium Emoji فعلي أولاً.", show_alert=True)
+            return
+        changed = _auto_fill_missing_button_emojis(unique=True, library_override=library)
         await query.answer(f"تمت إضافة Premium Emoji إلى {changed} زر.", show_alert=True)
         await query.edit_message_text(_premium_emoji_center_text(), parse_mode="HTML", reply_markup=_premium_emoji_center_keyboard())
         return
     if data == "premium_reassign_buttons":
         settings = db.setdefault("settings", {})
         buttons = settings.setdefault("button_settings", {})
-        library = _premium_library_ids()
+        library = _captured_premium_library_ids()
         if library:
             for index, key in enumerate(BUTTON_DEFAULTS):
                 item = buttons.setdefault(key, {})
@@ -6537,7 +6636,7 @@ async def admin_callback(update, context, data):
         await query.edit_message_text(_premium_emoji_center_text(), parse_mode="HTML", reply_markup=_premium_emoji_center_keyboard())
         return
     if data == "premium_show_library":
-        library = _premium_library_ids()
+        library = _captured_premium_library_ids()
         rows = []
         for i in range(0, len(library), 2):
             row = []
@@ -6609,6 +6708,51 @@ async def handle_admin_message(update, context):
     action = context.user_data.get("admin_action") if user else None
 
     # ============================================================
+    # PREMIUM CENTER — capture real Telegram custom emoji IDs
+    # ============================================================
+    if (message and user and is_admin(user.id) and isinstance(action, str)):
+        if action == "premium_capture_global":
+            captured_ids = _extract_message_custom_emoji_ids(message)
+            if captured_ids:
+                context.user_data.pop("admin_action", None)
+                await message.reply_text(
+                    "✅ <b>تم حفظ Premium Emoji الحقيقي.</b>\n\n"
+                    f"تم التقاط: <b>{len(captured_ids)}</b> إيموجي\n"
+                    + "\n".join(f"• <code>{html.escape(eid)}</code>" for eid in captured_ids),
+                    parse_mode="HTML",
+                    reply_markup=_premium_emoji_center_keyboard()
+                )
+                return True
+            await message.reply_text(
+                "❌ لم أجد Premium Emoji في الرسالة. أرسل الإيموجي من قسم Premium Emoji في Telegram، وليس Emoji عادي.",
+                parse_mode="HTML"
+            )
+            return True
+
+        if action.startswith("premium_assign_emoji:"):
+            key = action.split(":", 1)[1]
+            if key in BUTTON_DEFAULTS:
+                captured_ids = _extract_message_custom_emoji_ids(message)
+                if captured_ids:
+                    eid = captured_ids[0]
+                    current = get_button_setting(key)
+                    if set_button_setting(key, current["text"], eid):
+                        context.user_data.pop("admin_action", None)
+                        await message.reply_text(
+                            f"✅ <b>تم تعيين Premium Emoji الحقيقي للزر.</b>\n\n"
+                            f"الزر: <b>{html.escape(current['text'])}</b>\n"
+                            f"ID: <code>{html.escape(eid)}</code>",
+                            parse_mode="HTML",
+                            reply_markup=button_editor_keyboard()
+                        )
+                        return True
+                await message.reply_text(
+                    "❌ لم أجد Premium Emoji حقيقي في الرسالة. أرسل Premium Emoji من Telegram.",
+                    parse_mode="HTML"
+                )
+                return True
+
+    # ============================================================
     # BUTTON EDIT — automatic Premium Emoji capture
     # ============================================================
     # The old handler required: Button Name|CUSTOM_EMOJI_ID.
@@ -6673,7 +6817,11 @@ async def handle_admin_message(update, context):
 _ORIGINAL_BUTTON_CALLBACK_PRO = button_callback
 async def button_callback(update, context):
     query = update.callback_query
-    if query and query.data in {"admin_emoji_center", "premium_fill_buttons", "premium_reassign_buttons", "premium_show_library", "premium_noop"}:
+    if query and (
+        query.data in {"admin_emoji_center", "premium_capture", "premium_assign_menu",
+                       "premium_fill_buttons", "premium_reassign_buttons", "premium_show_library", "premium_noop"}
+        or str(query.data or "").startswith("premium_assign_")
+    ):
         user = update.effective_user
         if not user or not is_admin(user.id):
             await query.answer("🚫 هذه اللوحة خاصة بالأدمن.", show_alert=True)
