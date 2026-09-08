@@ -108,7 +108,7 @@ logger = logging.getLogger(__name__)
 # Custom Emoji
 # ============================================================
 
-EMOJI_1 = '<tg-emoji emoji-id="5782850920610013789">✨</tg-emoji>'
+EMOJI_1 = '<tg-emoji emoji-id="">✨</tg-emoji>'
 EMOJI_2 = '<tg-emoji emoji-id="5890969691425347748">⚡</tg-emoji>'
 EMOJI_3 = '<tg-emoji emoji-id="5890795783904565270">🔥</tg-emoji>'
 EMOJI_4 = '<tg-emoji emoji-id="5782815375460671828">💎</tg-emoji>'
@@ -119,7 +119,7 @@ EMOJI_8 = '<tg-emoji emoji-id="5462919317832082236">⭐</tg-emoji>'
 EMOJI_9 = '<tg-emoji emoji-id="5767199471372867777">🎯</tg-emoji>'
 
 CUSTOM_EMOJI_IDS = [
-    "5782850920610013789",
+    "",
     "5890969691425347748",
     "5890795783904565270",
     "5782815375460671828",
@@ -177,7 +177,7 @@ BOT_CUSTOM_EMOJI_IDS = [
     "5463200135678796607",
     "5463386283856373524",
     "5462987027991503774",
-    "5962888055508441682",
+    "",
     "5962858574852921606",
     "5963161271263041568",
 ]
@@ -203,12 +203,12 @@ AVAILABLE_CUSTOM_EMOJI_IDS = [
     "5891223481042868350",
     "5888585967396198556",
     "5888925871108003433",
-    "5888675006363211723",
-    "5890730440272123773",
-    "5890960431475857412",
+    "",
+    "",
+    "",
     "5888684446701328138",
-    "5890755394032113567",
-    "5888769147751373843",
+    "",
+    "",
     "5890711263243147926",
     "5891235511246264255",
     "5888630540566796058",
@@ -238,7 +238,7 @@ AVAILABLE_CUSTOM_EMOJI_IDS = [
     "5890808771885668859",
     "5888663955412359816",
     "5890864005165096780",
-    "5269682734820777950",
+    "",
     "5116562499268773081",
     "5118715849842099559",
     "5118886415878325117",
@@ -1065,8 +1065,9 @@ def format_welcome_text(
 
 BUTTON_DEFAULTS = {
     "platform_tiktok": ("TikTok", "5391044040860906456"),
+    "platform_facebook": ("Facebook", "5269427536453984598"),
     "back_home": ("🔙 رجوع", ""),
-    "admin_stats": ("📊 الإحصائيات", "5782850920610013789"),
+    "admin_stats": ("📊 الإحصائيات", ""),
     "admin_broadcast": ("📢 إذاعة", "5890969691425347748"),
     "admin_welcome_photo": ("📸 ترحيب صورة", "5890795783904565270"),
     "admin_welcome_video": ("🎬 ترحيب فيديو", "5782815375460671828"),
@@ -1076,8 +1077,8 @@ BUTTON_DEFAULTS = {
     "admin_download_text": ("📝 رسالة التحميل", "5462919317832082236"),
     "admin_ban": ("🚫 حظر مستخدم", "5767199471372867777"),
     "admin_unban": ("♻️ فك حظر", "5782815375460671828"),
-    "admin_admins": ("👑 المشرفون", "5782850920610013789"),
-    "admin_users": ("👥 المستخدمون", "5782850920610013789"),
+    "admin_admins": ("👑 المشرفون", ""),
+    "admin_users": ("👥 المستخدمون", ""),
     "admin_panel": ("🔄 تحديث اللوحة", "5890969691425347748"),
     "check_subscription": ("🔄 تحقّق من الاشتراك", "5890969691425347748"),
     "admin_add_admin": ("➕ إضافة مشرف", "5888663955412359816"),
@@ -1178,6 +1179,7 @@ MESSAGE_DEFAULTS = {
     "home": "",
     "new_user_welcome": "",
     "platform_tiktok": "تم اختيار TikTok\n\nالرجاء إرسال رابط الفيديو:",
+    "platform_facebook": "تم اختيار Facebook\n\nالرجاء إرسال رابط الفيديو أو الـ Reels:",
     "download_status": "⏳ جاري تحميل الفيديو، يرجى الانتظار...",
     "sending_status": "🚀 جاري إرسال الفيديو...",
     "success": "✅ تم تحميل الفيديو بنجاح\n\nالمصدر: {platform}",
@@ -1416,7 +1418,7 @@ def get_back_keyboard():
 def EMOJI_IDS():
 
     return {
-        "stats": "5782850920610013789",
+        "stats": "",
         "broadcast": "5890969691425347748",
         "photo": "5890795783904565270",
         "video": "5782815375460671828",
@@ -1425,7 +1427,7 @@ def EMOJI_IDS():
         "force": "5462989862669920629",
         "download": "5462919317832082236",
         "ban": "5767199471372867777",
-        "users": "5782850920610013789",
+        "users": "",
         "refresh": "5890969691425347748",
         "back": "5890795783904565270",
         "enable": "5782815375460671828",
@@ -2241,6 +2243,17 @@ async def button_callback(
         )
 
         return
+    # ========================================================
+    # Facebook
+    # ========================================================
+
+    if data == "platform_facebook":
+        context.user_data["selected_platform"] = "Facebook"
+        msg = get_message_setting("platform_facebook", MESSAGE_DEFAULTS["platform_facebook"])
+        msg = format_welcome_text(msg, user.first_name or "", "@" + user.username if user.username else "لا يوجد", user.id)
+        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=get_back_keyboard())
+        return
+
     # ========================================================
     # TikTok
     # ========================================================
@@ -4230,6 +4243,14 @@ def is_tiktok_url(url):
     )
 
 
+def is_facebook_url(url):
+    return bool(re.search(
+        r"(?:https?://)?(?:www\.|m\.|mbasic\.)?(?:facebook\.com|fb\.watch)(?:/|$)",
+        str(url or ""),
+        re.IGNORECASE
+    ))
+
+
 # ============================================================
 # إعدادات yt-dlp
 # ============================================================
@@ -4305,6 +4326,32 @@ def make_ydl_opts(youtube_mode=False):
             "Accept-Language": "en-US,en;q=0.9",
         },
     }
+
+    if not youtube_mode:
+        fb_cookie_candidates = []
+        env_fb = os.getenv("FACEBOOK_COOKIES_FILE", "").strip()
+        if env_fb:
+            fb_cookie_candidates.append(env_fb)
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        fb_cookie_candidates.extend([
+            os.path.join(base_dir, "facebook_cookies.txt"),
+            os.path.join(base_dir, "fb_cookies.txt"),
+            os.path.join(gettempdir(), "facebook_cookies.txt"),
+            os.path.join(gettempdir(), "fb_cookies.txt"),
+        ])
+        for fb_path in fb_cookie_candidates:
+            try:
+                if os.path.isfile(fb_path) and os.path.getsize(fb_path) > 20:
+                    opts["cookiefile"] = fb_path
+                    break
+            except OSError:
+                pass
+        opts["format"] = (
+            "best[ext=mp4][acodec!=none][vcodec!=none][filesize<50M]/"
+            "best[ext=mp4][acodec!=none][vcodec!=none]/"
+            "best[acodec!=none][vcodec!=none][filesize<50M]/"
+            "best[acodec!=none][vcodec!=none]"
+        )
 
     if youtube_mode:
         # لا نطلب video-only + audio-only لأن دمجهما يحتاج ffmpeg.
@@ -4638,6 +4685,17 @@ async def handle_url(
             await update.effective_message.reply_text(
                 f"{EMOJI_3} "
                 f"هذا ليس رابط TikTok صحيحاً."
+            )
+
+            return
+
+    elif platform == "Facebook":
+
+        if not is_facebook_url(url):
+
+            await update.effective_message.reply_text(
+                f"{EMOJI_3} "
+                f"هذا ليس رابط Facebook صحيحاً. أرسل رابط فيديو أو Reels من Facebook."
             )
 
             return
@@ -5146,7 +5204,7 @@ REQUESTED_CUSTOM_EMOJI_MAP = {
     '📞': "5891198458563402576",
     '✈️': "5891223481042868350",
     '👑': "5888585967396198556",
-    '🌟': "5888675006363211723",
+    '🌟': "",
     '❤️': "5888684446701328138",
     '🆕': "5890711263243147926",
     '✔️': "5891235511246264255",
@@ -5415,8 +5473,12 @@ async def start(update, context):
 
 def get_platform_keyboard():
     return InlineKeyboardMarkup([
-        [_make_button(button_text("platform_tiktok", "TikTok"), "platform_tiktok",
-                      key="platform_tiktok", emoji_id=button_emoji("platform_tiktok", ""))],
+        [
+            _make_button(button_text("platform_tiktok", "TikTok"), "platform_tiktok",
+                         key="platform_tiktok", emoji_id=button_emoji("platform_tiktok", "")),
+            _make_button("Facebook", "platform_facebook",
+                         key="platform_facebook", emoji_id="5269427536453984598"),
+        ],
         [_make_button("🎁 نظام الإحالات", "referrals", key="referrals")],
     ])
 
@@ -5432,6 +5494,7 @@ MESSAGE_LABELS = {
     "home": "🏠 الرئيسية",
     "new_user_welcome": "👋 ترحيب العضو الجديد",
     "platform_tiktok": "🎵 اختيار TikTok",
+    "platform_facebook": "📘 اختيار Facebook",
     "download_status": "⏳ بدء التحميل",
     "sending_status": "📤 إرسال الفيديو",
     "success": "✅ نجاح التحميل",
@@ -6471,360 +6534,6 @@ async def premium_emoji_command(update, context):
         return
     await update.effective_message.reply_text(_premium_emoji_center_text(), parse_mode="HTML", reply_markup=_premium_emoji_center_keyboard())
 
-
-# ============================================================
-# LEADER PATCH - FACEBOOK + AUTO PREMIUM EMOJI + RESET LEADERBOARD
-# ============================================================
-# الإضافات هنا لا تحذف أي وظيفة سابقة؛ يتم استبدال/توسيع نقاط التشغيل
-# النهائية فقط حتى تبقى كل وظائف النسخة الأصلية متاحة.
-
-# Premium Emoji IDs requested for removal from the bot/library.
-_REMOVED_PREMIUM_EMOJI_IDS = {
-    "5269682734820777950",
-    "5782850920610013789",
-    "5962888055508441682",
-    "5269371036159203113",
-    "5890960431475857412",
-    "5890730440272123773",
-    "5888675006363211723",
-    "5888769147751373843",
-    "5890755394032113567",
-}
-
-# Facebook button Premium Emoji requested by the owner.
-FACEBOOK_BUTTON_EMOJI_ID = "5269427536453984598"
-
-# Keep the removed IDs out of every automatically generated Premium Emoji list.
-_ORIGINAL_PREMIUM_LIBRARY_IDS_FINAL = _premium_library_ids
-
-def _premium_library_ids():
-    result = []
-    try:
-        raw = _ORIGINAL_PREMIUM_LIBRARY_IDS_FINAL()
-    except Exception:
-        raw = []
-    for eid in raw:
-        eid = str(eid).strip()
-        if eid.isdigit() and eid not in _REMOVED_PREMIUM_EMOJI_IDS and eid not in result:
-            result.append(eid)
-    # Also clean the persistent library so removed IDs do not come back after restart.
-    try:
-        library = db.setdefault("settings", {}).setdefault("custom_emoji_library", [])
-        cleaned = [str(x).strip() for x in library
-                   if str(x).strip().isdigit() and str(x).strip() not in _REMOVED_PREMIUM_EMOJI_IDS]
-        if cleaned != library:
-            db["settings"]["custom_emoji_library"] = cleaned
-            save_db(db, create_backup=False)
-    except Exception:
-        pass
-    return result
-
-# Prevent removed IDs from being selected even when an old database contains them.
-_ORIGINAL_BUTTON_EMOJI_FINAL = button_emoji
-def button_emoji(key, fallback=""):
-    value = str(_ORIGINAL_BUTTON_EMOJI_FINAL(key, fallback) or "").strip()
-    if value in _REMOVED_PREMIUM_EMOJI_IDS:
-        return ""
-    fallback = str(fallback or "").strip()
-    return "" if fallback in _REMOVED_PREMIUM_EMOJI_IDS else value
-
-# Remove the requested IDs from the persistent button settings without touching
-# the rest of the database/users/referrals.
-try:
-    _button_settings_cleanup = db.setdefault("settings", {}).setdefault("button_settings", {})
-    _button_cleanup_changed = False
-    for _bk, _bv in list(_button_settings_cleanup.items()):
-        if isinstance(_bv, dict) and str(_bv.get("emoji_id", "")).strip() in _REMOVED_PREMIUM_EMOJI_IDS:
-            _bv["emoji_id"] = ""
-            _button_cleanup_changed = True
-    if _button_cleanup_changed:
-        save_db(db)
-except Exception:
-    pass
-
-# -------------------- Facebook downloader --------------------
-
-def is_facebook_url(url):
-    """Recognize Facebook videos, reels, watch links, mobile links and fb.watch."""
-    return bool(re.search(
-        r"(?:https?://)?(?:www\.|m\.|mbasic\.)?(?:facebook\.com|fb\.watch)(?:/|$)",
-        str(url or ""),
-        re.IGNORECASE
-    ))
-
-
-def get_facebook_cookies_file():
-    """Optional Facebook cookies for videos that require an authenticated session."""
-    candidates = []
-    env_path = os.getenv("FACEBOOK_COOKIES_FILE", "").strip()
-    if env_path:
-        candidates.append(env_path)
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    candidates.extend([
-        os.path.join(base_dir, "facebook_cookies.txt"),
-        os.path.join(base_dir, "fb_cookies.txt"),
-        os.path.join(gettempdir(), "facebook_cookies.txt"),
-        os.path.join(gettempdir(), "fb_cookies.txt"),
-    ])
-    for path in candidates:
-        try:
-            if path and os.path.isfile(path) and os.path.getsize(path) > 20:
-                return path
-        except OSError:
-            pass
-    return None
-
-_ORIGINAL_MAKE_YDL_OPTS_FINAL = make_ydl_opts
-
-def make_ydl_opts(youtube_mode=False):
-    opts = _ORIGINAL_MAKE_YDL_OPTS_FINAL(youtube_mode=youtube_mode)
-    fb_cookies = get_facebook_cookies_file()
-    if fb_cookies:
-        opts["cookiefile"] = fb_cookies
-    # Facebook commonly exposes the direct video stream as MP4. Keep a
-    # single-file format so the bot remains usable without ffmpeg.
-    opts["format"] = (
-        "best[ext=mp4][acodec!=none][vcodec!=none][filesize<50M]/"
-        "best[ext=mp4][acodec!=none][vcodec!=none]/"
-        "best[acodec!=none][vcodec!=none][filesize<50M]/"
-        "best[acodec!=none][vcodec!=none]"
-    )
-    return opts
-
-# Add Facebook to the visible platform list.
-def get_platform_keyboard():
-    return InlineKeyboardMarkup([
-        [
-            _make_button(
-                button_text("platform_tiktok", "TikTok"),
-                "platform_tiktok",
-                key="platform_tiktok",
-                emoji_id=button_emoji("platform_tiktok", "")
-            ),
-            _make_button(
-                "Facebook",
-                "platform_facebook",
-                key="platform_facebook",
-                emoji_id=FACEBOOK_BUTTON_EMOJI_ID
-            ),
-        ],
-        [_make_button("🎁 نظام الإحالات", "referrals", key="referrals")],
-    ])
-
-# Add Facebook-specific status text while preserving the existing message editor.
-MESSAGE_DEFAULTS.setdefault(
-    "platform_facebook",
-    "تم اختيار Facebook\n\nالرجاء إرسال رابط الفيديو أو الـ Reels:"
-)
-ENHANCED_MESSAGE_DEFAULTS.setdefault(
-    "platform_facebook",
-    "تم اختيار Facebook\n\nأرسل رابط فيديو Facebook أو Reels الآن."
-)
-
-_ORIGINAL_BUTTON_CALLBACK_FINAL = button_callback
-
-async def button_callback(update, context):
-    query = update.callback_query
-    user = update.effective_user
-    if query and user and query.data == "platform_facebook":
-        try:
-            await query.answer()
-        except Exception:
-            pass
-        context.user_data["selected_platform"] = "Facebook"
-        msg = get_message_setting(
-            "platform_facebook",
-            MESSAGE_DEFAULTS["platform_facebook"]
-        )
-        msg = format_welcome_text(
-            msg,
-            user.first_name or "",
-            "@" + user.username if user.username else "لا يوجد",
-            user.id
-        )
-        await query.edit_message_text(
-            msg,
-            parse_mode="HTML",
-            reply_markup=get_back_keyboard()
-        )
-        return
-    return await _ORIGINAL_BUTTON_CALLBACK_FINAL(update, context)
-
-# -------------------- Reset referral leaderboard --------------------
-
-def reset_referral_leaderboard():
-    """Zero referral rankings while keeping all Telegram users intact."""
-    changed = False
-    for _uid, _record in db.get("users", {}).items():
-        if not isinstance(_record, dict):
-            continue
-        if _record.get("referrals", 0) != 0:
-            _record["referrals"] = 0
-            changed = True
-        if _record.get("referral_points", 0) != 0:
-            _record["referral_points"] = 0
-            changed = True
-        # Remove only referral ownership; do not delete the user itself.
-        if "referred_by" in _record:
-            _record.pop("referred_by", None)
-            changed = True
-    if db.setdefault("settings", {}).get("referral_claimed_users"):
-        db["settings"]["referral_claimed_users"] = {}
-        changed = True
-    if changed:
-        save_db(db)
-    return changed
-
-_ORIGINAL_REFERRALS_ADMIN_KEYBOARD_FINAL = referrals_admin_keyboard
-
-def referrals_admin_keyboard():
-    markup = _ORIGINAL_REFERRALS_ADMIN_KEYBOARD_FINAL()
-    rows = list(markup.inline_keyboard)
-    # Insert before the back button.
-    rows.insert(max(0, len(rows) - 1), [
-        _make_button(
-            "🧹 تصفير المتصدرون",
-            "referral_reset_leaderboard",
-            key="admin_referrals",
-            style="danger",
-            emoji_id=""
-        )
-    ])
-    return InlineKeyboardMarkup(rows)
-
-_ORIGINAL_ADMIN_CALLBACK_FINAL = admin_callback
-
-async def admin_callback(update, context, data):
-    query = update.callback_query
-    if data == "referral_reset_leaderboard":
-        reset_referral_leaderboard()
-        await query.answer("تم تصفير المتصدرين بنجاح.", show_alert=True)
-        await query.edit_message_text(
-            "🧹 <b>تم تصفير المتصدرين</b>\n\n"
-            "تم تصفير الإحالات والنقاط لجميع المستخدمين وحذف سجل الإحالات، "
-            "مع الاحتفاظ بكل الأعضاء وقاعدة البيانات.",
-            parse_mode="HTML",
-            reply_markup=referrals_admin_keyboard()
-        )
-        return
-    return await _ORIGINAL_ADMIN_CALLBACK_FINAL(update, context, data)
-
-# -------------------- Broadcast + transparent button Premium Emoji --------------------
-# The admin can now send the button's Premium Emoji itself; no ID is required.
-# Flow: Admin > إذاعة > إذاعة + زر شفاف > send content > send label|URL > send Premium Emoji.
-
-_ORIGINAL_HANDLE_ADMIN_MESSAGE_FINAL = handle_admin_message
-
-async def handle_admin_message(update, context):
-    message = update.effective_message
-    user = update.effective_user
-    action = context.user_data.get("admin_action") if user else None
-
-    if (message and user and is_admin(user.id) and action == "broadcast_button_config"):
-        if not message.text or "|" not in message.text:
-            # If the admin sent only the actual Premium Emoji, accept it as the icon
-            # for an already prepared button configuration.
-            captured = _extract_message_custom_emoji_ids(message)
-            if captured and context.user_data.get("broadcast_button_label") and context.user_data.get("broadcast_button_url"):
-                context.user_data["broadcast_button_emoji_id"] = captured[0]
-                context.user_data["admin_action"] = "broadcast_button_ready"
-                await message.reply_text(
-                    "✅ تم التقاط Premium Emoji تلقائياً بدون ID.\n\n"
-                    "أرسل الآن كلمة <b>نشر</b> لإرسال الإذاعة، أو /cancel للإلغاء.",
-                    parse_mode="HTML"
-                )
-                return True
-            await message.reply_text(
-                "❌ الصيغة: <code>اسم الزر|https://example.com</code>\n"
-                "ثم أرسل Premium Emoji نفسه إذا أردت أيقونة مخصصة.",
-                parse_mode="HTML"
-            )
-            return True
-        label, url = [x.strip() for x in message.text.split("|", 1)]
-        if not label or not re.match(r"^https?://", url, re.IGNORECASE):
-            await message.reply_text("❌ الرابط يجب أن يبدأ بـ http:// أو https://")
-            return True
-        context.user_data["broadcast_button_label"] = label
-        context.user_data["broadcast_button_url"] = url
-        context.user_data["admin_action"] = "broadcast_button_emoji"
-        await message.reply_text(
-            "🎨 أرسل الآن Premium Emoji الذي تريد وضعه على الزر مباشرة.\n"
-            "لا تكتب الـ ID؛ أرسل الإيموجي من لوحة Premium Emoji في Telegram.\n\n"
-            "وإذا أردت الاختيار التلقائي، أرسل كلمة <code>تلقائي</code>.",
-            parse_mode="HTML"
-        )
-        return True
-
-    if (message and user and is_admin(user.id) and action == "broadcast_button_emoji"):
-        captured = _extract_message_custom_emoji_ids(message)
-        if message.text and message.text.strip().lower() == "تلقائي":
-            captured = []
-        elif not captured:
-            await message.reply_text(
-                "❌ لم أجد Premium Emoji في الرسالة. أرسله مباشرة من لوحة الإيموجي المميز، أو أرسل <code>تلقائي</code>.",
-                parse_mode="HTML"
-            )
-            return True
-        context.user_data["broadcast_button_emoji_id"] = captured[0] if captured else ""
-        context.user_data["admin_action"] = "broadcast_button_ready"
-        await message.reply_text(
-            "✅ تم تجهيز الزر. أرسل <b>نشر</b> الآن لإرسال الإذاعة، أو /cancel للإلغاء.",
-            parse_mode="HTML"
-        )
-        return True
-
-    if (message and user and is_admin(user.id) and action == "broadcast_button_ready"):
-        if not message.text or message.text.strip().lower() not in {"نشر", "publish", "send"}:
-            await message.reply_text("❌ أرسل <code>نشر</code> لإرسال الإذاعة، أو /cancel للإلغاء.", parse_mode="HTML")
-            return True
-        label = str(context.user_data.get("broadcast_button_label", "")).strip()
-        url = str(context.user_data.get("broadcast_button_url", "")).strip()
-        eid = str(context.user_data.get("broadcast_button_emoji_id", "")).strip()
-        if not label or not re.match(r"^https?://", url, re.IGNORECASE):
-            context.user_data.pop("admin_action", None)
-            await message.reply_text("❌ بيانات الزر غير صالحة. ابدأ الإذاعة من جديد.")
-            return True
-        markup = InlineKeyboardMarkup([[
-            _make_button(label, url=url, style="primary", emoji_id=eid or None)
-        ]])
-        sent = failed = 0
-        await message.reply_text("📢 جاري إرسال الإذاعة...")
-        # Reuse the original content message captured by the existing flow.
-        source_id = context.user_data.get("broadcast_source_message_id")
-        source_chat = context.user_data.get("broadcast_source_chat_id")
-        if not source_id or not source_chat:
-            context.user_data.pop("admin_action", None)
-            await message.reply_text("❌ انتهت جلسة الإذاعة. ابدأ من جديد.")
-            return True
-        for uid in list(db.get("users", {}).keys()):
-            try:
-                await context.bot.copy_message(
-                    chat_id=int(uid),
-                    from_chat_id=int(source_chat),
-                    message_id=int(source_id),
-                    reply_markup=markup
-                )
-                sent += 1
-                await asyncio.sleep(0.05)
-            except Exception as exc:
-                failed += 1
-                logger.warning("Broadcast with custom emoji failed for %s: %s", uid, exc)
-        for key in (
-            "admin_action", "broadcast_source_message_id", "broadcast_source_chat_id",
-            "broadcast_button_label", "broadcast_button_url", "broadcast_button_emoji_id"
-        ):
-            context.user_data.pop(key, None)
-        await message.reply_text(
-            f"✅ <b>انتهت الإذاعة</b>\n\nتم الإرسال: <b>{sent}</b>\nفشل: <b>{failed}</b>",
-            parse_mode="HTML",
-            reply_markup=admin_keyboard()
-        )
-        return True
-
-    return await _ORIGINAL_HANDLE_ADMIN_MESSAGE_FINAL(update, context)
-
-# The original enhanced handler's first broadcast-button step must store the
-# source message and then hand control to the custom-emoji flow above.
 
 # ============================================================
 # Entry Point
