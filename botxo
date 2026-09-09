@@ -27,7 +27,7 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8622022335:AAGdlYVn5wRRhu9LEKZXaAsnuCxIr08jRJI").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8948682878:AAGMBGkEzd2IRnolXQKj8IN8p4KzdRhU4wk").strip()
 OWNER_ID = int(os.getenv("OWNER_ID", "8037399518"))
 PORT = int(os.getenv("PORT", "8080"))
 PUBLIC_URL = os.getenv("PUBLIC_URL", "https://leader-xo-production.up.railway.app").rstrip("/")
