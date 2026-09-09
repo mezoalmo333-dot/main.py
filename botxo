@@ -15,6 +15,7 @@ Optional:
 The Mini App uses Telegram WebApp initData and validates it server-side.
 """
 import os
+import re
 import json
 import time
 import hmac
@@ -27,33 +28,34 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8948682878:AAGMBGkEzd2IRnolXQKj8IN8p4KzdRhU4wk").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8830531937:AAE12BSnfpPRu5uwxODmVmi7oYbBoWQk4oI").strip()
 OWNER_ID = int(os.getenv("OWNER_ID", "8037399518"))
 PORT = int(os.getenv("PORT", "8080"))
-PUBLIC_URL = os.getenv("PUBLIC_URL", "https://leader-xo-production.up.railway.app").rstrip("/")
+PUBLIC_URL = os.getenv("PUBLIC_URL", "").rstrip("/")
 DEV_MODE = os.getenv("DEV_MODE", "0") == "1"
 DB_FILE = os.getenv("DB_FILE", "leader_xo_db.json")
 
+GLOBAL_EMOJI = "5359719332542718652"
 X_EMOJI = "5855177736082953485"
 O_EMOJI = "6163667408545386934"
 
 DEFAULT_CONFIG = {
-    "welcome": "🎮 LEADER XO\n\nXO رايقة داخل Telegram.\nاعمل غرفة، خذ الكود، وابعتُه لصاحبك.",
+    "welcome": "LEADER XO\n\nXO رايقة داخل Telegram.\nاعمل غرفة، خذ الكود، وابعتُه لصاحبك.",
     "buttons": {
-        "app": "🎮 فتح XO",
-        "create": "➕ إنشاء غرفة",
-        "join": "🔑 دخول غرفة",
-        "leaders": "🏆 المتصدرين",
-        "profile": "👤 إحصائياتي",
-        "rules": "📖 طريقة اللعب",
-        "admin": "⚙️ الإدارة",
-        "broadcast": "📢 إذاعة",
+        "app": "فتح XO",
+        "create": "إنشاء غرفة",
+        "join": "دخول غرفة",
+        "leaders": "المتصدرين",
+        "profile": "إحصائياتي",
+        "rules": "طريقة اللعب",
+        "admin": "الإدارة",
+        "broadcast": "إذاعة",
     },
     "button_emojis": {},
     "x_emoji": X_EMOJI,
     "o_emoji": O_EMOJI,
     "broadcast_url": "",
-    "broadcast_button": "🔗 فتح الرابط",
+    "broadcast_button": "فتح الرابط",
 }
 
 DB = {"config": {}, "users": {}, "rooms": {}}
@@ -93,10 +95,14 @@ def load_db():
             if k not in DB["config"].get("buttons", {})
         })
         DB["config"].setdefault("button_emojis", {})
+        # Every Telegram button uses the requested global Premium Emoji by default.
+        for _key in DB["config"].get("buttons", {}):
+            DB["config"]["buttons"][_key] = clean_bot_text(DB["config"]["buttons"][_key])
+            DB["config"]["button_emojis"][_key] = GLOBAL_EMOJI
         DB["config"].setdefault("x_emoji", X_EMOJI)
         DB["config"].setdefault("o_emoji", O_EMOJI)
         DB["config"].setdefault("broadcast_url", "")
-        DB["config"].setdefault("broadcast_button", "🔗 فتح الرابط")
+        DB["config"].setdefault("broadcast_button", "فتح الرابط")
         DB.setdefault("users", {})
         DB.setdefault("rooms", {})
         save_db()
@@ -119,22 +125,57 @@ def tg(method, data=None):
         return {"ok": False, "description": str(e)}
 
 
+EMOJI_RE = re.compile(
+    r"[\U0001F1E6-\U0001F1FF\U0001F300-\U0001FAFF\u2600-\u27BF\u2300-\u23FF\u2B00-\u2BFF]"
+)
+
+def clean_bot_text(text):
+    """Remove ordinary Unicode emoji so only the configured Premium Emoji is shown."""
+    if text is None:
+        return ""
+    return EMOJI_RE.sub("", str(text)).replace("  ", " ").strip()
+
+def premium_message_data(text):
+    """Render the global Premium Emoji as a real custom-emoji entity."""
+    clean = clean_bot_text(text)
+    marker = "★"
+    rendered = marker + " " + clean
+    return rendered, [{"type": "custom_emoji", "offset": 0, "length": 1, "custom_emoji_id": str(GLOBAL_EMOJI)}]
+
 def send(chat_id, text, markup=None):
+    rendered, entities = premium_message_data(text)
     data = {
         "chat_id": chat_id,
-        "text": text,
+        "text": rendered,
+        "entities": json.dumps(entities, ensure_ascii=False),
         "disable_web_page_preview": "true",
     }
     if markup:
         data["reply_markup"] = json.dumps(markup, ensure_ascii=False)
-    return tg("sendMessage", data)
-
+    result = tg("sendMessage", data)
+    # If custom emoji is unavailable for this bot/account, retry without any ordinary emoji.
+    if not result.get("ok"):
+        data.pop("entities", None)
+        data["text"] = clean_bot_text(text)
+        return tg("sendMessage", data)
+    return result
 
 def edit(chat_id, message_id, text, markup=None):
-    data = {"chat_id": chat_id, "message_id": message_id, "text": text}
+    rendered, entities = premium_message_data(text)
+    data = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": rendered,
+        "entities": json.dumps(entities, ensure_ascii=False),
+    }
     if markup:
         data["reply_markup"] = json.dumps(markup, ensure_ascii=False)
-    return tg("editMessageText", data)
+    result = tg("editMessageText", data)
+    if not result.get("ok"):
+        data.pop("entities", None)
+        data["text"] = clean_bot_text(text)
+        return tg("editMessageText", data)
+    return result
 
 
 def answer_callback(query_id, text=""):
@@ -177,16 +218,15 @@ def custom_emoji_id(message):
     return None
 
 
-def button(text, callback=None, url=None, web_app=None, icon=None):
-    item = {"text": text[:64]}
+def button(text, callback=None, url=None, web_app=None, icon=None, style="primary"):
+    # Telegram Bot API 9.4+: custom emoji icon + native button color style.
+    item = {"text": clean_bot_text(text)[:64], "icon_custom_emoji_id": str(icon or GLOBAL_EMOJI), "style": style}
     if callback:
         item["callback_data"] = callback
-    if url:
+    elif url:
         item["url"] = url
-    if web_app:
+    elif web_app:
         item["web_app"] = {"url": web_app}
-    if icon:
-        item["icon_custom_emoji_id"] = str(icon)
     return item
 
 
@@ -459,16 +499,16 @@ HTML = r'''<!doctype html>
 </head>
 <body>
 <div class="wrap"><div class="card">
-<div class="brand">🎮 LEADER XO</div>
+<div class="brand"> LEADER XO</div>
 <div class="sub">لعبة XO رايقة • غرف خاصة • لعب مباشر</div>
 
 <section id="home" class="screen active">
-  <div style="text-align:center"><span class="pill">● Telegram Mini App</span></div>
-  <button class="btn" onclick="createRoom()">🎮 إنشاء غرفة</button>
+  <div style="text-align:center"><span class="pill"> Telegram Mini App</span></div>
+  <button class="btn" onclick="createRoom()"> إنشاء غرفة</button>
   <input id="roomCode" class="input" maxlength="6" placeholder="اكتب كود الغرفة" autocomplete="off" style="text-transform:uppercase">
-  <button class="btn alt" onclick="joinRoom()">🔑 دخول غرفة</button>
-  <button class="btn alt" onclick="showLeaderboard()">🏆 المتصدرين</button>
-  <button class="btn alt" onclick="showProfile()">👤 إحصائياتي</button>
+  <button class="btn alt" onclick="joinRoom()"> دخول غرفة</button>
+  <button class="btn alt" onclick="showLeaderboard()"> المتصدرين</button>
+  <button class="btn alt" onclick="showProfile()"> إحصائياتي</button>
   <div id="homeStatus" class="status">أنشئ غرفة أو ادخل كود غرفة.</div>
   <div class="small">X يبدأ أولًا • الفائز يحصل على نقطة فوز • النتائج محفوظة</div>
 </section>
@@ -477,26 +517,26 @@ HTML = r'''<!doctype html>
   <div id="roomStatus" class="status"></div>
   <div id="roomCodeView" class="code"></div>
   <div id="players"></div>
-  <button class="btn" onclick="copyCode()">📋 نسخ الكود</button>
-  <button class="btn alt" onclick="backHome()">⬅️ الرئيسية</button>
+  <button class="btn" onclick="copyCode()"> نسخ الكود</button>
+  <button class="btn alt" onclick="backHome()"> الرئيسية</button>
 </section>
 
 <section id="game" class="screen">
   <div id="gameStatus" class="turn"></div>
   <div class="board" id="board"></div>
-  <button class="btn alt" onclick="backHome()">⬅️ الرئيسية</button>
+  <button class="btn alt" onclick="backHome()"> الرئيسية</button>
 </section>
 
 <section id="leaders" class="screen">
-  <h2 style="margin:5px 0 15px">🏆 المتصدرين</h2>
+  <h2 style="margin:5px 0 15px"> المتصدرين</h2>
   <div id="leadersList"></div>
-  <button class="btn alt" onclick="backHome()">⬅️ الرئيسية</button>
+  <button class="btn alt" onclick="backHome()"> الرئيسية</button>
 </section>
 
 <section id="profile" class="screen">
-  <h2 style="margin:5px 0 15px">👤 إحصائياتي</h2>
+  <h2 style="margin:5px 0 15px"> إحصائياتي</h2>
   <div id="profileBox"></div>
-  <button class="btn alt" onclick="backHome()">⬅️ الرئيسية</button>
+  <button class="btn alt" onclick="backHome()"> الرئيسية</button>
 </section>
 
 <div class="footer">LEADER XO • Telegram Mini App</div>
@@ -530,7 +570,7 @@ function renderRoom(){
   screen(current.status==='playing'||current.status==='finished'?'game':'room');
   if(current.status==='waiting'){
     document.getElementById('roomCodeView').textContent=current.code;
-    document.getElementById('roomStatus').textContent='⏳ في انتظار اللاعب الثاني...';
+    document.getElementById('roomStatus').textContent=' في انتظار اللاعب الثاني...';
     document.getElementById('players').innerHTML='<div class="small">أرسل الكود لصاحبك، ثم انتظر دخوله.</div>';
   }else renderGame();
   startPoll();
@@ -539,7 +579,7 @@ function renderGame(){
   screen('game');
   const me=meId(); const sym=me===current.x?'X':me===current.o?'O':'';
   let text='';
-  if(current.status==='finished') text=current.winner==='DRAW'?'🤝 تعادل!':'🏆 الفائز: '+current.winner;
+  if(current.status==='finished') text=current.winner==='DRAW'?' تعادل!':' الفائز: '+current.winner;
   else text='دور '+current.turn+(current.turn===sym?' — دورك':' — انتظر');
   const gs=document.getElementById('gameStatus');gs.textContent=text;gs.className='turn '+(current.turn==='X'?'x':'o');
   const b=document.getElementById('board');b.innerHTML='';
@@ -554,15 +594,15 @@ function startPoll(){clearInterval(poll);poll=setInterval(async()=>{
   if(!current||busy)return; const j=await api('/api/room?code='+encodeURIComponent(current.code));
   if(j.ok){current=j.room; if(current.status==='playing'||current.status==='finished')renderGame();else renderRoom();}
 },900)}
-async function showLeaderboard(){screen('leaders');const j=await api('/api/leaderboard');const box=document.getElementById('leadersList');box.innerHTML='';(j.users||[]).forEach((u,i)=>{box.innerHTML+=`<div class="leader"><div><span class="rank">#${i+1}</span> <span class="name">${escapeHtml(u.name||'Player')}</span></div><div>🏆 ${u.wins||0}</div></div>`});if(!box.innerHTML)box.innerHTML='<div class="small">لا توجد مباريات بعد.</div>'}
+async function showLeaderboard(){screen('leaders');const j=await api('/api/leaderboard');const box=document.getElementById('leadersList');box.innerHTML='';(j.users||[]).forEach((u,i)=>{box.innerHTML+=`<div class="leader"><div><span class="rank">#${i+1}</span> <span class="name">${escapeHtml(u.name||'Player')}</span></div><div> ${u.wins||0}</div></div>`});if(!box.innerHTML)box.innerHTML='<div class="small">لا توجد مباريات بعد.</div>'}
 async function showProfile(){screen('profile');const j=await api('/api/profile');const u=j.user;if(!j.ok){toast(j.error||'خطأ');return}document.getElementById('profileBox').innerHTML=`<h3 style="margin-top:0">${escapeHtml(u.name||'Player')}</h3><div class="stats"><div class="stat"><b>${u.games||0}</b><span>مباريات</span></div><div class="stat"><b>${u.wins||0}</b><span>فوز</span></div><div class="stat"><b>${u.losses||0}</b><span>خسارة</span></div><div class="stat"><b>${u.draws||0}</b><span>تعادل</span></div></div>`}
 function escapeHtml(s){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
 function backHome(){clearInterval(poll);current=null;screen('home')}
-async function copyCode(){try{await navigator.clipboard.writeText(current.code);toast('✅ تم نسخ الكود')}catch(e){toast('الكود: '+current.code)}}
+async function copyCode(){try{await navigator.clipboard.writeText(current.code);toast(' تم نسخ الكود')}catch(e){toast('الكود: '+current.code)}}
 const qs=new URLSearchParams(location.search);const initialRoom=qs.get('room');
 (async()=>{
   if(!TG||!TG.initData){
-    document.getElementById('homeStatus').textContent='⚠️ افتح اللعبة من داخل Telegram.';
+    document.getElementById('homeStatus').textContent=' افتح اللعبة من داخل Telegram.';
     if(location.hostname!=='localhost'&&location.hostname!=='127.0.0.1'){
       document.querySelectorAll('.btn').forEach(x=>x.disabled=true);
     }
@@ -646,7 +686,7 @@ def configure_bot_menu():
     result = tg("setChatMenuButton", {
         "menu_button": json.dumps({
             "type": "web_app",
-            "text": "🎮 XO",
+            "text": "XO",
             "web_app": {"url": PUBLIC_URL},
         }, ensure_ascii=False)
     })
