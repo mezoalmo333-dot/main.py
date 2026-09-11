@@ -321,7 +321,27 @@ _original_edit_message_text = bot.edit_message_text
 
 
 def _send_message_decorated(chat_id, text, *args, **kwargs):
-    return _original_send_message(chat_id, decorate_text(text), *args, **kwargs)
+    # المحاولة الأولى: الرسالة بالتنسيق والإيموجي المخصص.
+    try:
+        return _original_send_message(chat_id, decorate_text(text), *args, **kwargs)
+    except Exception as first_error:
+        # Telegram يرفض الرسالة بالكامل إذا كان HTML أو Custom Emoji غير صالح.
+        # نعيد إرسال النص الأصلي بدون HTML حتى لا يتوقف /start أو أي أمر آخر.
+        print("[SEND DECORATED ERROR]", repr(first_error))
+        safe_kwargs = dict(kwargs)
+        safe_kwargs.pop("parse_mode", None)
+        safe_kwargs.pop("entities", None)
+        try:
+            return _original_send_message(
+                chat_id,
+                str(text),
+                *args,
+                parse_mode=None,
+                **safe_kwargs,
+            )
+        except Exception as second_error:
+            print("[SEND PLAIN ERROR]", repr(second_error))
+            raise
 
 
 def _decorate_caption_kwargs(kwargs):
