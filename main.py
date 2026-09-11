@@ -4407,6 +4407,18 @@ def start_global_reply(message):
 # =========================================================
 # الراوتر
 # =========================================================
+def normalize_fragment_username(text):
+    """Normalize Fragment/Telegram username input; accepts @username or username."""
+    value = (text or "").strip()
+    if value.startswith("@"):
+        value = value[1:]
+    return value if re.fullmatch(r"[A-Za-z0-9_]{5,32}", value) else None
+
+
+def fragment_username_link(username):
+    return f"https://fragment.com/username/{username}"
+
+
 @bot.message_handler(
     content_types=[
         "text",
@@ -4423,18 +4435,6 @@ def start_global_reply(message):
         "poll"
     ]
 )
-def normalize_fragment_username(text):
-    """Normalize Fragment/Telegram username input; accepts @username or username."""
-    value = (text or "").strip()
-    if value.startswith("@"):
-        value = value[1:]
-    return value if re.fullmatch(r"[A-Za-z0-9_]{5,32}", value) else None
-
-
-def fragment_username_link(username):
-    return f"https://fragment.com/username/{username}"
-
-
 def main_handler(message):
 
     try:
