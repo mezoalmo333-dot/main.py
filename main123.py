@@ -1,7026 +1,6826 @@
-import os
+# -*- coding: utf-8 -*-
+import telebot
+from telebot import types
+import sqlite3
+import time
 import re
-import json
 import html
-import asyncio
-import logging
-import subprocess
-import sys
-import importlib
-import shutil
-from tempfile import gettempdir
-from datetime import datetime
+import secrets
+import json
+import io
+import os
+import urllib.request
+from collections import defaultdict, deque
+from threading import Thread, Lock
 
-import yt_dlp
+# =========================================================
+# الإعدادات
+# =========================================================
+BOT_TOKEN = "8878742478:AAF-h5bIAg_OwXQQXc89ipw37Z4yRKKvxV4"
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
+DEVELOPER_ID = 8037399518
+BOT_USERNAME = "v_u_kbot"
+DB_NAME = "protection_bot.db"
+
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
+
+ADD_TO_GROUP_URL = (
+    f"https://t.me/{BOT_USERNAME}?startgroup"
+    "&admin=delete_messages+restrict_members+invite_users+pin_messages+"
+    "change_info+manage_topics+manage_video_chats"
 )
 
-from telegram.constants import ChatMemberStatus
-
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
-
-# ============================================================
-# إعدادات البوت
-# ============================================================
-
-# إعدادات Railway: ضع القيم في Variables ولا تضع التوكن داخل الملف
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8878742478:AAF-h5bIAg_OwXQQXc89ipw37Z4yRKKvxV4").strip()
-
-# اختياري: يمكن تغيير آيدي الأدمن من Railway Variables
-ADMIN_ID = int(os.getenv("ADMIN_ID", "8037399518").strip())
-
-# ============================================================
-# قاعدة البيانات
-# ============================================================
-
-# ============================================================
-# تخزين قاعدة البيانات بشكل دائم
-# ============================================================
-# على Railway يجب استخدام Volume حتى تبقى قاعدة البيانات بعد Redeploy.
-# إذا كان RAILWAY_VOLUME_MOUNT_PATH موجوداً فسيتم استخدامه تلقائياً.
-# ويمكن أيضاً تحديد DATA_DIR يدوياً.
-_LEGACY_DB_FILE = os.path.join(
-    gettempdir(),
-    "social_downloader_bot_db.json"
-)
-
-_CONFIGURED_DATA_DIR = (
-    os.getenv("DATA_DIR", "").strip()
-    or os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
-)
-
-if _CONFIGURED_DATA_DIR:
-    DATA_DIR = _CONFIGURED_DATA_DIR
-else:
-    # Railway Volume غالباً يكون mounted على /data. استخدامه تلقائياً
-    # يمنع تصفير قاعدة الأعضاء عند Redeploy إذا كان الـ Volume موجوداً.
-    if os.path.isdir("/data"):
-        _local_data_dir = "/data"
-    else:
-        _local_data_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "bot_data"
-        )
-    try:
-        os.makedirs(_local_data_dir, exist_ok=True)
-        DATA_DIR = _local_data_dir
-    except Exception:
-        DATA_DIR = gettempdir()
-
-try:
-    os.makedirs(DATA_DIR, exist_ok=True)
-except Exception:
-    DATA_DIR = gettempdir()
-
-DB_FILE = os.path.join(
-    DATA_DIR,
-    "social_downloader_bot_db.json"
-)
-
-MAX_FILE_SIZE_MB = 50
-MAX_FILE_SIZE_BYTES = (
-    MAX_FILE_SIZE_MB * 1024 * 1024
-)
-
-# ============================================================
-# Logging
-# ============================================================
-
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
-
-logger = logging.getLogger(__name__)
-
-# ============================================================
-# Custom Emoji
-# ============================================================
-
-EMOJI_1 = '<tg-emoji emoji-id="">✨</tg-emoji>'
-EMOJI_2 = '<tg-emoji emoji-id="5890969691425347748">⚡</tg-emoji>'
-EMOJI_3 = '<tg-emoji emoji-id="5890795783904565270">🔥</tg-emoji>'
-EMOJI_4 = '<tg-emoji emoji-id="5782815375460671828">💎</tg-emoji>'
-EMOJI_5 = '<tg-emoji emoji-id="5767120181981617136">👑</tg-emoji>'
-EMOJI_6 = '<tg-emoji emoji-id="5891000366081775168">🚀</tg-emoji>'
-EMOJI_7 = '<tg-emoji emoji-id="5462989862669920629">💫</tg-emoji>'
-EMOJI_8 = '<tg-emoji emoji-id="5462919317832082236">⭐</tg-emoji>'
-EMOJI_9 = '<tg-emoji emoji-id="5767199471372867777">🎯</tg-emoji>'
-
-CUSTOM_EMOJI_IDS = [
-    "",
-    "5890969691425347748",
-    "5890795783904565270",
-    "5782815375460671828",
-    "5767120181981617136",
-    "5891000366081775168",
-    "5462989862669920629",
-    "5462919317832082236",
-    "5767199471372867777",
-]
-
-# ============================================================
-# إيموجيات Telegram القديمة المستخدمة في الصفحة الرئيسية
-# ============================================================
-
-EMOJI_VIDEO = (
-    '<tg-emoji emoji-id="5891223481042868350">🎬</tg-emoji>'
-)
-
-EMOJI_PIN = (
-    '<tg-emoji emoji-id="5775968415906798325">📌</tg-emoji>'
-)
-
-EMOJI_POWER = (
-    '<tg-emoji emoji-id="5875500121168288239">⚡</tg-emoji>'
-)
-
-EMOJI_OK = (
-    '<tg-emoji emoji-id="6001388309853510348">✅</tg-emoji>'
-)
-
-EMOJI_STAR = (
-    '<tg-emoji emoji-id="5967427591127176971">⭐</tg-emoji>'
-)
-
-EMOJI_SPARK = (
-    '<tg-emoji emoji-id="5967507756691757055">✨</tg-emoji>'
-)
-
-EMOJI_HEART = (
-    '<tg-emoji emoji-id="5891042564135459844">❤</tg-emoji>'
-)
-
-EMOJI_DOWNLOAD = (
-    '<tg-emoji emoji-id="5967520637298677106">📥</tg-emoji>'
-)
-
-# ============================================================
-# الإيموجيات المميزة الخاصة بالبوت فقط
-# ============================================================
-
-BOT_CUSTOM_EMOJI_IDS = [
-    "5888663955412359816",
-    "5891075716988016811",
-    "5890866066749397234",
-    "5463200135678796607",
-    "5463386283856373524",
-    "5462987027991503774",
-    "",
-    "5962858574852921606",
-    "5963161271263041568",
-]
-
-# ============================================================
-# مكتبة الإيموجيات التي طلبها المالك
-# ============================================================
-# هذه الـ IDs محفوظة للاختيار اليدوي من إعدادات الأزرار فقط.
-# لا يتم وضعها تلقائياً في أي كليشة أو زر.
-AVAILABLE_CUSTOM_EMOJI_IDS = [
-    "5890978075201509010",
-    "5890941464900278076",
-    "5891033729387731017",
-    "5890968106582415352",
-    "5891007396943239324",
-    "5888585378985678792",
-    "5891264747088647482",
-    "5891008659663624406",
-    "5891150947635173714",
-    "5888979137292408953",
-    "5890944978183528164",
-    "5891198458563402576",
-    "5891223481042868350",
-    "5888585967396198556",
-    "5888925871108003433",
-    "",
-    "",
-    "",
-    "5888684446701328138",
-    "",
-    "",
-    "5890711263243147926",
-    "5891235511246264255",
-    "5888630540566796058",
-    "5891061762639271906",
-    "5890946721940248671",
-    "5890989903541441900",
-    "5891071937416795775",
-    "5891162831809681617",
-    "5891131044756723016",
-    "5890866066749397234",
-    "5891075227361746243",
-    "5891182846357281226",
-    "5891000366081775168",
-    "5890933368886924480",
-    "5888604607554262373",
-    "5891225499677496831",
-    "5890723834612422946",
-    "5890969691425347748",
-    "5890795783904565270",
-    "5890891742063893790",
-    "5891011391262824495",
-    "5888903253810222656",
-    "5890932136231311080",
-    "5890819530778744606",
-    "5891075716988016811",
-    "5888855708522255593",
-    "5890808771885668859",
-    "5888663955412359816",
-    "5890864005165096780",
-    "",
-    "5116562499268773081",
-    "5118715849842099559",
-    "5118886415878325117",
-    "5116425257883796621",
-    "5116402533211833262",
-    "5116503323209368474",
-    "5118372789329331110",
-    "5116089640549353169",
-    "5118482319585313697",
-    "5118625354881172381",
-    "5118775829060387648",
-    "5116184812729664572",
-    "5139127540182418615",
-    "5136909176689135635",
-    "5136767455653266361",
-    "5136607107344237807",
-    "5138871938088699109",
-    "5138716924129051781",
-    "5139039647971672860",
-    "5136425078040298524",
-    "5139059555145090612",
-    "5139095048754824143",
-    "5136592598944712102",
-    "5136494497596703715",
-    "5136445187077178529",
-    "5136567232867861772",
-    "5136707747017917294",
-    "5136867713074857101",
-    "5136791726513456009",
-    "5136688518449333393",
-    "5136444126220256119",
-    "5136370613560017995",
-    "5136419571892225335",
-    "5136697855708234673",
-    "5136382085417665757",
-    "5136828508613379215",
-    "5136634337436894358",
-    "5138796703146574994",
-    "5138693920284214322",
-    "5136559729559995450",
-    "5136720309797258447",
-    "5138636341952644876",
-    "5136686151922353153",
-    "5138747345382409039",
-    "5136486770950538427",
-    "5136412120123966300",
-    "5136758303077958598",
-    "5139029962820420604",
-    "5136448318108337067",
-    "5139077469453681422",
-]
-
-# ============================================================
-# Premium Emoji داخل كليشات الرسائل
-# ============================================================
-# طريقة الاستخدام من لوحة "تخصيص رسائل البوت":
-#   [emoji:5462943653116792628]
-# أو:
-#   {emoji:5462943653116792628}
-#
-# يمكن وضع أكثر من Premium Emoji في نفس الكليشة.
-# لا يتم وضع أي Emoji تلقائياً؛ يظهر فقط عندما يكتب الأدمن الـ ID
-# داخل الكليشة بهذه الصيغة.
-MESSAGE_CUSTOM_EMOJI_IDS = [
-    "5462943653116792628",
-    "5271929483752930708",
-    "5271679851663750608",
-    "5854789277765866801",
-    "5253561965917266807",
-]
-
-# ============================================================
-# قنوات الاشتراك الإجباري الافتراضية
-# ============================================================
-
-DEFAULT_FORCE_SUB_CHANNELS = [
-    {
-        "channel": "@kon_ze_athar",
-        "link": "https://t.me/kon_ze_athar"
-    },
-    {
-        "channel": "@w_x_x",
-        "link": "https://t.me/w_x_x"
-    },
-]
-
-# ============================================================
-# قاعدة البيانات الافتراضية
-# ============================================================
-
-DEFAULT_DB = {
-    "users": {},
-    "settings": {
-        "force_sub_enabled": True,
-        "force_sub_channel": "@kon_ze_athar",
-        "force_sub_link": "https://t.me/kon_ze_athar",
-        "force_sub_channels": DEFAULT_FORCE_SUB_CHANNELS,
-        "welcome_text": "",
-        "download_text": (
-            "⏳ جاري تحميل الفيديو، يرجى الانتظار..."
-        ),
-        "welcome_media_type": "",
-        "welcome_media_id": "",
-        "welcome_media_caption": "",
-        # إعدادات أسماء وأيقونات الأزرار قابلة للتعديل من لوحة الأدمن.
-        "button_settings": {},
-        "message_settings": {},
-    },
-    "banned_users": [],
-    "admins": []
-}
-
-# ============================================================
-# تحميل قاعدة البيانات
-# ============================================================
-
-def _db_candidate_files():
-    """Return every reasonable database location, newest first."""
-    candidates = []
-    explicit = os.getenv("DB_FILE", "").strip()
-    if explicit:
-        candidates.append(explicit)
-
-    dirs = []
-    if _CONFIGURED_DATA_DIR:
-        dirs.append(_CONFIGURED_DATA_DIR)
-    if os.path.isdir("/data"):
-        dirs.append("/data")
-    dirs.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_data"))
-    dirs.append(gettempdir())
-
-    for directory in dirs:
-        candidates.append(os.path.join(directory, "social_downloader_bot_db.json"))
-        candidates.append(os.path.join(directory, "social_downloader_bot_db.json.bak"))
-        candidates.append(os.path.join(directory, "social_downloader_bot_db.json.bak.1"))
-        candidates.append(os.path.join(directory, "social_downloader_bot_db.json.bak.2"))
-        candidates.append(os.path.join(directory, "social_downloader_bot_db.json.bak.3"))
-        candidates.append(os.path.join(directory, "social_downloader_bot_db.json.bak.4"))
-        candidates.append(os.path.join(directory, "social_downloader_bot_db.json.bak.5"))
-
-    candidates.append(_LEGACY_DB_FILE)
-    candidates.append(_LEGACY_DB_FILE + ".bak")
-
-    unique = []
-    seen = set()
-    for item in candidates:
-        item = os.path.abspath(item)
-        if item not in seen:
-            seen.add(item)
-            unique.append(item)
-    return unique
-
-
-def _normalize_db(data):
-    if not isinstance(data, dict):
-        data = {}
-
-    if not isinstance(data.get("users"), dict):
-        data["users"] = {}
-    if not isinstance(data.get("settings"), dict):
-        data["settings"] = {}
-    if not isinstance(data.get("banned_users"), list):
-        data["banned_users"] = []
-    if not isinstance(data.get("admins"), list):
-        data["admins"] = []
-
-    data["settings"].setdefault("button_settings", {})
-    if not isinstance(data["settings"].get("button_settings"), dict):
-        data["settings"]["button_settings"] = {}
-    data["settings"].setdefault("message_settings", {})
-    if not isinstance(data["settings"].get("message_settings"), dict):
-        data["settings"]["message_settings"] = {}
-
-    for key, value in DEFAULT_DB["settings"].items():
-        if key not in data["settings"]:
-            data["settings"][key] = json.loads(json.dumps(value, ensure_ascii=False))
-
-    normalized_admins = []
-    for admin_id in data["admins"]:
-        try:
-            admin_id = int(admin_id)
-            if admin_id != int(ADMIN_ID) and admin_id not in normalized_admins:
-                normalized_admins.append(admin_id)
-        except (TypeError, ValueError):
-            pass
-    data["admins"] = normalized_admins
-
-    channels = data["settings"].get("force_sub_channels")
-    if not isinstance(channels, list):
-        channels = []
-
-    normalized_channels = []
-    for item in channels:
-        if isinstance(item, dict):
-            channel = str(item.get("channel", "")).strip()
-            link = str(item.get("link", "")).strip()
-            if channel:
-                if not link and channel.startswith("@"):
-                    link = "https://t.me/" + channel[1:]
-                normalized_channels.append({"channel": channel, "link": link})
-        elif isinstance(item, str):
-            channel = item.strip()
-            if channel:
-                if not channel.startswith("@"):
-                    channel = "@" + channel
-                normalized_channels.append({
-                    "channel": channel,
-                    "link": "https://t.me/" + channel[1:]
-                })
-
-    # Only use defaults when the database genuinely has no channel configuration.
-    if not normalized_channels:
-        old_channel = str(data["settings"].get("force_sub_channel", "")).strip()
-        old_link = str(data["settings"].get("force_sub_link", "")).strip()
-        if old_channel:
-            normalized_channels = [{"channel": old_channel, "link": old_link}]
-        elif old_link:
-            match = re.search(r"t\.me/([A-Za-z0-9_]+)", old_link)
-            if match:
-                normalized_channels = [{"channel": "@" + match.group(1), "link": old_link}]
-
-    if normalized_channels:
-        data["settings"]["force_sub_channels"] = normalized_channels
-        data["settings"]["force_sub_channel"] = normalized_channels[0]["channel"]
-        data["settings"]["force_sub_link"] = normalized_channels[0]["link"]
-    else:
-        data["settings"]["force_sub_channels"] = []
-
-    # Preserve old user records exactly; only fill missing harmless fields.
-    for uid, user_data in list(data["users"].items()):
-        if not isinstance(user_data, dict):
-            continue
-        user_data.setdefault("id", int(uid) if str(uid).lstrip("-").isdigit() else uid)
-        user_data.setdefault("first_name", "")
-        user_data.setdefault("username", "")
-        user_data.setdefault("joined_at", "")
-        user_data.setdefault("downloads", 0)
-        user_data.setdefault("welcome_message_sent", False)
-
-    return data
-
-
-def load_db():
-    """Load the oldest valid database we can find without ever replacing it with an empty DB."""
-    candidates = _db_candidate_files()
-    valid = []
-
-    for path in candidates:
-        try:
-            if not os.path.isfile(path) or os.path.getsize(path) < 2:
-                continue
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict) and isinstance(data.get("users", {}), dict):
-                valid.append((len(data.get("users", {})), os.path.getmtime(path), path, data))
-        except Exception as e:
-            logger.warning("Ignoring invalid database candidate %s: %s", path, e)
-
-    if valid:
-        # Prefer the database containing the most users. This is important when a
-        # new deploy created an empty file while an older backup still exists.
-        valid.sort(key=lambda x: (x[0], x[1]), reverse=True)
-        user_count, _, source_path, data = valid[0]
-        data = _normalize_db(data)
-        logger.info("Database loaded from %s | users=%s", source_path, user_count)
-
-        # If the selected file is a backup/legacy file, restore it to the active path.
-        try:
-            os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
-            if os.path.abspath(source_path) != os.path.abspath(DB_FILE):
-                shutil.copy2(source_path, DB_FILE)
-                logger.info("Recovered database to %s", DB_FILE)
-        except Exception as restore_error:
-            logger.warning("Could not restore recovered database: %s", restore_error)
-        return data
-
-    data = _normalize_db(json.loads(json.dumps(DEFAULT_DB, ensure_ascii=False)))
-    save_db(data, create_backup=False)
-    logger.warning("No valid database found. A new database was created at %s", DB_FILE)
-    return data
-
-
-def save_db(data, create_backup=True):
-    """
-    Save the database atomically and keep several rolling backups.
-
-    The important rule here is that a healthy database is never replaced by
-    an empty/corrupt file.  Before replacing the live file, the previous
-    version is rotated through .bak, .bak.1 ... .bak.5.
-    """
-    try:
-        if not isinstance(data, dict) or not isinstance(data.get("users", {}), dict):
-            logger.error("Refusing to save invalid database structure.")
-            return False
-
-        os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
-        temp_file = DB_FILE + ".tmp"
-        backup_file = DB_FILE + ".bak"
-
-        # Never overwrite a populated live database with an empty one.
-        if os.path.exists(DB_FILE):
-            try:
-                with open(DB_FILE, "r", encoding="utf-8") as current_file:
-                    current_data = json.load(current_file)
-                current_users = current_data.get("users", {}) if isinstance(current_data, dict) else {}
-                new_users = data.get("users", {})
-                if isinstance(current_users, dict) and isinstance(new_users, dict):
-                    if len(current_users) > 0 and len(new_users) == 0:
-                        logger.error(
-                            "Refusing to overwrite populated database (%s users) with an empty database.",
-                            len(current_users)
-                        )
-                        return False
-            except Exception as validation_error:
-                # The live file is invalid; backups remain the recovery source.
-                logger.warning("Could not validate current database before save: %s", validation_error)
-
-        # Write and validate the new file before it becomes live.
-        with open(temp_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.flush()
-            try:
-                os.fsync(f.fileno())
-            except OSError:
-                pass
-
-        with open(temp_file, "r", encoding="utf-8") as verify_file:
-            verified = json.load(verify_file)
-        if not isinstance(verified, dict) or not isinstance(verified.get("users", {}), dict):
-            raise ValueError("Temporary database validation failed")
-
-        if os.path.exists(DB_FILE) and create_backup:
-            try:
-                # Rotate older backups first.
-                for index in range(5, 0, -1):
-                    src = DB_FILE + (".bak" if index == 1 else f".bak.{index-1}")
-                    dst = DB_FILE + f".bak.{index}"
-                    if os.path.exists(src):
-                        try:
-                            os.replace(src, dst)
-                        except OSError:
-                            pass
-
-                shutil.copy2(DB_FILE, backup_file)
-            except Exception as backup_error:
-                logger.warning("Database backup rotation failed: %s", backup_error)
-
-        os.replace(temp_file, DB_FILE)
-        return True
-
-    except Exception as e:
-        logger.exception("Database save error: %s", e)
-        try:
-            if os.path.exists(DB_FILE + ".tmp"):
-                os.remove(DB_FILE + ".tmp")
-        except OSError:
-            pass
-        return False
-
-db = load_db()
-
-# ============================================================
-# فحص التخزين الدائم عند بدء التشغيل
-# ============================================================
-# لا يمكن لأي كود استرجاع أعضاء تم حذف بياناتهم نهائياً من Railway،
-# لذلك نوضح حالة التخزين في السجل ونحذر إذا لم يوجد /data أو DATA_DIR.
-try:
-    _persistent_path = os.path.abspath(DATA_DIR)
-    _is_data_volume = _persistent_path == os.path.abspath("/data") or bool(_CONFIGURED_DATA_DIR)
-    logger.info(
-        "Database path: %s | users: %s | persistent-volume-configured: %s",
-        DB_FILE,
-        len(db.get("users", {})),
-        _is_data_volume
+# =========================================================
+# Custom Emoji IDs
+# =========================================================
+CE_ADD_GROUP = "6014859822669765417"
+CE_OWNER_DEVELOPER = "6026358867460366307"
+CE_MEMBER = "6026214410530333332"
+CE_ERROR = "5463150060655104540"
+CE_SUCCESS = "5462991735275670716"
+CE_ADMIN = "6024070839597540699"
+CE_ID = "6026322901404229165"
+CE_USERNAME = "5463083548791556323"
+CE_START = "6014944072748244263"
+CE_PROTECTION = "5891225499677496831"
+CE_RANKS = "5463397536670697642"
+CE_PERSON = "5463295393758464486"
+CE_WORDS = "4936296803390718929"
+CE_EVERYONE = "5461018558580401820"
+CE_COMMANDS = "5463200135678796607"
+CE_WELCOME = "5764739309810751596"
+CE_AFTER_PERSON = "5890941464900278076"
+CE_END = "5776345243452447613"
+
+# Custom Emoji requested for reply buttons / welcome / developer button
+CE_REPLY_BUTTON = "5274008024585871702"
+CE_WELCOME_LINE = "5256143829672672750"
+CE_DEV_BUTTON = "5260233433107407649"
+CE_BOT_REPLY = "5201842613983917014"
+CE_TON_PRICE = "5260450573768990626"
+CE_TON_ANALYSIS = "5357069174512303778"
+CE_FORCE_SUB = "5271801931814165886"
+
+# الإيموجيات المميزة المطلوبة للترحيب والأزرار
+CE_WELCOME_HELLO = "5258501105293205250"
+CE_WELCOME_INFO = "5258503720928288433"
+CE_ADD_TO_GROUP_REQUESTED = "5274008024585871702"
+CE_ADMIN_USERNAME = "5260399854500191689"
+UPDATE_MAX_URL = "https://t.me/LeaDeR_E"
+
+def tg_emoji(emoji_id, alt="🔹"):
+    return f'<tg-emoji emoji-id="{emoji_id}">{alt}</tg-emoji>'
+
+# =========================================================
+# تنسيق الرسائل
+# =========================================================
+def strip_non_custom_emoji(text):
+    """إزالة Emoji العادي من رسائل البوت مع الحفاظ على Premium Emoji."""
+    if not text or not isinstance(text, str):
+        return text
+
+    protected = []
+
+    def protect(match):
+        protected.append(match.group(0))
+        return f"__CUSTOM_EMOJI_{len(protected) - 1}__"
+
+    text = re.sub(
+        r'<tg-emoji\b[^>]*>.*?</tg-emoji>',
+        protect,
+        text,
+        flags=re.DOTALL | re.IGNORECASE
     )
-    if not _is_data_volume and os.getenv("RAILWAY_ENVIRONMENT", "").strip():
-        logger.warning(
-            "Railway detected without an explicit persistent volume. "
-            "Attach a Railway Volume mounted at /data to preserve users across redeploys."
-        )
-except Exception:
+
+    emoji_pattern = re.compile(
+        r'[\U0001F000-\U0001FAFF\u2600-\u27BF\u2300-\u23FF]'
+        r'[\uFE0E\uFE0F]?'
+        r'(?:[\u200D][\U0001F000-\U0001FAFF\u2600-\u27BF])*'
+        r'(?:[\U0001F3FB-\U0001F3FF])?'
+    )
+    text = emoji_pattern.sub('', text)
+
+    for index, value in enumerate(protected):
+        text = text.replace(f"__CUSTOM_EMOJI_{index}__", value)
+
+    return text
+
+
+def decorate_text(text):
+    """
+    تنسيق موحد للإيموجيات المخصصة:
+    - إيموجي المعنى يكون في نهاية عنوان/سطر الكلمة، وليس داخل الجملة.
+    - إيموجي البداية يوضع فقط إذا لم يبدأ السطر بإيموجي آخر.
+    - الترحيب له إيموجي خاص في البداية ولا نضيف فوقه إيموجي البداية.
+    - النجاح والخطأ لهما إيموجي خاص في البداية.
+    - ID واليوزر لهما إيموجي قبل البيانات.
+    """
+    if not text or not isinstance(text, str):
+        return text
+
+    out = text
+
+    # ---------------------------------------------------------
+    # 1) إزالة الإيموجيات القديمة من عناوين الأقسام فقط
+    #    حتى لا تصبح الإيموجيات داخل/قبل الكلمة.
+    # ---------------------------------------------------------
+    heading_patterns = [
+        # (regex, replacement text, custom emoji)
+        (r'(<b>)\s*[👑📚🛡️🔒🚫⚙️👥]\s*(نظام الرتب\s*:?)\s*(</b>)',
+         r'\1\2 ' + tg_emoji(CE_RANKS, "👑") + r'\3'),
+        (r'(<b>)\s*[👑📚🛡️🔒🚫⚙️👥]\s*(الحماية\s*:?)\s*(</b>)',
+         r'\1\2 ' + tg_emoji(CE_PROTECTION, "🛡️") + r'\3'),
+        (r'(<b>)\s*[👑📚🛡️🔒🚫⚙️👥]\s*(الإدارة|الادارة\s*:?)\s*(</b>)',
+         r'\1\2 ' + tg_emoji(CE_ADMIN, "🛡️") + r'\3'),
+        (r'(<b>)\s*[👑📚🛡️🔒🚫⚙️👥]\s*(الكلمات\s*:?)\s*(</b>)',
+         r'\1\2 ' + tg_emoji(CE_WORDS, "🚫") + r'\3'),
+        (r'(<b>)\s*[👑📚🛡️🔒🚫⚙️👥]\s*(للجميع\s*:?)\s*(</b>)',
+         r'\1\2 ' + tg_emoji(CE_EVERYONE, "👥") + r'\3'),
+        (r'(<b>)\s*[👑📚🛡️🔒🚫⚙️👥]\s*(قائمة أوامر البوت)\s*(</b>)',
+         r'\1\2 ' + tg_emoji(CE_COMMANDS, "📚") + r'\3'),
+        (r'(<b>)\s*[👑📚🛡️🔒🚫⚙️👥]\s*(قائمة اوامر البوت)\s*(</b>)',
+         r'\1\2 ' + tg_emoji(CE_COMMANDS, "📚") + r'\3'),
+    ]
+
+    for pattern, replacement in heading_patterns:
+        out = re.sub(pattern, replacement, out)
+
+    # ---------------------------------------------------------
+    # 2) لو العنوان مكتوب بدون إيموجي يدوي، ضعه في آخر العنوان.
+    #    نعمل ذلك على مستوى السطر حتى لا ندخل الإيموجي وسط الجملة.
+    # ---------------------------------------------------------
+    semantic_heads = [
+        ("قائمة أوامر البوت", CE_COMMANDS, "📚"),
+        ("قائمة اوامر البوت", CE_COMMANDS, "📚"),
+        ("نظام الرتب", CE_RANKS, "👑"),
+        ("الحماية", CE_PROTECTION, "🛡️"),
+        ("حماية", CE_PROTECTION, "🛡️"),
+        ("الإدارة", CE_ADMIN, "🛡️"),
+        ("الادارة", CE_ADMIN, "🛡️"),
+        ("الكلمات", CE_WORDS, "🚫"),
+        ("للجميع", CE_EVERYONE, "👥"),
+    ]
+
+    lines = []
+    for line in out.split("\n"):
+        plain = re.sub(r"<[^>]+>", "", line).strip()
+
+        # لا نلمس الفواصل.
+        if not plain or plain.startswith("┈"):
+            lines.append(line)
+            continue
+
+        for phrase, emoji_id, alt in semantic_heads:
+            # الإيموجي الدلالي يخص عنوان/سطر يبدأ بالكلمة فقط،
+            # وليس أي جملة تحتوي عليها مثل "قفل حماية الجدد".
+            if plain.startswith(phrase):
+                # إذا كان هذا سطر عنوان، ضع الإيموجي في آخر النص
+                # وليس قبل الكلمة.
+                if "<b>" in line and "</b>" in line:
+                    # احذف الإيموجي المخصص السابق لنفس العنوان إن وجد.
+                    line = re.sub(
+                        rf'<tg-emoji[^>]*>.*?</tg-emoji>\s*',
+                        '',
+                        line,
+                        count=1
+                    )
+                    # احذف الإيموجي العادي الذي كان قبل العنوان.
+                    line = re.sub(r'(<b>)\s*[^\w<>&]+(?=\s*' + re.escape(phrase) + r')',
+                                  r'\1', line, count=1)
+                    # أضف الإيموجي قبل إغلاق bold.
+                    line = line.replace(
+                        "</b>",
+                        " " + tg_emoji(emoji_id, alt) + "</b>",
+                        1
+                    )
+                else:
+                    # لا نغير الجمل العادية التي تحتوي الكلمة في المنتصف.
+                    # فقط العناوين/الأسطر القصيرة التي تبدأ بها.
+                    if plain.startswith(phrase):
+                        line = line.rstrip() + " " + tg_emoji(emoji_id, alt)
+                break
+
+        lines.append(line)
+
+    out = "\n".join(lines)
+
+    # ---------------------------------------------------------
+    # 3) ID واليوزر: الإيموجي قبل الليبل كما طلبت.
+    # ---------------------------------------------------------
+    out = re.sub(
+        r'(الـ? ID الخاص بك:|الايدي:|𝐈𝐃\s*:)',
+        tg_emoji(CE_ID, "🆔") + r'\1',
+        out
+    )
+
+    out = re.sub(
+        r'(اليوزر:|𝐔𝐒𝐄𝐑\s*:)',
+        tg_emoji(CE_USERNAME, "👤") + r'\1',
+        out
+    )
+
+    # ---------------------------------------------------------
+    # 4) نجاح/خطأ: الإيموجي الخاص فقط في بداية السطر.
+    #    وبالتالي لا نضيف فوقه CE_START.
+    # ---------------------------------------------------------
+    lines = []
+    for line in out.split("\n"):
+        plain = re.sub(r"<[^>]+>", "", line).strip()
+
+        if any(x in plain for x in (
+            "فشل", "خطأ", "خطا", "تعذر",
+            "لم أستطع", "لا أستطيع", "غير مسموح"
+        )):
+            if not re.match(r'\s*<tg-emoji', line):
+                line = tg_emoji(CE_ERROR, "❌") + " " + line
+
+        elif any(x in plain for x in (
+            "تم ", "نجاح", "بنجاح",
+            "تم التعديل", "تم الرفع", "تم تنزيل"
+        )):
+            if not re.match(r'\s*<tg-emoji', line):
+                line = tg_emoji(CE_SUCCESS, "✅") + " " + line
+
+        lines.append(line)
+
+    out = "\n".join(lines)
+
+    # ---------------------------------------------------------
+    # 5) الترحيب: الإيموجي الخاص أول شيء.
+    #    لا نضيف CE_START قبله.
+    # ---------------------------------------------------------
+    if any(x in out for x in ("أهلًا وسهلًا", "أهلاً وسهلاً", "مرحبًـا")):
+        # امنع تكرار إيموجي الترحيب عند تعديل/إعادة إرسال الرسالة.
+        if not out.lstrip().startswith(f'<tg-emoji emoji-id="{CE_WELCOME}">'):
+            out = tg_emoji(CE_WELCOME, "👋") + " " + out.lstrip()
+
+    # ---------------------------------------------------------
+    # 6) CE_START قبل بداية السطر فقط إذا لم يوجد إيموجي آخر هناك.
+    #    ونتجنب الفواصل والعناوين التي تبدأ أصلًا بتاج/إيموجي.
+    # ---------------------------------------------------------
+    final_lines = []
+    for line in out.split("\n"):
+        stripped = line.lstrip()
+
+        if not stripped or stripped.startswith("┈"):
+            final_lines.append(line)
+            continue
+
+        # لو السطر يبدأ بتاج tg-emoji فلا تضف CE_START.
+        if stripped.startswith("<tg-emoji"):
+            final_lines.append(line)
+            continue
+
+        # افحص بداية النص بعد HTML tags.
+        visible = re.sub(r"<[^>]+>", "", stripped).lstrip()
+
+        # أي إيموجي موجود بالفعل في بداية السطر = لا CE_START.
+        if visible and re.match(
+            r'^(?:[\U0001F000-\U0001FAFF\u2600-\u27BF]|[©®™])',
+            visible
+        ):
+            final_lines.append(line)
+            continue
+
+        # لو السطر عبارة عن HTML يبدأ بـ <b> ثم النص، نضع CE_START
+        # بعد وسم البداية حتى يظهر قبل الجملة فعلًا.
+        if stripped.startswith("<b>"):
+            line = "<b>" + tg_emoji(CE_START, "🔹") + " " + stripped[3:]
+        else:
+            line = tg_emoji(CE_START, "🔹") + " " + stripped
+
+        final_lines.append(line)
+
+    out = "\n".join(final_lines)
+
+    # ---------------------------------------------------------
+    # 7) إيموجي نهاية الرسالة.
+    # ---------------------------------------------------------
+    end_emoji = tg_emoji(CE_END, "🔚")
+    if out and not out.rstrip().endswith(end_emoji):
+        out = out.rstrip() + "\n" + end_emoji
+
+    return strip_non_custom_emoji(out)
+
+
+# =========================================================
+# تطبيق تنسيق الإيموجي على كل الرسائل الصادرة
+# =========================================================
+_original_send_message = bot.send_message
+_original_send_photo = bot.send_photo
+_original_send_video = bot.send_video
+_original_send_document = bot.send_document
+_original_send_audio = bot.send_audio
+_original_send_voice = bot.send_voice
+_original_edit_message_text = bot.edit_message_text
+
+
+def _send_message_decorated(chat_id, text, *args, **kwargs):
+    return _original_send_message(chat_id, decorate_text(text), *args, **kwargs)
+
+
+def _decorate_caption_kwargs(kwargs):
+    if kwargs.get("caption"):
+        kwargs["caption"] = decorate_text(kwargs["caption"])
+    return kwargs
+
+
+def _send_photo_decorated(chat_id, photo, *args, **kwargs):
+    return _original_send_photo(
+        chat_id, photo, *args, **_decorate_caption_kwargs(kwargs)
+    )
+
+
+def _send_video_decorated(chat_id, video, *args, **kwargs):
+    return _original_send_video(
+        chat_id, video, *args, **_decorate_caption_kwargs(kwargs)
+    )
+
+
+def _send_document_decorated(chat_id, document, *args, **kwargs):
+    return _original_send_document(
+        chat_id, document, *args, **_decorate_caption_kwargs(kwargs)
+    )
+
+
+def _send_audio_decorated(chat_id, audio, *args, **kwargs):
+    return _original_send_audio(
+        chat_id, audio, *args, **_decorate_caption_kwargs(kwargs)
+    )
+
+
+def _send_voice_decorated(chat_id, voice, *args, **kwargs):
+    return _original_send_voice(
+        chat_id, voice, *args, **_decorate_caption_kwargs(kwargs)
+    )
+
+
+def _edit_message_text_decorated(text, chat_id=None, message_id=None, *args, **kwargs):
+    return _original_edit_message_text(
+        decorate_text(text),
+        chat_id,
+        message_id,
+        *args,
+        **kwargs
+    )
+
+
+bot.send_message = _send_message_decorated
+bot.send_photo = _send_photo_decorated
+bot.send_video = _send_video_decorated
+bot.send_document = _send_document_decorated
+bot.send_audio = _send_audio_decorated
+bot.send_voice = _send_voice_decorated
+bot.edit_message_text = _edit_message_text_decorated
+
+
+# =========================================================
+# قاعدة البيانات
+# =========================================================
+db = sqlite3.connect(DB_NAME, check_same_thread=False)
+db.row_factory = sqlite3.Row
+cursor = db.cursor()
+
+
+def table_columns(table_name):
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    return {row["name"] for row in cursor.fetchall()}
+
+
+def add_column_if_missing(table, column, definition):
+    if column not in table_columns(table):
+        try:
+            cursor.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+            )
+            db.commit()
+        except Exception as e:
+            print(f"[DB] Migration error {table}.{column}: {e}")
+
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS groups (
+    chat_id INTEGER PRIMARY KEY,
+    title TEXT DEFAULT '',
+    welcome INTEGER DEFAULT 1,
+    links INTEGER DEFAULT 1,
+    photos INTEGER DEFAULT 0,
+    videos INTEGER DEFAULT 0,
+    documents INTEGER DEFAULT 0,
+    stickers INTEGER DEFAULT 0,
+    audio INTEGER DEFAULT 0,
+    animations INTEGER DEFAULT 0,
+    spam INTEGER DEFAULT 1,
+    flood INTEGER DEFAULT 1,
+    repeat_messages INTEGER DEFAULT 1,
+    new_member_protection INTEGER DEFAULT 0,
+    max_warnings INTEGER DEFAULT 3
+)
+""")
+db.commit()
+
+
+for c, d in {
+    "title": "TEXT DEFAULT ''",
+    "welcome": "INTEGER DEFAULT 1",
+    "links": "INTEGER DEFAULT 1",
+    "photos": "INTEGER DEFAULT 0",
+    "videos": "INTEGER DEFAULT 0",
+    "documents": "INTEGER DEFAULT 0",
+    "stickers": "INTEGER DEFAULT 0",
+    "audio": "INTEGER DEFAULT 0",
+    "animations": "INTEGER DEFAULT 0",
+    "spam": "INTEGER DEFAULT 1",
+    "flood": "INTEGER DEFAULT 1",
+    "repeat_messages": "INTEGER DEFAULT 1",
+    "new_member_protection": "INTEGER DEFAULT 0",
+    "max_warnings": "INTEGER DEFAULT 3"
+}.items():
+    add_column_if_missing("groups", c, d)
+
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS group_users (
+    chat_id INTEGER,
+    user_id INTEGER,
+    first_name TEXT DEFAULT '',
+    last_name TEXT DEFAULT '',
+    username TEXT DEFAULT '',
+    messages INTEGER DEFAULT 0,
+    warnings INTEGER DEFAULT 0,
+    joined_at INTEGER DEFAULT 0,
+    last_seen INTEGER DEFAULT 0,
+    PRIMARY KEY(chat_id,user_id)
+)
+""")
+db.commit()
+
+# المستخدمون الذين فتحوا البوت في الخاص، لاستخدام الإذاعة والإشعارات.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS bot_private_users (
+    user_id INTEGER PRIMARY KEY,
+    first_name TEXT DEFAULT '',
+    last_name TEXT DEFAULT '',
+    username TEXT DEFAULT '',
+    first_seen INTEGER DEFAULT 0,
+    last_seen INTEGER DEFAULT 0
+)
+""")
+db.commit()
+
+# البوتات التي يعرفها البوت داخل المجموعات. Telegram لا يوفر API لسرد كل أعضاء المجموعة.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS known_bots (
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    first_name TEXT DEFAULT '',
+    username TEXT DEFAULT '',
+    discovered_at INTEGER DEFAULT 0,
+    PRIMARY KEY(chat_id,user_id)
+)
+""")
+db.commit()
+
+# منع تكرار إشعار المطور عند أول استخدام للخاص.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS developer_notifications (
+    user_id INTEGER PRIMARY KEY,
+    notified_at INTEGER DEFAULT 0
+)
+""")
+db.commit()
+
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS blacklist (
+    chat_id INTEGER,
+    word TEXT,
+    PRIMARY KEY(chat_id,word)
+)
+""")
+db.commit()
+
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER,
+    admin_id INTEGER,
+    target_id INTEGER,
+    action TEXT,
+    details TEXT,
+    created_at INTEGER
+)
+""")
+db.commit()
+
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS settings (
+    chat_id INTEGER,
+    setting TEXT,
+    value TEXT,
+    PRIMARY KEY(chat_id,setting)
+)
+""")
+db.commit()
+
+# الردود التلقائية - محفوظة داخل SQLite حتى لا تضيع بعد إعادة التشغيل
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS auto_replies (
+    chat_id INTEGER NOT NULL,
+    trigger TEXT NOT NULL,
+    reply_text TEXT NOT NULL DEFAULT '',
+    button_enabled INTEGER DEFAULT 0,
+    button_text TEXT DEFAULT '',
+    button_url TEXT DEFAULT '',
+    button_emoji_id TEXT DEFAULT '',
+    PRIMARY KEY(chat_id,trigger)
+)
+""")
+db.commit()
+
+# حفظ تنسيق الرد الأصلي (عريض / اقتباس / Premium Emoji / روابط وغيرها)
+try:
+    cursor.execute(
+        "ALTER TABLE auto_replies ADD COLUMN reply_entities TEXT DEFAULT ''"
+    )
+    db.commit()
+except sqlite3.OperationalError:
     pass
 
-# ============================================================
-# تحسينات الأداء - Caches
-# ============================================================
-_FORCE_CHAT_ID_CACHE = {}
-_ADMIN_ID_SET = set()
-_BANNED_ID_SET = set()
-
-
-def _refresh_fast_caches():
-    global _ADMIN_ID_SET, _BANNED_ID_SET
-
-    try:
-        _ADMIN_ID_SET = {int(ADMIN_ID)}
-        _ADMIN_ID_SET.update(
-            int(x) for x in db.get("admins", [])
-            if str(x).strip().lstrip("-").isdigit()
-        )
-    except Exception:
-        _ADMIN_ID_SET = {int(ADMIN_ID)}
-
-    try:
-        _BANNED_ID_SET = {
-            int(x) for x in db.get("banned_users", [])
-            if str(x).strip().lstrip("-").isdigit()
-        }
-    except Exception:
-        _BANNED_ID_SET = set()
-
-
-_refresh_fast_caches()
-
-# ============================================================
-# أدوات قنوات الاشتراك الإجباري
-# ============================================================
-
-def get_force_channels():
-    channels = db["settings"].get(
-        "force_sub_channels",
-        []
+# حفظ أكثر من زر شفاف لكل رد بصيغة JSON، مع الحفاظ على الأزرار القديمة.
+try:
+    cursor.execute(
+        "ALTER TABLE auto_replies ADD COLUMN button_data TEXT DEFAULT ''"
     )
+    db.commit()
+except sqlite3.OperationalError:
+    pass
 
-    if not isinstance(channels, list):
-        channels = []
-
-    result = []
-
-    for item in channels:
-        if not isinstance(item, dict):
-            continue
-
-        channel = str(
-            item.get("channel", "")
-        ).strip()
-
-        link = str(
-            item.get("link", "")
-        ).strip()
-
-        if channel:
-            result.append({
-                "channel": channel,
-                "link": link
-            })
-
-    return result
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS group_ranks (
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    rank TEXT NOT NULL,
+    PRIMARY KEY(chat_id,user_id)
+)
+""")
+db.commit()
 
 
-def save_force_channels(channels):
-    normalized = []
-
-    for item in channels:
-        if not isinstance(item, dict):
-            continue
-
-        channel = str(
-            item.get("channel", "")
-        ).strip()
-
-        link = str(
-            item.get("link", "")
-        ).strip()
-
-        if not channel:
-            continue
-
-        if not link:
-            if channel.startswith("@"):
-                link = "https://t.me/" + channel[1:]
-
-        normalized.append({
-            "channel": channel,
-            "link": link
-        })
-
-    db["settings"][
-        "force_sub_channels"
-    ] = normalized
-
-    # توافق مع النسخة القديمة
-    if normalized:
-        db["settings"][
-            "force_sub_channel"
-        ] = normalized[0]["channel"]
-
-        db["settings"][
-            "force_sub_link"
-        ] = normalized[0]["link"]
-
-    else:
-        db["settings"][
-            "force_sub_channel"
-        ] = ""
-
-        db["settings"][
-            "force_sub_link"
-        ] = ""
-
-    save_db(db)
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS global_bans (
+    user_id INTEGER PRIMARY KEY,
+    created_at INTEGER DEFAULT 0,
+    admin_id INTEGER DEFAULT 0
+)
+""")
+db.commit()
 
 
-def add_force_channel(channel, link=""):
-    channel = channel.strip()
-    link = link.strip()
-
-    if not link and channel.startswith("@"):
-        link = "https://t.me/" + channel[1:]
-
-    channels = get_force_channels()
-
-    for item in channels:
-        if item["channel"].lower() == channel.lower():
-            item["link"] = link or item.get("link", "")
-            save_force_channels(channels)
-            _FORCE_CHAT_ID_CACHE.pop(channel.lower(), None)
-            return False
-
-    channels.append({
-        "channel": channel,
-        "link": link
-    })
-
-    save_force_channels(channels)
-    return True
+# قنوات الاشتراك الإجباري للمجموعات
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS force_sub_channels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER,
+    username TEXT DEFAULT '',
+    title TEXT DEFAULT '',
+    url TEXT DEFAULT '',
+    button_text TEXT DEFAULT 'Update MaX',
+    emoji_id TEXT DEFAULT '5271801931814165886',
+    enabled INTEGER DEFAULT 1,
+    UNIQUE(chat_id)
+)
+""")
+db.commit()
 
 
-def remove_force_channel(index):
-    channels = get_force_channels()
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS rank_permissions (
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    permission TEXT NOT NULL,
+    PRIMARY KEY(chat_id,user_id,permission)
+)
+""")
+db.commit()
 
-    if index < 0 or index >= len(channels):
-        return False
-
-    channels.pop(index)
-    save_force_channels(channels)
-    _FORCE_CHAT_ID_CACHE.clear()
-    return True
-
-
-# ============================================================
-# تحديث yt-dlp تلقائياً لحل تغييرات TikTok
-# ============================================================
-
-def update_yt_dlp():
-    try:
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "--no-warn-script-location",
-                "--upgrade",
-                "yt-dlp",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-            timeout=120,
-        )
-        importlib.reload(yt_dlp)
-        logger.info("yt-dlp updated successfully")
-    except Exception as e:
-        logger.warning("yt-dlp update skipped: %s", e)
+print("Database Ready / Migration Completed")
 
 
-def update_yt_dlp_tiktok_fallback():
-    try:
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "--no-warn-script-location",
-                "--upgrade",
-                "https://github.com/yt-dlp/yt-dlp/archive/refs/heads/master.zip",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-            timeout=180,
-        )
-
-        if result.returncode != 0:
-            return False
-
-        importlib.reload(yt_dlp)
-        logger.info("yt-dlp TikTok fallback updated successfully")
-        return True
-
-    except Exception as e:
-        logger.warning("yt-dlp TikTok fallback update failed: %s", e)
-        return False
-
-
-# ============================================================
+# =========================================================
 # أدوات عامة
-# ============================================================
-
-def is_admin(user_id: int) -> bool:
-    try:
-        return int(user_id) in _ADMIN_ID_SET
-    except (TypeError, ValueError):
-        return False
+# =========================================================
+def now():
+    return int(time.time())
 
 
-def get_admins() -> list:
-    try:
-        return [
-            int(x)
-            for x in db.get("admins", [])
-            if int(x) != int(ADMIN_ID)
-        ]
-    except Exception:
-        return []
-
-
-def is_banned(user_id: int) -> bool:
-    try:
-        return int(user_id) in _BANNED_ID_SET
-    except (TypeError, ValueError):
-        return False
-
-
-def add_user(user):
-    if not user:
-        return
-
-    user_id = str(user.id)
-    first_name = user.first_name or ""
-    username = user.username or ""
-    existing = db["users"].get(user_id)
-
-    if existing is None:
-        db["users"][user_id] = {
-            "id": user.id,
-            "first_name": first_name,
-            "username": username,
-            "joined_at": datetime.now().strftime(
-                "%Y-%m-%d %H:%M:%S"
-            ),
-            "downloads": 0,
-            "welcome_message_sent": False,
-        }
-        save_db(db)
-        return
-
-    changed = (
-        existing.get("first_name", "") != first_name
-        or existing.get("username", "") != username
-    )
-    if changed:
-        existing["first_name"] = first_name
-        existing["username"] = username
-        save_db(db)
-
-
-def get_user_count():
-    return len(
-        db.get(
-            "users",
-            {}
-        )
-    )
-
-
-def get_download_count():
-    total = 0
-
-    for user in db.get(
-        "users",
-        {}
-    ).values():
-
-        try:
-            total += int(
-                user.get(
-                    "downloads",
-                    0
-                )
-            )
-        except Exception:
-            pass
-
-    return total
-
-
-def increment_download(user_id):
-    user_id = str(user_id)
-
-    if user_id in db["users"]:
-        current = db["users"][user_id].get(
-            "downloads",
-            0
-        )
-
-        try:
-            current = int(current)
-        except Exception:
-            current = 0
-
-        db["users"][user_id][
-            "downloads"
-        ] = current + 1
-
-        save_db(db)
-
-
-# ============================================================
-# حماية نص الترحيب من أخطاء format
-# ============================================================
-
-class SafeFormatDict(dict):
-
-    def __missing__(self, key):
-        return "{" + key + "}"
-
-
-_CUSTOM_EMOJI_TOKEN_RE = re.compile(
-    r"(?:\[emoji:(\d+)\]|\{emoji:(\d+)\})",
-    re.IGNORECASE
-)
-
-# الصيغة المختصرة للكليشات: النص|Premium_Emoji_ID
-_CUSTOM_EMOJI_PIPE_RE = re.compile(
-    r"([^|\n]+?)\|(\d{5,30})(?=\s|$)",
-    re.UNICODE
-)
-
-
-def _render_custom_emoji_markup(text):
-    """
-    يحول الصيغة:
-        [emoji:123456789]
-    أو:
-        {emoji:123456789}
-    إلى Telegram HTML:
-        <tg-emoji emoji-id="123456789">⭐</tg-emoji>
-
-    لا يضيف أي Premium Emoji من تلقاء نفسه.
-    """
-    if text is None:
+def clean_text(text):
+    if not text:
         return ""
 
-    value = str(text)
+    text = text.strip()
 
-    def repl(match):
-        emoji_id = match.group(1) or match.group(2)
-        if not emoji_id or not emoji_id.isdigit():
-            return match.group(0)
-        return f'<tg-emoji emoji-id="{emoji_id}">⭐</tg-emoji>'
+    if text.startswith("/"):
+        text = text[1:]
 
-    # الصيغ القديمة: [emoji:ID] و {emoji:ID}
-    value = _CUSTOM_EMOJI_TOKEN_RE.sub(repl, value)
+    for a, b in {
+        "أ": "ا",
+        "إ": "ا",
+        "آ": "ا",
+        "ة": "ه",
+        "ى": "ي"
+    }.items():
+        text = text.replace(a, b)
 
-    # الصيغة الجديدة المطلوبة: النص|ID
-    def pipe_repl(match):
-        label = match.group(1).strip()
-        emoji_id = match.group(2)
-        if not label or not emoji_id.isdigit():
-            return match.group(0)
-        return f'{label} <tg-emoji emoji-id="{emoji_id}">⭐</tg-emoji>'
-
-    return _CUSTOM_EMOJI_PIPE_RE.sub(pipe_repl, value)
+    return text.lower().strip()
 
 
-def _protect_custom_emoji_tokens(text):
-    """
-    يحمي {emoji:ID} من str.format_map حتى لا تعتبره Python
-    متغيراً أو format specifier.
-    """
-    if text is None:
-        return ""
+def command_parts(message):
+    text = (message.text or "").strip()
 
-    value = str(text)
-    saved = {}
+    if text.startswith("/"):
+        text = text[1:]
 
-    def repl(match):
-        token = f"__CUSTOM_EMOJI_TOKEN_{len(saved)}__"
-        saved[token] = match.group(0)
-        return token
+    parts = text.split(maxsplit=1)
 
-    protected = _CUSTOM_EMOJI_TOKEN_RE.sub(repl, value)
-    return protected, saved
+    if not parts:
+        return "", ""
+
+    command = clean_text(parts[0])
+    argument = parts[1].strip() if len(parts) > 1 else ""
+
+    # أوامر متعددة الكلمات للردود
+    if command in ("اضف", "اضيف") and argument:
+        second = argument.split(maxsplit=1)[0]
+        if clean_text(second) == "رد":
+            command = "اضف_رد"
+            argument = argument[len(second):].strip()
+    elif command == "حذف" and argument:
+        second = argument.split(maxsplit=1)[0]
+        if clean_text(second) == "رد":
+            command = "حذف_رد"
+            argument = argument[len(second):].strip()
+    elif command == "قائمة" and argument:
+        second = argument.split(maxsplit=1)[0]
+        if clean_text(second) == "الردود":
+            command = "قائمة_الردود"
+            argument = argument[len(second):].strip()
+
+    # أوامر من كلمتين يجب أن تصل للراوتر كأمر واحد،
+    # خصوصًا "فك كتم" حتى لا يتم تفسيرها بالخطأ كـ "فك حظر".
+    if command == "طرد" and argument:
+        second = argument.split(maxsplit=1)[0]
+        if clean_text(second) in ("البوتات", "بوتات"):
+            command = "طرد_البوتات"
+            argument = argument[len(second):].strip()
+
+    if command == "تحليل" and argument:
+        second = argument.split(maxsplit=1)[0]
+        second_clean = clean_text(second)
+
+        if second_clean == "تون":
+            command = "تحليل_تون"
+            argument = argument[len(second):].strip()
+        elif second_clean in ("دولار", "الدولار", "usd", "usdt"):
+            command = "تحليل_دولار"
+            argument = argument[len(second):].strip()
+
+    if command == "فك" and argument:
+        second = argument.split(maxsplit=1)[0]
+        second_clean = clean_text(second)
+
+        if second_clean == "كتم":
+            command = "فككتم"
+            argument = argument[len(second):].strip()
+
+        elif second_clean == "حظر":
+            command = "فكحظر"
+            argument = argument[len(second):].strip()
+
+    elif command == "حظر" and argument:
+        second = argument.split(maxsplit=1)[0]
+        second_clean = clean_text(second)
+
+        if second_clean == "عام":
+            command = "حظرعام"
+            argument = argument[len(second):].strip()
+
+    return command, argument
 
 
-def _restore_custom_emoji_tokens(text, saved):
-    value = str(text)
-    for token, original in saved.items():
-        value = value.replace(token, original)
-    return value
+def ensure_group(chat):
+    if chat.type not in ("group", "supergroup"):
+        return
 
-
-def format_welcome_text(
-    text,
-    first_name,
-    username,
-    user_id
-):
-    protected, saved = _protect_custom_emoji_tokens(text)
-
-    values = SafeFormatDict({
-        "first_name": first_name,
-        "username": username,
-        "user_id": user_id
-    })
-
-    try:
-        result = protected.format_map(values)
-    except Exception:
-        result = protected
-
-    result = _restore_custom_emoji_tokens(result, saved)
-    return _replace_plain_emojis(_render_custom_emoji_markup(result))
-
-
-# ============================================================
-# إعدادات أسماء وإيموجيات الأزرار
-# ============================================================
-
-BUTTON_DEFAULTS = {
-    "platform_tiktok": ("TikTok", "5391044040860906456"),
-    "platform_facebook": ("Facebook", "5269427536453984598"),
-    "back_home": ("🔙 رجوع", ""),
-    "admin_stats": ("📊 الإحصائيات", ""),
-    "admin_broadcast": ("📢 إذاعة", "5890969691425347748"),
-    "admin_welcome_photo": ("📸 ترحيب صورة", "5890795783904565270"),
-    "admin_welcome_video": ("🎬 ترحيب فيديو", "5782815375460671828"),
-    "admin_welcome_text": ("✏️ نص الترحيب", "5767120181981617136"),
-    "admin_delete_media": ("🗑 حذف ميديا الترحيب", "5891000366081775168"),
-    "admin_force_sub": ("🔐 الاشتراك الإجباري", "5462989862669920629"),
-    "admin_download_text": ("📝 رسالة التحميل", "5462919317832082236"),
-    "admin_ban": ("🚫 حظر مستخدم", "5767199471372867777"),
-    "admin_unban": ("♻️ فك حظر", "5782815375460671828"),
-    "admin_admins": ("👑 المشرفون", ""),
-    "admin_users": ("👥 المستخدمون", ""),
-    "admin_panel": ("🔄 تحديث اللوحة", "5890969691425347748"),
-    "check_subscription": ("🔄 تحقّق من الاشتراك", "5890969691425347748"),
-    "admin_add_admin": ("➕ إضافة مشرف", "5888663955412359816"),
-    "admin_remove_admin": ("🗑 حذف مشرف", "5891075716988016811"),
-    "force_enable": ("🟢 تفعيل", "5782815375460671828"),
-    "force_disable": ("🔴 تعطيل", "5891000366081775168"),
-    "force_add_channel": ("➕ إضافة قناة", "5888663955412359816"),
-    "force_remove_channel": ("🗑 حذف قناة", "5891075716988016811"),
-    "force_list_channels": ("📋 تحديث القنوات", "5890866066749397234"),
-}
-
-def get_button_setting(key):
-    default_text, default_emoji = BUTTON_DEFAULTS.get(
-        key,
-        (key, "")
+    cursor.execute(
+        "INSERT OR IGNORE INTO groups(chat_id,title) VALUES(?,?)",
+        (chat.id, chat.title or "")
     )
-    settings = db.setdefault("settings", {})
-    button_settings = settings.setdefault(
-        "button_settings",
-        {}
+
+    cursor.execute(
+        "UPDATE groups SET title=? WHERE chat_id=?",
+        (chat.title or "", chat.id)
     )
-    item = button_settings.get(key, {})
 
-    if not isinstance(item, dict):
-        item = {}
-
-    return {
-        "text": str(item.get("text", default_text)),
-        "emoji_id": str(item.get("emoji_id", default_emoji)).strip(),
-    }
+    db.commit()
 
 
-def button_text(key, fallback=None):
-    if fallback is None:
-        fallback = BUTTON_DEFAULTS.get(
-            key,
-            (key, "")
-        )[0]
-
-    return get_button_setting(key).get(
-        "text",
-        fallback
-    ) or fallback
+def get_group(chat_id):
+    cursor.execute(
+        "SELECT * FROM groups WHERE chat_id=?",
+        (chat_id,)
+    )
+    return cursor.fetchone()
 
 
-def button_emoji(key, fallback=""):
-    value = get_button_setting(key).get(
-        "emoji_id",
-        fallback
+def group_setting(chat_id, column):
+    row = get_group(chat_id)
+    return bool(row[column]) if row else False
+
+
+def set_group_setting(chat_id, column, value):
+    cursor.execute(
+        f"UPDATE groups SET {column}=? WHERE chat_id=?",
+        (1 if value else 0, chat_id)
+    )
+    db.commit()
+
+
+def get_setting(chat_id, name, default=None):
+    cursor.execute(
+        "SELECT value FROM settings WHERE chat_id=? AND setting=?",
+        (chat_id, name)
+    )
+
+    row = cursor.fetchone()
+
+    return row["value"] if row else default
+
+
+def set_setting(chat_id, name, value):
+    cursor.execute("""
+        INSERT INTO settings(chat_id,setting,value)
+        VALUES(?,?,?)
+        ON CONFLICT(chat_id,setting)
+        DO UPDATE SET value=excluded.value
+    """, (chat_id, name, str(value)))
+
+    db.commit()
+
+
+def full_name(user):
+    n = " ".join(
+        x for x in [
+            user.first_name or "",
+            user.last_name or ""
+        ] if x
     ).strip()
 
-    return value
+    return n or "مستخدم"
 
 
-def set_button_setting(key, text_value, emoji_id=""):
-    if key not in BUTTON_DEFAULTS:
-        return False
+def username_text(user):
+    return "@" + user.username if user.username else "لا يوجد"
 
-    text_value = str(text_value).strip()
-    emoji_id = str(emoji_id).strip()
 
-    if not text_value:
-        return False
-
-    if emoji_id and not emoji_id.isdigit():
-        return False
-
-    db.setdefault("settings", {}).setdefault(
-        "button_settings",
-        {}
-    )[key] = {
-        "text": text_value,
-        "emoji_id": emoji_id,
-    }
-
-    save_db(db)
-    return True
-
-
-def reset_button_setting(key):
-    if key in db.get("settings", {}).get(
-        "button_settings",
-        {}
-    ):
-        db["settings"]["button_settings"].pop(
-            key,
-            None
-        )
-        save_db(db)
-    return True
-
-
-# ============================================================
-# إعدادات رسائل البوت القابلة للتعديل من لوحة الأدمن
-# ============================================================
-
-MESSAGE_DEFAULTS = {
-    "home": "",
-    "new_user_welcome": "",
-    "platform_tiktok": "تم اختيار TikTok\n\nالرجاء إرسال رابط الفيديو:",
-    "platform_facebook": "تم اختيار Facebook\n\nالرجاء إرسال رابط الفيديو أو الـ Reels:",
-    "download_status": "⏳ جاري تحميل الفيديو، يرجى الانتظار...",
-    "sending_status": "🚀 جاري إرسال الفيديو...",
-    "success": "✅ تم تحميل الفيديو بنجاح\n\nالمصدر: {platform}",
-    "download_error": "❌ فشل تحميل الفيديو\n\n{error}",
-    "help": "طريقة استخدام البوت\n\n1️⃣ اضغط /start\n2️⃣ اختر TikTok\n3️⃣ أرسل رابط الفيديو\n4️⃣ انتظر حتى يكتمل التحميل\n\nالتحميل يتم تلقائياً.",
-    "force_sub": "يجب عليك الاشتراك في جميع القنوات المطلوبة أولاً.",
-    "force_sub_done": "بعد الاشتراك اضغط على زر التحقق.",
-}
-
-
-def get_message_setting(key, fallback=None):
-    if fallback is None:
-        fallback = MESSAGE_DEFAULTS.get(key, "")
-    settings = db.setdefault("settings", {})
-    values = settings.setdefault("message_settings", {})
-    value = values.get(key, "")
-    return str(value) if value else fallback
-
-
-def set_message_setting(key, value):
-    if key not in MESSAGE_DEFAULTS:
-        return False
-    value = str(value)
-    if not value.strip():
-        return False
-    db.setdefault("settings", {}).setdefault("message_settings", {})[key] = value
-    # توافق كامل مع زر "رسالة التحميل" القديم.
-    if key == "download_status":
-        db.setdefault("settings", {})["download_text"] = value
-    save_db(db)
-    return True
-
-
-def message_editor_text():
-    labels = {
-        "home": "الرسالة الرئيسية",
-        "new_user_welcome": "ترحيب العضو الجديد",
-        "platform_tiktok": "رسالة اختيار TikTok",
-        "download_status": "رسالة بدء التحميل",
-        "sending_status": "رسالة إرسال الفيديو",
-        "success": "رسالة نجاح التحميل",
-        "download_error": "رسالة خطأ التحميل",
-        "help": "رسالة المساعدة",
-        "force_sub": "رسالة الاشتراك الإجباري",
-        "force_sub_done": "النص بعد الاشتراك",
-    }
-    lines = [
-        f"{EMOJI_5} <b>تخصيص رسائل البوت</b> {EMOJI_5}",
-        "",
-        "اختر الرسالة التي تريد تعديلها:",
-    ]
-    for key, label in labels.items():
-        lines.append(f"• {label}")
-    lines.extend([
-        "",
-        "المتغيرات المتاحة حسب الرسالة:",
-        "<code>{first_name}</code> <code>{username}</code> <code>{user_id}</code>",
-        "<code>{platform}</code> <code>{error}</code>",
-    ])
-    return "\n".join(lines)
-
-
-def message_editor_keyboard():
-    labels = {
-        "home": "🏠 الرئيسية",
-        "new_user_welcome": "👋 العضو الجديد",
-        "platform_tiktok": "🎵 TikTok",
-        "download_status": "⏳ بدء التحميل",
-        "sending_status": "📤 إرسال الفيديو",
-        "success": "✅ نجاح التحميل",
-        "download_error": "❌ خطأ التحميل",
-        "help": "❓ المساعدة",
-        "force_sub": "🔐 الاشتراك الإجباري",
-        "force_sub_done": "✔️ بعد الاشتراك",
-    }
-    rows = []
-    for key, label in labels.items():
-        rows.append([
-            InlineKeyboardButton(
-                label,
-                callback_data=f"message_edit_{key}",
-                style="primary",
-                icon_custom_emoji_id=(button_emoji("admin_welcome_text", EMOJI_IDS()["text"]) or None)
-            )
-        ])
-    rows.append([
-        InlineKeyboardButton(
-            "🔙 رجوع للوحة الأدمن",
-            callback_data="admin_panel",
-            style="primary",
-            icon_custom_emoji_id=EMOJI_IDS()["back"]
-        )
-    ])
-    return InlineKeyboardMarkup(rows)
-
-
-def button_emoji_keyboard(key):
-    library = _premium_library_ids() if "_premium_library_ids" in globals() else list(AVAILABLE_CUSTOM_EMOJI_IDS)
-    rows = []
-    for i in range(0, len(library), 2):
-        row = []
-        for emoji_id in library[i:i + 2]:
-            row.append(InlineKeyboardButton(
-                "✨ اختيار",
-                callback_data=f"button_emoji_{key}_{emoji_id}",
-                style="primary",
-                icon_custom_emoji_id=emoji_id
-            ))
-        rows.append(row)
-    rows.append([
-        InlineKeyboardButton(
-            "🗑 إزالة الإيموجي",
-            callback_data=f"button_emoji_clear_{key}",
-            style="danger"
-        )
-    ])
-    rows.append([
-        InlineKeyboardButton(
-            "🔙 رجوع",
-            callback_data="admin_buttons",
-            style="primary",
-            icon_custom_emoji_id=EMOJI_IDS()["back"]
-        )
-    ])
-    return InlineKeyboardMarkup(rows)
-
-def button_editor_text():
-    lines = [
-        f"{EMOJI_5} <b>تخصيص أزرار البوت</b> {EMOJI_5}",
-        "",
-        f"{EMOJI_1} اختر أي زر لتغيير اسمه والإيموجي المميز الخاص به.",
-        "",
-        "<b>الإيموجيات المضافة للمكتبة:</b>",
-    ]
-
-    for emoji_id in AVAILABLE_CUSTOM_EMOJI_IDS:
-        lines.append(
-            f"<code>{emoji_id}</code>"
-        )
-
-    lines.extend([
-        "",
-        "عند التعديل أرسل بالشكل:",
-        "<code>اسم الزر|emoji_id</code>",
-        "",
-        "أو لتغيير الاسم فقط:",
-        "<code>اسم الزر</code>",
-        "",
-        "اترك emoji_id فارغاً لإزالة أيقونة الزر المميزة.",
-    ])
-
-    return "\n".join(lines)
-
-
-def button_editor_keyboard():
-    rows = []
-
-    for key, (default_text, default_emoji) in BUTTON_DEFAULTS.items():
-        current = get_button_setting(key)
-        rows.append([
-            InlineKeyboardButton(
-                current["text"],
-                callback_data=f"button_edit_{key}",
-                style="primary",
-                icon_custom_emoji_id=(
-                    current["emoji_id"]
-                    or default_emoji
-                    or None
-                )
-            )
-        ])
-
-    rows.append([
-        InlineKeyboardButton(
-            "🔙 رجوع للوحة الأدمن",
-            callback_data="admin_panel",
-            style="primary",
-            icon_custom_emoji_id=EMOJI_IDS()["back"]
-        )
-    ])
-
-    return InlineKeyboardMarkup(rows)
-
-
-# ============================================================
-# أزرار المنصات
-# ============================================================
-
-def get_platform_keyboard():
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                text=button_text("platform_tiktok", "TikTok"),
-                callback_data="platform_tiktok",
-                style="danger",
-                icon_custom_emoji_id=(
-                    button_emoji("platform_tiktok", "5391044040860906456")
-                    or None
-                )
-            )
-        ]
-    ]
-
-    return InlineKeyboardMarkup(
-        keyboard
-    )
-
-
-# ============================================================
-# زر الرجوع
-# ============================================================
-
-def get_back_keyboard():
-
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                button_text("back_home", "🔙 رجوع"),
-                callback_data="back_home",
-                style="primary",
-                icon_custom_emoji_id=(
-                    button_emoji("back_home", EMOJI_IDS()["back"])
-                    or None
-                )
-            )
-        ]
-    ])
-
-
-# ============================================================
-# Custom Emoji IDs للأزرار
-# ============================================================
-
-def EMOJI_IDS():
-
-    return {
-        "stats": "",
-        "broadcast": "5890969691425347748",
-        "photo": "5890795783904565270",
-        "video": "5782815375460671828",
-        "text": "5767120181981617136",
-        "delete": "5891000366081775168",
-        "force": "5462989862669920629",
-        "download": "5462919317832082236",
-        "ban": "5767199471372867777",
-        "users": "",
-        "refresh": "5890969691425347748",
-        "back": "5890795783904565270",
-        "enable": "5782815375460671828",
-        "disable": "5891000366081775168",
-        "channel": "5462989862669920629",
-        "link": "5462919317832082236",
-        "cancel": "5767199471372867777",
-        "add": "5888663955412359816",
-        "remove": "5891075716988016811",
-        "list": "5890866066749397234",
-    }
-
-
-# ============================================================
-# لوحة الأدمن
-# ============================================================
-
-def admin_keyboard():
-
-    ids = EMOJI_IDS()
-
-    keyboard = [
-
-        [
-            InlineKeyboardButton(
-                button_text("admin_stats", "📊 الإحصائيات"),
-                callback_data="admin_stats",
-                style="primary",
-                icon_custom_emoji_id=(button_emoji("admin_stats", ids["stats"]) or None)
-            ),
-            InlineKeyboardButton(
-                button_text("admin_broadcast", "📢 إذاعة"),
-                callback_data="admin_broadcast",
-                style="danger",
-                icon_custom_emoji_id=(button_emoji("admin_broadcast", ids["broadcast"]) or None)
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                button_text("admin_welcome_photo", "📸 ترحيب صورة"),
-                callback_data="admin_welcome_photo",
-                style="primary",
-                icon_custom_emoji_id=(button_emoji("admin_welcome_photo", ids["photo"]) or None)
-            ),
-            InlineKeyboardButton(
-                button_text("admin_welcome_video", "🎬 ترحيب فيديو"),
-                callback_data="admin_welcome_video",
-                style="danger",
-                icon_custom_emoji_id=(button_emoji("admin_welcome_video", ids["video"]) or None)
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                button_text("admin_welcome_text", "✏️ نص الترحيب"),
-                callback_data="admin_welcome_text",
-                style="primary",
-                icon_custom_emoji_id=(button_emoji("admin_welcome_text", ids["text"]) or None)
-            ),
-            InlineKeyboardButton(
-                button_text("admin_delete_media", "🗑 حذف ميديا الترحيب"),
-                callback_data="admin_delete_media",
-                style="danger",
-                icon_custom_emoji_id=(button_emoji("admin_delete_media", ids["delete"]) or None)
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                button_text("admin_force_sub", "🔐 الاشتراك الإجباري"),
-                callback_data="admin_force_sub",
-                style="primary",
-                icon_custom_emoji_id=(button_emoji("admin_force_sub", ids["force"]) or None)
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                button_text("admin_download_text", "📝 رسالة التحميل"),
-                callback_data="admin_download_text",
-                style="danger",
-                icon_custom_emoji_id=(button_emoji("admin_download_text", ids["download"]) or None)
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                button_text("admin_ban", "🚫 حظر مستخدم"),
-                callback_data="admin_ban",
-                style="danger",
-                icon_custom_emoji_id=(button_emoji("admin_ban", ids["ban"]) or None)
-            ),
-            InlineKeyboardButton(
-                button_text("admin_unban", "♻️ فك حظر"),
-                callback_data="admin_unban",
-                style="primary",
-                icon_custom_emoji_id=(button_emoji("admin_unban", ids["enable"]) or None)
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                button_text("admin_admins", "👑 المشرفون"),
-                callback_data="admin_admins",
-                style="primary",
-                icon_custom_emoji_id=(button_emoji("admin_users", ids["users"]) or None)
-            ),
-            InlineKeyboardButton(
-                button_text("admin_users", "👥 المستخدمون"),
-                callback_data="admin_users",
-                style="primary",
-                icon_custom_emoji_id=(button_emoji("admin_users", ids["users"]) or None)
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "💬 تخصيص رسائل البوت",
-                callback_data="admin_messages",
-                style="primary",
-                icon_custom_emoji_id=ids["text"]
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "📤 تصدير الأعضاء",
-                callback_data="admin_export_users",
-                style="primary",
-                icon_custom_emoji_id=ids["users"]
-            ),
-            InlineKeyboardButton(
-                "📥 استرجاع الأعضاء",
-                callback_data="admin_import_users",
-                style="primary",
-                icon_custom_emoji_id=ids["add"]
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🎨 تخصيص الأزرار",
-                callback_data="admin_buttons",
-                style="primary",
-                icon_custom_emoji_id=ids["refresh"]
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                button_text("admin_panel", "🔄 تحديث اللوحة"),
-                callback_data="admin_panel",
-                style="primary",
-                icon_custom_emoji_id=(
-                    button_emoji("admin_panel", ids["refresh"])
-                    or None
-                )
-            )
-        ]
-    ]
-
-    return InlineKeyboardMarkup(
-        keyboard
-    )
-
-
-# ============================================================
-# نص لوحة الأدمن
-# ============================================================
-
-def admin_panel_text():
-
-    settings = db["settings"]
-
-    force_status = (
-        f"{EMOJI_6} مفعّل"
-        if settings.get(
-            "force_sub_enabled"
-        )
-        else f"{EMOJI_3} متوقف"
-    )
-
-    channels = get_force_channels()
-
-    if channels:
-        channel_text = f"{len(channels)} قناة"
-    else:
-        channel_text = "غير محددة"
-
-    media_type = settings.get(
-        "welcome_media_type"
-    )
-
-    if media_type == "photo":
-        media_status = f"{EMOJI_3} صورة"
-
-    elif media_type == "video":
-        media_status = f"{EMOJI_6} فيديو"
-
-    else:
-        media_status = f"{EMOJI_3} لا يوجد"
-
+def mention(user, owner=False):
+    name = html.escape(full_name(user))
+    if owner:
+        return f'<a href="tg://user?id={user.id}">{name}</a>'
     return (
-        f"{EMOJI_5} <b>لوحة تحكم الأدمن</b> "
-        f"{EMOJI_5}\n\n"
-
-        f"{EMOJI_4} <b>المستخدمون:</b> "
-        f"<code>{get_user_count()}</code>\n"
-
-        f"{EMOJI_2} <b>إجمالي التحميلات:</b> "
-        f"<code>{get_download_count()}</code>\n"
-
-        f"{EMOJI_9} <b>الاشتراك الإجباري:</b> "
-        f"<b>{force_status}</b>\n"
-
-        f"{EMOJI_1} <b>القنوات:</b> "
-        f"<code>{html.escape(str(channel_text))}</code>\n"
-
-        f"{EMOJI_7} <b>ميديا الترحيب:</b> "
-        f"<b>{media_status}</b>\n"
-
-        f"👑 <b>المشرفون الإضافيون:</b> "
-        f"<code>{len(get_admins())}</code>\n\n"
-
-        f"{EMOJI_8} <b>اختر العملية المطلوبة:</b>"
+        tg_emoji(CE_PERSON, "👤") +
+        f'<a href="tg://user?id={user.id}">{name}</a>' +
+        tg_emoji(CE_AFTER_PERSON, "✨")
     )
 
 
-# ============================================================
-# الصفحة الرئيسية
-# ============================================================
-
-async def send_home(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
+# =========================================================
+# الأزرار
+# =========================================================
+def button(
+    text,
+    callback_data=None,
+    url=None,
+    style="danger",
+    icon_custom_emoji_id=None
 ):
+    # جميع أزرار البوت بلون واحد: danger.
+    # أي Emoji عادي في اسم الزر يتم حذفه؛ الأيقونة المميزة تُرسل عبر icon_custom_emoji_id.
+    text = strip_non_custom_emoji(str(text or "")).strip()
+    kwargs = {
+        "text": text,
+        "style": "danger"
+    }
 
-    user = update.effective_user
+    if callback_data is not None:
+        kwargs["callback_data"] = callback_data
 
-    if not user:
-        return
+    if url is not None:
+        kwargs["url"] = url
 
-    first_name = html.escape(
-        user.first_name or "مستخدم"
-    )
-
-    username = (
-        f"@{html.escape(user.username)}"
-        if user.username
-        else "لا يوجد"
-    )
-
-    user_id = user.id
-
-    custom_text = get_message_setting("home", "").strip()
-    if not custom_text:
-        custom_text = db["settings"].get("welcome_text", "").strip()
-
-    if custom_text:
-        caption = format_welcome_text(
-            custom_text,
-            first_name,
-            username,
-            user_id
-        )
-    else:
-
-        caption = (
-            f"{EMOJI_VIDEO} "
-            f"<b>أهلـاً بـيك يـ {first_name}</b> "
-            f"{EMOJI_VIDEO}\n\n"
-
-            f"{EMOJI_PIN} "
-            f"<b>يـوزرك</b>  |  {username}\n"
-
-            f"{EMOJI_PIN} "
-            f"<b>ايديـك</b>  |  "
-            f"<code>{user_id}</code>\n\n"
-
-            f"{EMOJI_OK} "
-            f"<b>فـــــــي بــــوت التحـميـل "
-            f"مـن سـوشـيال ميـديـا</b> "
-            f"{EMOJI_STAR}{EMOJI_SPARK}\n\n"
-
-            f"{EMOJI_POWER} "
-            f"<b>المطور | @v_u_k</b>\n"
-
-            f"{EMOJI_HEART} "
-            f"<b>اختر المنصة لبدء التحميل:</b>"
-        )
-
-    media_type = db["settings"].get(
-        "welcome_media_type"
-    )
-
-    media_id = db["settings"].get(
-        "welcome_media_id"
-    )
-
-    target_message = update.message
-
-    if not target_message and update.callback_query:
-        target_message = (
-            update.callback_query.message
-        )
-
-    if not target_message:
-        return
+    if icon_custom_emoji_id is not None:
+        kwargs["icon_custom_emoji_id"] = icon_custom_emoji_id
 
     try:
+        return types.InlineKeyboardButton(**kwargs)
 
-        if media_type == "photo" and media_id:
-
-            await target_message.reply_photo(
-                photo=media_id,
-                caption=caption,
-                parse_mode="HTML",
-                reply_markup=get_platform_keyboard()
-            )
-
-        elif media_type == "video" and media_id:
-
-            await target_message.reply_video(
-                video=media_id,
-                caption=caption,
-                parse_mode="HTML",
-                supports_streaming=True,
-                reply_markup=get_platform_keyboard()
-            )
-
-        else:
-
-            await target_message.reply_text(
-                caption,
-                parse_mode="HTML",
-                reply_markup=get_platform_keyboard()
-            )
-
-    except Exception as e:
-
-        logger.exception(
-            "Welcome message error: %s",
-            e
-        )
+    except TypeError:
+        kwargs.pop("icon_custom_emoji_id", None)
 
         try:
-            await target_message.reply_text(
-                caption,
-                parse_mode="HTML",
-                reply_markup=get_platform_keyboard()
-            )
-        except Exception:
-            pass
+            return types.InlineKeyboardButton(**kwargs)
+
+        except TypeError:
+            kwargs.pop("style", None)
+            return types.InlineKeyboardButton(**kwargs)
 
 
-# ============================================================
-# الاشتراك الإجباري
-# ============================================================
 
-async def check_force_subscription(
-    update,
-    context
-):
+# =========================================================
+# التحويل التلقائي للعملات ($ -> EGP + TON)
+# =========================================================
+CURRENCY_CACHE_SECONDS = 600
+CURRENCY_HTTP_TIMEOUT = 7
+LOVELY_UPDATES_URL = "https://t.me/LeaDeR_E"
+
+_currency_cache = {
+    "usd_egp": None,
+    "ton_usd": None,
+    "updated_at": 0
+}
+_currency_cache_lock = Lock()
+
+# بيانات تحليل TON لمدة 24 ساعة
+TON_MARKET_CACHE_SECONDS = 60
+_ton_market_cache = {
+    "price_usd": None,
+    "change_24h": None,
+    "high_24h": None,
+    "low_24h": None,
+    "updated_at": 0
+}
+_ton_market_cache_lock = Lock()
+
+
+def transparent_url_button(text, url, emoji_id=None):
     """
-    فحص الاشتراك الإجباري.
-
-    يتم أولاً حل القناة بواسطة get_chat ثم استخدام chat.id الحقيقي
-    مع get_chat_member. هذا أكثر ثباتاً من الاعتماد على @username فقط.
-
-    عند الضغط على زر التحقق:
-    - إذا كان مشتركاً في كل القنوات -> نجاح وفتح البوت.
-    - إذا كان ناقصاً -> نفس رسالة الاشتراك تتحدث بدون تكرار رسائل.
-    - كل قناة تظهر بحالتها الحالية.
+    زر رابط للردود. يُحافظ على اسم الوظيفة القديم للتوافق،
+    لكن مظهر الأزرار الآن موحد بلون danger كما طلب المطور.
     """
+    text = strip_non_custom_emoji(str(text or "")).strip()
+    kwargs = {
+        "text": text,
+        "url": url,
+        "style": "danger"
+    }
 
-    settings = db.setdefault("settings", {})
+    if emoji_id:
+        kwargs["icon_custom_emoji_id"] = str(emoji_id)
 
-    if not settings.get("force_sub_enabled", False):
-        return True
-
-    channels = get_force_channels()
-
-    if not channels:
-        return True
-
-    user = update.effective_user
-
-    if not user:
-        return False
-
-    checked_channels = []
-    missing_channels = []
-    errors = []
-
-    async def check_one_channel(item):
-        channel = str(item.get("channel", "")).strip()
-        link = str(item.get("link", "")).strip()
-
-        if not channel:
-            return None
-
-        if not link and channel.startswith("@"):
-            link = "https://t.me/" + channel[1:]
-
-        result = {
-            "channel": channel,
-            "link": link,
-            "subscribed": False,
-            "error": ""
-        }
-
+    try:
+        return types.InlineKeyboardButton(**kwargs)
+    except TypeError:
+        kwargs.pop("icon_custom_emoji_id", None)
         try:
-            cache_key = channel.lower()
-            chat_id = _FORCE_CHAT_ID_CACHE.get(cache_key)
-
-            if chat_id is None:
-                chat = await context.bot.get_chat(chat_id=channel)
-                chat_id = chat.id
-                _FORCE_CHAT_ID_CACHE[cache_key] = chat_id
-
-            member = await context.bot.get_chat_member(
-                chat_id=chat_id,
-                user_id=user.id
-            )
-
-            status = str(getattr(member, "status", "")).lower()
-            is_member = bool(getattr(member, "is_member", False))
-
-            result["subscribed"] = (
-                status in {"member", "administrator", "creator", "owner"}
-                or (status == "restricted" and is_member)
-            )
-
-        except Exception as e:
-            error_text = str(e).strip()
-            result["error"] = error_text
-            logger.error(
-                "Force subscription check failed | channel=%s | user=%s | error=%s",
-                channel,
-                user.id,
-                error_text
-            )
-
-        return result
-
-    # فحص كل القنوات بالتوازي بدلاً من انتظار كل قناة على حدة.
-    results = await asyncio.gather(
-        *(check_one_channel(item) for item in channels),
-        return_exceptions=True
-    )
-
-    for result in results:
-        if isinstance(result, Exception):
-            logger.error("Force subscription task failed: %s", result)
-            continue
-        if result is None:
-            continue
-
-        checked_channels.append(result)
-
-        if result.get("error"):
-            errors.append(
-                f"{result['channel']}: {result['error']}"
-            )
-
-        if not result.get("subscribed", False):
-            missing_channels.append(result)
-
-    # لا توجد قنوات صالحة للفحص.
-    if not checked_channels:
-        return True
-
-    # كل القنوات متحققة.
-    if not missing_channels:
-        return True
-
-    query = getattr(
-        update,
-        "callback_query",
-        None
-    )
-
-    buttons = []
-
-    # عرض حالة كل قناة، وليس X ثابتة.
-    for item in checked_channels:
-        channel = item["channel"]
-        link = item["link"]
-
-        if item["subscribed"]:
-            buttons.append([
-                InlineKeyboardButton(
-                    f"✅ تم الاشتراك {channel}",
-                    callback_data="subscription_already_ok",
-                    style="primary",
-                    icon_custom_emoji_id=(button_emoji("force_enable", EMOJI_IDS()["enable"]) or None)
-                )
-            ])
-
-        elif link:
-            buttons.append([
-                InlineKeyboardButton(
-                    f"❌ اشترك {channel}",
-                    url=link,
-                    style="primary",
-                    icon_custom_emoji_id=(button_emoji("force_add_channel", EMOJI_IDS()["channel"]) or None)
-                )
-            ])
-
-    buttons.append([
-        InlineKeyboardButton(
-            button_text("check_subscription", "🔄 تحقّق من الاشتراك"),
-            callback_data="check_subscription",
-            style="primary",
-            icon_custom_emoji_id=(button_emoji("check_subscription", EMOJI_IDS()["refresh"]) or None)
-        )
-    ])
-
-    text_lines = [
-        f"{EMOJI_5} <b>الاشتراك الإجباري</b> {EMOJI_5}",
-        "",
-        f"{EMOJI_1} {html.escape(get_message_setting("force_sub", MESSAGE_DEFAULTS["force_sub"]))}",
-        ""
-    ]
-
-    for item in checked_channels:
-        channel = html.escape(
-            item["channel"]
-        )
-
-        if item["subscribed"]:
-            text_lines.append(
-                f"✅ <b>{channel}</b> — تم الاشتراك"
-            )
-        else:
-            text_lines.append(
-                f"❌ <b>{channel}</b> — لم يتم التحقق"
-            )
-
-    text_lines.extend([
-        "",
-        f"{EMOJI_6} {html.escape(get_message_setting("force_sub_done", MESSAGE_DEFAULTS["force_sub_done"]))}"
-    ])
-
-    # إذا تعذر الوصول للقناة، وضّح أن المشكلة في صلاحيات البوت.
-    if errors:
-        text_lines.extend([
-            "",
-            "⚠️ <b>تعذر فحص إحدى القنوات.</b>",
-            "تأكد أن البوت أدمن داخل القناة وأن معرف القناة صحيح."
-        ])
-
-    subscription_text = "\n".join(
-        text_lines
-    )
-
-    if query and query.message:
-        try:
-            await query.edit_message_text(
-                subscription_text,
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(buttons)
-            )
-        except Exception as e:
-            logger.warning(
-                "Could not edit subscription message: %s",
-                e
-            )
-    else:
-        message = update.effective_message
-
-        if message:
+            return types.InlineKeyboardButton(**kwargs)
+        except TypeError:
+            kwargs.pop("style", None)
             try:
-                await message.reply_text(
-                    subscription_text,
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup(buttons)
-                )
-            except Exception as e:
-                logger.warning(
-                    "Could not send subscription message: %s",
-                    e
-                )
-
-    if query:
-        if errors:
-            await query.answer(
-                "⚠️ تعذر فحص قناة. تأكد أن البوت أدمن فيها.",
-                show_alert=True
-            )
-        else:
-            await query.answer(
-                "❌ لم يكتمل الاشتراك في جميع القنوات.",
-                show_alert=True
-            )
-
-    return False
-
-
-# ============================================================
-# /start
-# ============================================================
-
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    user = update.effective_user
-
-    if not user:
-        return
-
-    # تحديد ما إذا كان هذا أول دخول فعلي للمستخدم قبل إضافته لقاعدة البيانات
-    user_id = str(user.id)
-    is_new_user = user_id not in db.get("users", {})
-
-    add_user(user)
-
-    # إشعار الأدمن مرة واحدة فقط عند دخول عضو جديد للبوت
-    if is_new_user:
-        first_name = html.escape(user.first_name or "بدون اسم")
-        username = html.escape(user.username or "لا يوجد")
-        username_text = f"@{username}" if user.username else "لا يوجد"
-
-        admin_notification = (
-            f"{EMOJI_5} <b>عضو جديد دخل البوت!</b> {EMOJI_5}\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"{EMOJI_7} <b>الاسم:</b> {first_name}\n"
-            f"{EMOJI_4} <b>اليوزر:</b> {username_text}\n"
-            f"{EMOJI_9} <b>الآيدي:</b> <code>{user.id}</code>\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"{EMOJI_1} <b>تم تسجيل العضو بنجاح في قاعدة بيانات البوت.</b>"
-        )
-
-        try:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=admin_notification,
-                parse_mode="HTML"
-            )
-        except Exception as e:
-            logger.warning(
-                "Could not send new member notification to admin: %s",
-                e
-            )
-
-    if is_banned(user.id):
-
-        await update.effective_message.reply_text(
-            f"{EMOJI_3} <b>تم حظرك من استخدام البوت.</b>",
-            parse_mode="HTML"
-        )
-
-        return
-
-    subscribed = await check_force_subscription(
-        update,
-        context
-    )
-
-    if not subscribed:
-        return
-
-    context.user_data.pop(
-        "selected_platform",
-        None
-    )
-
-    # ترحيب خاص بالعضو الجديد عند أول دخول ناجح للبوت
-    user_id = str(user.id)
-    user_data = db.get("users", {}).get(user_id, {})
-
-    if not user_data.get("welcome_message_sent", False):
-        first_name = html.escape(user.first_name or "عضو جديد")
-
-        welcome_message = get_message_setting(
-            "new_user_welcome",
-            ""
-        ).strip()
-        if welcome_message:
-            welcome_message = format_welcome_text(
-                welcome_message,
-                user.first_name or "عضو جديد",
-                "@" + user.username if user.username else "لا يوجد",
-                user.id
-            )
-        else:
-            welcome_message = (
-                f"{EMOJI_5} <b>أهلاً وسهلاً بك يا {first_name}</b> {EMOJI_5}\n\n"
-                f"{EMOJI_1} <b>نورت البوت، سعداء بانضمامك إلينا!</b>\n"
-                f"{EMOJI_6} يمكنك الآن اختيار المنصة وإرسال رابط الفيديو للتحميل."
-            )
-
-        await update.effective_message.reply_text(
-            welcome_message,
-            parse_mode="HTML"
-        )
-
-        db["users"][user_id]["welcome_message_sent"] = True
-        save_db(db)
-
-    await send_home(
-        update,
-        context
-    )
-
-
-# ============================================================
-# Callback الرئيسي
-# ============================================================
-
-async def button_callback(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    query = update.callback_query
-
-    user = update.effective_user
-
-    if not user:
-        return
-
-    if is_banned(user.id):
-
-        await query.answer(
-            "🚫 أنت محظور من استخدام البوت.",
-            show_alert=True
-        )
-
-        return
-
-    data = query.data or ""
-
-    # ========================================================
-    # الاشتراك
-    # ========================================================
-
-    if data == "check_subscription":
-
-        subscribed = await check_force_subscription(
-            update,
-            context
-        )
-
-        if subscribed:
-            await query.answer(
-                "تم التحقق من الاشتراك ✅",
-                show_alert=True
-            )
-
-            try:
-                if query.message:
-                    await query.message.delete()
+                return types.InlineKeyboardButton(**kwargs)
             except Exception:
-                pass
+                return None
+    except Exception:
+        return None
 
-            await send_home(
-                update,
-                context
+
+def _http_json(url):
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0"
+        }
+    )
+
+    with urllib.request.urlopen(
+        request,
+        timeout=CURRENCY_HTTP_TIMEOUT
+    ) as response:
+        return json.loads(
+            response.read().decode("utf-8")
+        )
+
+
+def get_currency_rates():
+    """
+    يجلب:
+    - سعر الدولار مقابل الجنيه المصري.
+    - سعر TON بالدولار.
+
+    يتم التخزين مؤقتًا لمدة 10 دقائق حتى لا يتم إرسال طلبات
+    خارجية مع كل رسالة.
+    """
+    current_time = time.time()
+
+    with _currency_cache_lock:
+        if (
+            _currency_cache["usd_egp"] is not None
+            and _currency_cache["ton_usd"] is not None
+            and current_time - _currency_cache["updated_at"]
+            < CURRENCY_CACHE_SECONDS
+        ):
+            return (
+                _currency_cache["usd_egp"],
+                _currency_cache["ton_usd"]
             )
 
-        return
+    usd_egp = None
+    ton_usd = None
 
-    if data == "subscription_already_ok":
-        await query.answer(
-            "هذه القناة تم التحقق منها بالفعل ✅"
-        )
-        return
-
-    # ========================================================
-    # الصفحة الرئيسية
-    # ========================================================
-
-    if data == "back_home":
-
-        context.user_data.pop(
-            "selected_platform",
-            None
+    try:
+        data = _http_json(
+            "https://open.er-api.com/v6/latest/USD"
         )
 
-        await send_home(
-            update,
-            context
+        rates = data.get("rates", {})
+        usd_egp = float(rates.get("EGP"))
+    except Exception as e:
+        print("[Currency USD/EGP Error]", e)
+
+    try:
+        data = _http_json(
+            "https://api.coingecko.com/api/v3/simple/price"
+            "?ids=the-open-network&vs_currencies=usd"
         )
 
-        return
-
-    # ========================================================
-    # لوحة الأدمن
-    # ========================================================
+        ton_usd = float(
+            data["the-open-network"]["usd"]
+        )
+    except Exception as e:
+        print("[Currency TON Error]", e)
 
     if (
-        data.startswith("admin_")
-        or data.startswith("force_")
-        or data.startswith("button_edit_")
-        or data.startswith("button_choose_emoji_")
-        or data.startswith("button_emoji_")
+        usd_egp is not None
+        and ton_usd is not None
+        and usd_egp > 0
+        and ton_usd > 0
     ):
-
-        if not is_admin(user.id):
-
-            await query.answer(
-                "🚫 هذه اللوحة خاصة بالأدمن.",
-                show_alert=True
-            )
-
-            return
-
-        await admin_callback(
-            update,
-            context,
-            data
-        )
-
-        return
-    # ========================================================
-    # Facebook
-    # ========================================================
-
-    if data == "platform_facebook":
-        context.user_data["selected_platform"] = "Facebook"
-        msg = get_message_setting("platform_facebook", MESSAGE_DEFAULTS["platform_facebook"])
-        msg = format_welcome_text(msg, user.first_name or "", "@" + user.username if user.username else "لا يوجد", user.id)
-        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=get_back_keyboard())
-        return
-
-    # ========================================================
-    # TikTok
-    # ========================================================
-
-    if data == "platform_tiktok":
-
-        context.user_data[
-            "selected_platform"
-        ] = "TikTok"
-
-        msg = get_message_setting("platform_tiktok", MESSAGE_DEFAULTS["platform_tiktok"])
-        msg = format_welcome_text(msg, user.first_name or "", "@" + user.username if user.username else "لا يوجد", user.id)
-
-        await query.edit_message_text(
-            msg,
-            parse_mode="HTML",
-            reply_markup=get_back_keyboard()
-        )
-
-        return
-
-
-# ============================================================
-# لوحة الأدمن
-# ============================================================
-
-async def admin_callback(
-    update,
-    context,
-    data
-):
-
-    query = update.callback_query
-
-    # ========================================================
-    # تصدير واسترجاع الأعضاء
-    # ========================================================
-
-    if data == "admin_export_users":
-        try:
-            export_path = os.path.join(gettempdir(), "bot_users_backup.json")
-            export_data = {
-                "users": db.get("users", {}),
-                "banned_users": db.get("banned_users", []),
-                "admins": db.get("admins", []),
-                "exported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-            with open(export_path, "w", encoding="utf-8") as f:
-                json.dump(export_data, f, ensure_ascii=False, indent=2)
-            await query.message.reply_document(
-                document=export_path,
-                caption=f"{EMOJI_6} <b>نسخة احتياطية من الأعضاء</b>\nعدد الأعضاء: <b>{get_user_count()}</b>",
-                parse_mode="HTML"
-            )
-            try:
-                os.remove(export_path)
-            except OSError:
-                pass
-        except Exception as e:
-            logger.exception("Export users error: %s", e)
-            await query.answer("تعذر إنشاء النسخة الاحتياطية.", show_alert=True)
-        return
-
-    if data == "admin_import_users":
-        context.user_data["admin_action"] = "restore_db"
-        await query.edit_message_text(
-            f"{EMOJI_5} <b>استرجاع الأعضاء</b> {EMOJI_5}\n\n"
-            f"أرسل الآن ملف <code>social_downloader_bot_db.json</code> أو نسخة الأعضاء التي صدّرها البوت.\n\n"
-            f"⚠️ الاسترجاع <b>دمج</b> وليس حذفاً: الأعضاء الحاليون لن يتم حذفهم، والأعضاء الموجودون في النسخة القديمة ستتم إضافتهم.\n\n"
-            f"إذا كانت لديك قاعدة البيانات القديمة التي اختفى منها الأعضاء، أرسلها هنا.\n\n"
-            f"للإلغاء: <code>/cancel</code>",
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-        return
-
-    # ========================================================
-    # تخصيص رسائل البوت
-    # ========================================================
-
-    if data == "admin_messages":
-        context.user_data.pop("admin_action", None)
-        await query.edit_message_text(
-            message_editor_text(),
-            parse_mode="HTML",
-            reply_markup=message_editor_keyboard()
-        )
-        return
-
-    if data.startswith("message_edit_"):
-        key = data.replace("message_edit_", "", 1)
-        if key not in MESSAGE_DEFAULTS:
-            await query.answer("الرسالة غير موجودة.", show_alert=True)
-            return
-        context.user_data["admin_action"] = f"message_edit:{key}"
-        current = get_message_setting(key, MESSAGE_DEFAULTS[key])
-        await query.edit_message_text(
-            f"{EMOJI_5} <b>تعديل الرسالة</b>\n\n"
-            f"{EMOJI_1} أرسل النص الجديد الآن.\n\n"
-            f"<b>النص الحالي:</b>\n<code>{html.escape(current)}</code>\n\n"
-            f"المتغيرات: <code>{{first_name}}</code> <code>{{username}}</code> <code>{{user_id}}</code> <code>{{platform}}</code> <code>{{error}}</code>\n\n"
-            f"للإلغاء: <code>/cancel</code>",
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-        return
-
-    # ========================================================
-    # تخصيص الأزرار
-    # ========================================================
-
-    if data == "admin_buttons":
-
-        context.user_data.pop(
-            "admin_action",
-            None
-        )
-
-        await query.edit_message_text(
-            button_editor_text(),
-            parse_mode="HTML",
-            reply_markup=button_editor_keyboard()
-        )
-
-        return
-
-    if data.startswith("button_choose_emoji_"):
-        key = data.replace("button_choose_emoji_", "", 1)
-        if key not in BUTTON_DEFAULTS:
-            await query.answer("الزر غير موجود.", show_alert=True)
-            return
-        await query.edit_message_text(
-            f"{EMOJI_5} <b>اختر Premium Emoji للزر</b>\n\n"
-            f"اضغط على الإيموجي الذي تريده ليتم تعيينه فوراً.",
-            parse_mode="HTML",
-            reply_markup=button_emoji_keyboard(key)
-        )
-        return
-
-    if data.startswith("button_emoji_clear_"):
-        key = data.replace("button_emoji_clear_", "", 1)
-        if key not in BUTTON_DEFAULTS:
-            await query.answer("الزر غير موجود.", show_alert=True)
-            return
-        current = get_button_setting(key)
-        set_button_setting(key, current["text"], "")
-        await query.answer("تمت إزالة الإيموجي المميز.", show_alert=True)
-        await query.edit_message_text(
-            f"{EMOJI_6} <b>تم إزالة إيموجي الزر.</b>\n\n"
-            f"الزر: <b>{html.escape(current['text'])}</b>\n\n"
-            f"يمكنك اختيار إيموجي آخر الآن.",
-            parse_mode="HTML",
-            reply_markup=button_emoji_keyboard(key)
-        )
-        return
-
-    if data.startswith("button_emoji_"):
-        payload = data.replace("button_emoji_", "", 1)
-        # split from the right because the emoji id is numeric and key contains underscores
-        parts = payload.rsplit("_", 1)
-        if len(parts) != 2 or not parts[1].isdigit():
-            await query.answer("إيموجي غير صالح.", show_alert=True)
-            return
-        key, emoji_id = parts
-        available_now = set(_premium_library_ids()) if "_premium_library_ids" in globals() else set(AVAILABLE_CUSTOM_EMOJI_IDS)
-        if key not in BUTTON_DEFAULTS or emoji_id not in available_now:
-            await query.answer("الإيموجي غير محفوظ في مكتبة البوت.", show_alert=True)
-            return
-        current = get_button_setting(key)
-        set_button_setting(key, current["text"], emoji_id)
-        context.user_data.pop("admin_action", None)
-        await query.answer("تم تعيين الإيموجي فعلياً للزر.", show_alert=True)
-        await query.edit_message_text(
-            f"{EMOJI_6} <b>تم تغيير إيموجي الزر بنجاح.</b>\n\n"
-            f"الزر: <b>{html.escape(current['text'])}</b>\n"
-            f"emoji_id: <code>{emoji_id}</code>",
-            parse_mode="HTML",
-            reply_markup=button_editor_keyboard()
-        )
-        return
-
-    if data.startswith("button_edit_"):
-
-        key = data.replace(
-            "button_edit_",
-            "",
-            1
-        )
-
-        if key not in BUTTON_DEFAULTS:
-            await query.answer(
-                "هذا الزر غير موجود.",
-                show_alert=True
-            )
-            return
-
-        context.user_data["admin_action"] = (
-            f"button_edit:{key}"
-        )
-
-        current = get_button_setting(key)
-
-        # Use the same safe button factory used by the rest of the panel.
-        # The previous version built these three buttons directly with
-        # hard-coded custom-emoji IDs; if Telegram rejected one of those IDs
-        # the whole message edit failed and the admin saw "تعذر فتح تعديل الزر".
-        keyboard = [
-            [
-                _make_button(
-                    "🎨 اختر Premium Emoji",
-                    f"button_choose_emoji_{key}",
-                    key="",
-                    emoji_id="",
-                    style="primary"
-                )
-            ],
-            [
-                _make_button(
-                    "🗑 إزالة الإيموجي",
-                    f"button_emoji_clear_{key}",
-                    key="",
-                    emoji_id="",
-                    style="danger"
-                )
-            ],
-            [
-                _make_button(
-                    "🔙 رجوع",
-                    "admin_buttons",
-                    key="",
-                    emoji_id="",
-                    style="primary"
-                )
-            ]
-        ]
-
-        await query.edit_message_text(
-            f"{EMOJI_5} <b>تعديل الزر</b>\n\n"
-            f"{EMOJI_1} الزر الحالي: <b>{html.escape(current['text'])}</b>\n"
-            f"{EMOJI_4} الإيموجي الحالي: <code>{html.escape(current['emoji_id'] or 'لا يوجد')}</code>\n\n"
-            f"🎨 اضغط <b>اختر Premium Emoji</b> لتظهر لك الإيموجيات وتختار منها مباشرة.\n\n"
-            f"أو أرسل اسم الزر فقط، أو بالشكل: <code>اسم الزر|emoji_id</code>",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-        return
-
-    # ========================================================
-    # اللوحة الرئيسية
-    # ========================================================
-
-    if data == "admin_panel":
-
-        await query.edit_message_text(
-            admin_panel_text(),
-            parse_mode="HTML",
-            reply_markup=admin_keyboard()
-        )
-
-        return
-
-    # ========================================================
-    # الإحصائيات
-    # ========================================================
-
-    if data == "admin_stats":
-
-        text = (
-            f"{EMOJI_5} <b>إحصائيات البوت</b> "
-            f"{EMOJI_5}\n\n"
-
-            f"{EMOJI_4} عدد المستخدمين: "
-            f"<b>{get_user_count()}</b>\n"
-
-            f"{EMOJI_2} عدد التحميلات: "
-            f"<b>{get_download_count()}</b>\n"
-
-            f"{EMOJI_3} المحظورون: "
-            f"<b>{len(db.get('banned_users', []))}</b>"
-        )
-
-        await query.edit_message_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-
-        return
-
-    # ========================================================
-    # إذاعة
-    # ========================================================
-
-    if data == "admin_broadcast":
-
-        context.user_data[
-            "admin_action"
-        ] = "broadcast"
-
-        await query.edit_message_text(
-            f"{EMOJI_5} <b>إذاعة للمستخدمين</b> "
-            f"{EMOJI_5}\n\n"
-
-            f"{EMOJI_1} أرسل الآن الرسالة "
-            f"التي تريد إرسالها للجميع.\n\n"
-
-            f"{EMOJI_6} يمكنك إرسال نص أو "
-            f"صورة أو فيديو أو ملف.\n\n"
-
-            f"{EMOJI_9} للإلغاء استخدم "
-            f"<code>/cancel</code>.",
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-
-        return
-
-    # ========================================================
-    # ترحيب صورة
-    # ========================================================
-
-    if data == "admin_welcome_photo":
-
-        context.user_data[
-            "admin_action"
-        ] = "welcome_photo"
-
-        await query.edit_message_text(
-            f"{EMOJI_3} <b>تغيير صورة الترحيب</b>\n\n"
-            f"{EMOJI_1} أرسل الصورة الآن.",
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-
-        return
-
-    # ========================================================
-    # ترحيب فيديو
-    # ========================================================
-
-    if data == "admin_welcome_video":
-
-        context.user_data[
-            "admin_action"
-        ] = "welcome_video"
-
-        await query.edit_message_text(
-            f"{EMOJI_6} <b>تغيير فيديو الترحيب</b>\n\n"
-            f"{EMOJI_1} أرسل الفيديو الآن.",
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-
-        return
-
-    # ========================================================
-    # نص الترحيب
-    # ========================================================
-
-    if data == "admin_welcome_text":
-
-        context.user_data[
-            "admin_action"
-        ] = "welcome_text"
-
-        await query.edit_message_text(
-            f"{EMOJI_1} <b>تغيير نص الترحيب</b>\n\n"
-
-            f"{EMOJI_4} أرسل النص الجديد.\n\n"
-
-            f"{EMOJI_8} المتغيرات المتاحة:\n"
-            f"<code>{{first_name}}</code>\n"
-            f"<code>{{username}}</code>\n"
-            f"<code>{{user_id}}</code>",
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-
-        return
-
-    # ========================================================
-    # حذف الميديا
-    # ========================================================
-
-    if data == "admin_delete_media":
-
-        db["settings"][
-            "welcome_media_type"
-        ] = ""
-
-        db["settings"][
-            "welcome_media_id"
-        ] = ""
-
-        db["settings"][
-            "welcome_media_caption"
-        ] = ""
-
-        save_db(db)
-
-        await query.answer(
-            "تم حذف ميديا الترحيب.",
-            show_alert=True
-        )
-
-        await query.edit_message_text(
-            admin_panel_text(),
-            parse_mode="HTML",
-            reply_markup=admin_keyboard()
-        )
-
-        return
-
-    # ========================================================
-    # الاشتراك الإجباري
-    # ========================================================
-
-    if data == "admin_force_sub":
-
-        await admin_force_menu(
-            query
-        )
-
-        return
-
-    # ========================================================
-    # رسالة التحميل
-    # ========================================================
-
-    if data == "admin_download_text":
-
-        context.user_data[
-            "admin_action"
-        ] = "download_text"
-
-        current = db["settings"].get(
-            "download_text",
-            ""
-        )
-
-        await query.edit_message_text(
-            f"{EMOJI_2} <b>رسالة التحميل</b>\n\n"
-
-            f"{EMOJI_7} الحالية:\n"
-            f"<code>{html.escape(current)}</code>\n\n"
-
-            f"{EMOJI_1} أرسل الرسالة الجديدة.",
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-
-        return
-
-    # ========================================================
-    # حظر
-    # ========================================================
-
-    if data == "admin_ban":
-
-        context.user_data[
-            "admin_action"
-        ] = "ban_user"
-
-        await query.edit_message_text(
-            f"{EMOJI_3} <b>حظر مستخدم</b>\n\n"
-            f"{EMOJI_9} أرسل ID المستخدم الآن.",
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-
-        return
-
-    # ========================================================
-    # فك الحظر
-    # ========================================================
-
-    if data == "admin_unban":
-
-        context.user_data[
-            "admin_action"
-        ] = "unban_user"
-
-        await query.edit_message_text(
-            f"{EMOJI_6} <b>فك حظر مستخدم</b>\n\n"
-            f"{EMOJI_9} أرسل ID المستخدم الآن.",
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-
-        return
-
-    # ========================================================
-    # المشرفون
-    # ========================================================
-
-    if data == "admin_admins":
-
-        admins = get_admins()
-
-        lines = [
-            f"👑 <b>إدارة المشرفين</b> 👑",
-            "",
-            f"👑 المالك الأساسي: <code>{ADMIN_ID}</code>",
-            f"👥 المشرفون الإضافيون: <b>{len(admins)}</b>",
-            ""
-        ]
-
-        if admins:
-            for index, admin_id in enumerate(admins, 1):
-                lines.append(
-                    f"{index}. <code>{admin_id}</code>"
-                )
-        else:
-            lines.append("لا يوجد مشرفون إضافيون حالياً.")
-
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    button_text("admin_add_admin", "➕ إضافة مشرف"),
-                    callback_data="admin_add_admin",
-                    style="primary",
-                    icon_custom_emoji_id=(button_emoji("force_add_channel", EMOJI_IDS()["add"]) or None)
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    button_text("admin_remove_admin", "🗑 حذف مشرف"),
-                    callback_data="admin_remove_admin",
-                    style="danger",
-                    icon_custom_emoji_id=(button_emoji("force_remove_channel", EMOJI_IDS()["remove"]) or None)
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔙 رجوع",
-                    callback_data="admin_panel",
-                    style="primary",
-                    icon_custom_emoji_id=(button_emoji("admin_panel", EMOJI_IDS()["back"]) or None)
-                )
-            ]
-        ]
-
-        await query.edit_message_text(
-            "\n".join(lines),
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
-        return
-
-    # ========================================================
-    # إضافة مشرف
-    # ========================================================
-
-    if data == "admin_add_admin":
-
-        context.user_data["admin_action"] = "add_admin"
-
-        await query.edit_message_text(
-            "➕ <b>إضافة مشرف جديد</b>\n\n"
-            "👤 أرسل الآن <b>ID</b> المستخدم الذي تريد منحه صلاحيات الأدمن.\n\n"
-            "💡 مثال: <code>123456789</code>\n\n"
-            "🚫 لإلغاء العملية استخدم <code>/cancel</code>.",
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-
-        return
-
-    # ========================================================
-    # حذف مشرف
-    # ========================================================
-
-    if data == "admin_remove_admin":
-
-        admins = get_admins()
-
-        if not admins:
-            await query.answer(
-                "لا يوجد مشرفون إضافيون لحذفهم.",
-                show_alert=True
-            )
-            return
-
-        context.user_data["admin_action"] = "remove_admin"
-
-        await query.edit_message_text(
-            "🗑 <b>حذف مشرف</b>\n\n"
-            "👤 أرسل الآن ID المشرف الذي تريد حذف صلاحياته.\n\n"
-            + "\n".join(
-                f"• <code>{admin_id}</code>"
-                for admin_id in admins
-            )
-            + "\n\n🚫 لإلغاء العملية استخدم <code>/cancel</code>.",
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-
-        return
-
-    # ========================================================
-    # المستخدمون
-    # ========================================================
-
-    if data == "admin_users":
-
-        users = list(
-            db.get(
-                "users",
-                {}
-            ).values()
-        )
-
-        if not users:
-
-            text = (
-                f"{EMOJI_3} "
-                f"لا يوجد مستخدمون حتى الآن."
-            )
-
-        else:
-
-            lines = [
-                f"{EMOJI_4} "
-                f"<b>آخر المستخدمين</b>",
-                ""
-            ]
-
-            for user_data in users[-20:]:
-
-                uid = user_data.get(
-                    "id",
-                    ""
-                )
-
-                name = html.escape(
-                    str(
-                        user_data.get(
-                            "first_name",
-                            ""
-                        )
-                    )
-                )
-
-                username = user_data.get(
-                    "username"
-                )
-
-                if username:
-
-                    username_text = (
-                        "@"
-                        + html.escape(
-                            str(username)
-                        )
-                    )
-
-                else:
-
-                    username_text = (
-                        "بدون يوزر"
-                    )
-
-                lines.append(
-                    f"{EMOJI_1} {name} | "
-                    f"{username_text} | "
-                    f"<code>{uid}</code>"
-                )
-
-            text = "\n".join(
-                lines
-            )
-
-        await query.edit_message_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-
-        return
-
-    # ========================================================
-    # تفعيل الاشتراك
-    # ========================================================
-
-    if data == "force_enable":
-
-        db["settings"][
-            "force_sub_enabled"
-        ] = True
-
-        save_db(db)
-
-        await query.answer(
-            "تم تفعيل الاشتراك الإجباري.",
-            show_alert=True
-        )
-
-        await admin_force_menu(
-            query
-        )
-
-        return
-
-    # ========================================================
-    # تعطيل الاشتراك
-    # ========================================================
-
-    if data == "force_disable":
-
-        db["settings"][
-            "force_sub_enabled"
-        ] = False
-
-        save_db(db)
-
-        await query.answer(
-            "تم تعطيل الاشتراك الإجباري.",
-            show_alert=True
-        )
-
-        await admin_force_menu(
-            query
-        )
-
-        return
-
-    # ========================================================
-    # إضافة قناة جديدة
-    # ========================================================
-
-    if data == "force_add_channel":
-
-        context.user_data[
-            "admin_action"
-        ] = "force_add_channel"
-
-        await query.edit_message_text(
-            f"{EMOJI_4} <b>إضافة قناة اشتراك إجباري</b>\n\n"
-
-            f"{EMOJI_1} أرسل @username الخاص بالقناة.\n\n"
-
-            f"{EMOJI_8} مثال:\n"
-            f"<code>@my_channel</code>\n\n"
-
-            f"{EMOJI_3} يجب أن يكون البوت "
-            f"مضافاً إلى القناة كأدمن.\n\n"
-
-            f"{EMOJI_9} يمكنك إضافة أي عدد من القنوات.",
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-
-        return
-
-    # ========================================================
-    # حذف قناة
-    # ========================================================
-
-    if data == "force_remove_channel":
-
-        channels = get_force_channels()
-
-        if not channels:
-
-            await query.answer(
-                "لا توجد قنوات لحذفها.",
-                show_alert=True
-            )
-
-            return
-
-        await force_remove_menu(
-            query
-        )
-
-        return
-
-    # ========================================================
-    # قائمة القنوات
-    # ========================================================
-
-    if data == "force_list_channels":
-
-        await admin_force_menu(
-            query
-        )
-
-        return
-
-    # ========================================================
-    # تحديد القناة القديمة - توافق
-    # ========================================================
-
-    if data == "force_set_channel":
-
-        context.user_data[
-            "admin_action"
-        ] = "force_add_channel"
-
-        await query.edit_message_text(
-            f"{EMOJI_4} <b>إضافة قناة الاشتراك</b>\n\n"
-
-            f"{EMOJI_1} أرسل @username الخاص بالقناة.\n\n"
-
-            f"{EMOJI_8} مثال:\n"
-            f"<code>@my_channel</code>\n\n"
-
-            f"{EMOJI_3} يجب أن يكون البوت "
-            f"مضافاً إلى القناة كأدمن.",
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-
-        return
-
-    # ========================================================
-    # رابط القناة القديمة - توافق
-    # ========================================================
-
-    if data == "force_set_link":
-
-        context.user_data[
-            "admin_action"
-        ] = "force_link"
-
-        await query.edit_message_text(
-            f"{EMOJI_7} <b>رابط القناة</b>\n\n"
-            f"{EMOJI_1} أرسل الرابط بالشكل التالي:\n"
-            f"<code>@channel|https://t.me/channel</code>\n\n"
-            f"{EMOJI_8} أو أرسل الرابط فقط إذا كانت القناة "
-            f"موجودة بالفعل.",
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-
-        return
-
-    # ========================================================
-    # حذف قناة محددة
-    # ========================================================
-
-    if data.startswith("force_remove_"):
-
-        try:
-            index = int(
-                data.replace(
-                    "force_remove_",
-                    "",
-                    1
-                )
-            )
-        except ValueError:
-            return
-
-        channels = get_force_channels()
-
-        if len(channels) <= 1:
-
-            await query.answer(
-                "لا يمكن حذف آخر قناة. أضف قناة أخرى أولاً أو عطّل الاشتراك الإجباري.",
-                show_alert=True
-            )
-
-            return
-
-        if remove_force_channel(index):
-
-            await query.answer(
-                "تم حذف القناة.",
-                show_alert=True
-            )
-
-            await admin_force_menu(
-                query
-            )
-
-        return
-
-
-# ============================================================
-# قائمة الاشتراك الإجباري
-# ============================================================
-
-async def admin_force_menu(query):
-
-    enabled = db["settings"].get(
-        "force_sub_enabled"
-    )
-
-    status = (
-        f"{EMOJI_6} مفعّل"
-        if enabled
-        else f"{EMOJI_3} متوقف"
-    )
-
-    channels = get_force_channels()
-
-    ids = EMOJI_IDS()
-
-    if channels:
-
-        channel_lines = []
-
-        for index, item in enumerate(
-            channels,
-            1
+        with _currency_cache_lock:
+            _currency_cache["usd_egp"] = usd_egp
+            _currency_cache["ton_usd"] = ton_usd
+            _currency_cache["updated_at"] = current_time
+
+        return usd_egp, ton_usd
+
+    with _currency_cache_lock:
+        if (
+            _currency_cache["usd_egp"] is not None
+            and _currency_cache["ton_usd"] is not None
         ):
-
-            channel = html.escape(
-                str(
-                    item.get(
-                        "channel",
-                        ""
-                    )
-                )
+            return (
+                _currency_cache["usd_egp"],
+                _currency_cache["ton_usd"]
             )
 
-            link = html.escape(
-                str(
-                    item.get(
-                        "link",
-                        ""
-                    )
-                )
+    return None, None
+
+
+def get_ton_market_data():
+    """
+    يجلب سعر TON الحالي بالدولار مع نسبة التغير خلال آخر 24 ساعة،
+    وأعلى/أقل سعر خلال 24 ساعة.
+    """
+    current_time = time.time()
+
+    with _ton_market_cache_lock:
+        if (
+            _ton_market_cache["price_usd"] is not None
+            and _ton_market_cache["change_24h"] is not None
+            and current_time - _ton_market_cache["updated_at"]
+            < TON_MARKET_CACHE_SECONDS
+        ):
+            return (
+                _ton_market_cache["price_usd"],
+                _ton_market_cache["change_24h"],
+                _ton_market_cache["high_24h"],
+                _ton_market_cache["low_24h"]
             )
-
-            channel_lines.append(
-                f"{EMOJI_1} <b>{index}.</b> "
-                f"<code>{channel}</code>\n"
-                f"   {EMOJI_7} <code>{link}</code>"
-            )
-
-        channels_text = "\n".join(
-            channel_lines
-        )
-
-    else:
-
-        channels_text = (
-            f"{EMOJI_3} لا توجد قنوات."
-        )
-
-    text = (
-        f"{EMOJI_5} "
-        f"<b>إعدادات الاشتراك الإجباري</b> "
-        f"{EMOJI_5}\n\n"
-
-        f"{EMOJI_4} الحالة: <b>{status}</b>\n\n"
-
-        f"{EMOJI_8} <b>القنوات الحالية:</b>\n"
-        f"{channels_text}\n\n"
-
-        f"{EMOJI_1} يمكنك إضافة أو حذف "
-        f"القنوات من الأزرار بالأسفل."
-    )
-
-    keyboard = [
-
-        [
-            InlineKeyboardButton(
-                button_text("force_enable", "🟢 تفعيل"),
-                callback_data="force_enable",
-                style="primary",
-                icon_custom_emoji_id=(
-                    button_emoji("force_enable", ids["enable"]) or None
-                )
-            ),
-
-            InlineKeyboardButton(
-                button_text("force_disable", "🔴 تعطيل"),
-                callback_data="force_disable",
-                style="danger",
-                icon_custom_emoji_id=(
-                    button_emoji("force_disable", ids["disable"]) or None
-                )
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                button_text("force_add_channel", "➕ إضافة قناة"),
-                callback_data="force_add_channel",
-                style="primary",
-                icon_custom_emoji_id=(
-                    button_emoji("force_add_channel", ids["add"]) or None
-                )
-            ),
-
-            InlineKeyboardButton(
-                button_text("force_remove_channel", "🗑 حذف قناة"),
-                callback_data="force_remove_channel",
-                style="danger",
-                icon_custom_emoji_id=(
-                    button_emoji("force_remove_channel", ids["remove"]) or None
-                )
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                button_text("force_list_channels", "📋 تحديث القنوات"),
-                callback_data="force_list_channels",
-                style="primary",
-                icon_custom_emoji_id=(
-                    button_emoji("force_list_channels", ids["list"]) or None
-                )
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "🔙 رجوع",
-                callback_data="admin_panel",
-                style="primary",
-                icon_custom_emoji_id=(button_emoji("admin_panel", ids["back"]) or None)
-            )
-        ]
-    ]
 
     try:
-
-        await query.edit_message_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(
-                keyboard
-            )
+        data = _http_json(
+            "https://api.coingecko.com/api/v3/coins/the-open-network"
+            "?localization=false&tickers=false&market_data=true"
+            "&community_data=false&developer_data=false&sparkline=false"
         )
+
+        market = data.get("market_data", {})
+        current = market.get("current_price", {})
+        price_usd = float(current.get("usd"))
+        change_24h = float(
+            market.get("price_change_percentage_24h") or 0
+        )
+        high_24h = market.get("high_24h", {}).get("usd")
+        low_24h = market.get("low_24h", {}).get("usd")
+
+        if high_24h is not None:
+            high_24h = float(high_24h)
+        if low_24h is not None:
+            low_24h = float(low_24h)
+
+        if price_usd <= 0:
+            raise ValueError("Invalid TON price")
+
+        with _ton_market_cache_lock:
+            _ton_market_cache["price_usd"] = price_usd
+            _ton_market_cache["change_24h"] = change_24h
+            _ton_market_cache["high_24h"] = high_24h
+            _ton_market_cache["low_24h"] = low_24h
+            _ton_market_cache["updated_at"] = current_time
+
+        return price_usd, change_24h, high_24h, low_24h
 
     except Exception as e:
-
-        logger.warning(
-            "Force menu edit error: %s",
-            e
-        )
-
-
-async def force_remove_menu(query):
-
-    channels = get_force_channels()
-
-    ids = EMOJI_IDS()
-
-    buttons = []
-
-    for index, item in enumerate(
-        channels
-    ):
-
-        channel = item.get(
-            "channel",
-            ""
-        )
-
-        buttons.append([
-            InlineKeyboardButton(
-                f"🗑 {channel}",
-                callback_data=f"force_remove_{index}",
-                style="danger",
-                icon_custom_emoji_id=(button_emoji("force_remove_channel", ids["remove"]) or None)
-            )
-        ])
-
-    buttons.append([
-        InlineKeyboardButton(
-            "🔙 رجوع",
-            callback_data="admin_force_sub",
-            style="primary",
-            icon_custom_emoji_id=(button_emoji("admin_panel", ids["back"]) or None)
-        )
-    ])
-
-    await query.edit_message_text(
-        f"{EMOJI_5} <b>حذف قناة</b> {EMOJI_5}\n\n"
-        f"{EMOJI_1} اختر القناة التي تريد حذفها:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            buttons
-        )
-    )
-
-
-# ============================================================
-# زر الرجوع للأدمن
-# ============================================================
-
-def get_back_admin_keyboard():
-
-    ids = EMOJI_IDS()
-
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "🔙 رجوع للوحة الأدمن",
-                callback_data="admin_panel",
-                style="primary",
-                icon_custom_emoji_id=(button_emoji("admin_panel", ids["back"]) or None)
-            )
-        ]
-    ])
-
-
-# ============================================================
-# أمر الأدمن
-# ============================================================
-
-async def admin_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    user = update.effective_user
-
-    if not user or not is_admin(
-        user.id
-    ):
-
-        await update.effective_message.reply_text(
-            f"{EMOJI_3} "
-            f"<b>هذا الأمر خاص بالأدمن.</b>",
-            parse_mode="HTML"
-        )
-
-        return
-
-    context.user_data.pop(
-        "admin_action",
-        None
-    )
-
-    await update.effective_message.reply_text(
-        admin_panel_text(),
-        parse_mode="HTML",
-        reply_markup=admin_keyboard()
-    )
-
-
-# ============================================================
-# معالجة رسائل الأدمن
-# ============================================================
-
-async def handle_admin_message(
-    update,
-    context
-):
-
-    user = update.effective_user
-
-    if not user or not is_admin(
-        user.id
-    ):
-        return False
-
-    action = context.user_data.get(
-        "admin_action"
-    )
-
-    if not action:
-        return False
-
-    message = update.effective_message
-
-    # ========================================================
-    # استرجاع الأعضاء من ملف JSON قديم
-    # ========================================================
-
-    if action == "restore_db":
-        if not message.document:
-            await message.reply_text("❌ أرسل ملف JSON فقط.")
-            return True
-
-        try:
-            temp_path = os.path.join(gettempdir(), f"restore_{user.id}.json")
-            tg_file = await message.document.get_file()
-            await tg_file.download_to_drive(temp_path)
-            with open(temp_path, "r", encoding="utf-8") as f:
-                imported = json.load(f)
-
-            imported_users = imported.get("users", {}) if isinstance(imported, dict) else {}
-            if not isinstance(imported_users, dict):
-                raise ValueError("صيغة ملف الأعضاء غير صحيحة")
-
-            before = get_user_count()
-            added = 0
-            updated = 0
-            for uid, user_data in imported_users.items():
-                if not isinstance(user_data, dict):
-                    continue
-                uid = str(uid)
-                if uid in db["users"]:
-                    # لا نستبدل بيانات أحدث؛ نملأ الناقص فقط ونحتفظ بعداد التحميل.
-                    current = db["users"][uid]
-                    for field in ("id", "first_name", "username", "joined_at", "welcome_message_sent"):
-                        if field not in current and field in user_data:
-                            current[field] = user_data[field]
-                    if "downloads" in user_data:
-                        try:
-                            current["downloads"] = max(int(current.get("downloads", 0)), int(user_data.get("downloads", 0)))
-                        except Exception:
-                            pass
-                    updated += 1
-                else:
-                    db["users"][uid] = dict(user_data)
-                    db["users"][uid].setdefault("id", int(uid) if uid.lstrip("-").isdigit() else uid)
-                    db["users"][uid].setdefault("first_name", "")
-                    db["users"][uid].setdefault("username", "")
-                    db["users"][uid].setdefault("joined_at", "")
-                    db["users"][uid].setdefault("downloads", 0)
-                    db["users"][uid].setdefault("welcome_message_sent", False)
-                    added += 1
-
-            # استرجاع الحظر والمشرفين أيضاً دون حذف الموجود.
-            for uid in imported.get("banned_users", []) if isinstance(imported, dict) else []:
-                try:
-                    uid = int(uid)
-                    if uid not in db["banned_users"]:
-                        db["banned_users"].append(uid)
-                except Exception:
-                    pass
-            for aid in imported.get("admins", []) if isinstance(imported, dict) else []:
-                try:
-                    aid = int(aid)
-                    if aid != int(ADMIN_ID) and aid not in db["admins"]:
-                        db["admins"].append(aid)
-                except Exception:
-                    pass
-
-            save_db(db)
-            _refresh_fast_caches()
-            context.user_data.pop("admin_action", None)
-            await message.reply_text(
-                f"{EMOJI_6} <b>تم استرجاع قاعدة الأعضاء.</b>\n\n"
-                f"قبل الاسترجاع: <b>{before}</b>\n"
-                f"تمت إضافة: <b>{added}</b>\n"
-                f"تمت مطابقة/تحديث: <b>{updated}</b>\n"
-                f"الإجمالي الآن: <b>{get_user_count()}</b>",
-                parse_mode="HTML",
-                reply_markup=admin_keyboard()
-            )
-        except Exception as e:
-            logger.exception("Restore database error: %s", e)
-            await message.reply_text(
-                f"❌ تعذر استرجاع الملف.\n<code>{html.escape(str(e))}</code>",
-                parse_mode="HTML"
-            )
-        finally:
-            try:
-                os.remove(temp_path)
-            except Exception:
-                pass
-        return True
-
-    # ========================================================
-    # تعديل رسالة من لوحة الأدمن
-    # ========================================================
-
-    if action.startswith("message_edit:"):
-        key = action.split(":", 1)[1]
-        if key not in MESSAGE_DEFAULTS:
-            context.user_data.pop("admin_action", None)
-            await message.reply_text("❌ الرسالة غير موجودة.")
-            return True
-        if not message.text:
-            await message.reply_text("❌ أرسل نصاً فقط.")
-            return True
-
-        # حفظ النص الخام حتى يبقى قابلاً للتعديل لاحقاً.
-        # Premium Emoji يكتب داخل الكليشة هكذا:
-        # [emoji:5462943653116792628]
-        # أو {emoji:5462943653116792628}
-        raw_text = message.text
-        if not set_message_setting(key, raw_text):
-            await message.reply_text("❌ تعذر حفظ الرسالة.")
-            return True
-
-        context.user_data.pop("admin_action", None)
-
-        preview = _render_custom_emoji_markup(raw_text)
-        try:
-            await message.reply_text(
-                f"{EMOJI_6} <b>تم حفظ الرسالة بنجاح.</b>\n\n"
-                f"<b>معاينة:</b>\n{preview}\n\n"
-                f"🎨 Premium Emoji: اكتب <code>النص|ID</code> داخل الكليشة.\n"
-                f"مثال: <code>ليدر|5271929483752930708</code>",
-                parse_mode="HTML",
-                reply_markup=message_editor_keyboard()
-            )
-        except Exception:
-            # إذا كان الـ ID غير متاح/غير مقبول من Telegram، لا نفقد النص المحفوظ.
-            await message.reply_text(
-                f"{EMOJI_6} <b>تم حفظ الرسالة.</b>\n\n"
-                f"لإضافة Premium Emoji استخدم: <code>النص|ID</code>",
-                parse_mode="HTML",
-                reply_markup=message_editor_keyboard()
-            )
-        return True
-
-    # ========================================================
-    # تعديل اسم وإيموجي زر
-    # ========================================================
-
-    if action.startswith("button_edit:"):
-
-        key = action.split(
-            ":",
-            1
-        )[1]
-
-        if key not in BUTTON_DEFAULTS:
-            context.user_data.pop(
-                "admin_action",
-                None
-            )
-            await message.reply_text(
-                f"{EMOJI_3} الزر غير موجود."
-            )
-            return True
-
-        if not message.text:
-            await message.reply_text(
-                f"{EMOJI_3} أرسل اسم الزر، ويمكنك إضافة emoji_id بعد |."
-            )
-            return True
-
-        value = message.text.strip()
-
-        parts = value.split(
-            "|",
-            1
-        )
-
-        new_text = parts[0].strip()
-        new_emoji = (
-            parts[1].strip()
-            if len(parts) > 1
-            else get_button_setting(key)["emoji_id"]
-        )
-
-        if not new_text:
-            await message.reply_text(
-                f"{EMOJI_3} اسم الزر لا يمكن أن يكون فارغاً."
-            )
-            return True
-
-        if new_emoji and not new_emoji.isdigit():
-            await message.reply_text(
-                f"{EMOJI_3} emoji_id يجب أن يكون أرقاماً فقط."
-            )
-            return True
-
-        # لا نفرض الإيموجيات الثمانية على الزر؛ المكتبة اختيارية.
-        if not set_button_setting(
-            key,
-            new_text,
-            new_emoji
-        ):
-            await message.reply_text(
-                f"{EMOJI_3} تعذر حفظ إعداد الزر."
-            )
-            return True
-
-        context.user_data.pop(
-            "admin_action",
-            None
-        )
-
-        await message.reply_text(
-            f"{EMOJI_6} <b>تم تحديث الزر بنجاح.</b>\n\n"
-            f"{EMOJI_4} الاسم: "
-            f"<b>{html.escape(new_text)}</b>\n"
-            f"{EMOJI_7} emoji_id: "
-            f"<code>{html.escape(new_emoji or 'لا يوجد')}</code>",
-            parse_mode="HTML",
-            reply_markup=button_editor_keyboard()
-        )
-
-        return True
-
-    # ========================================================
-    # إذاعة
-    # ========================================================
-
-    if action == "broadcast":
-
-        context.user_data.pop(
-            "admin_action",
-            None
-        )
-
-        sent = 0
-        failed = 0
-
-        await message.reply_text(
-            f"{EMOJI_2} جاري بدء الإذاعة..."
-        )
-
-        for user_id in list(
-            db.get(
-                "users",
-                {}
-            ).keys()
-        ):
-
-            try:
-
-                await message.copy(
-                    chat_id=int(user_id)
-                )
-
-                sent += 1
-
-                await asyncio.sleep(
-                    0.05
-                )
-
-            except Exception as e:
-
-                failed += 1
-
-                logger.warning(
-                    "Broadcast failed for %s: %s",
-                    user_id,
-                    e
-                )
-
-        await message.reply_text(
-            f"{EMOJI_6} <b>انتهت الإذاعة</b>\n\n"
-
-            f"{EMOJI_4} تم الإرسال: "
-            f"<b>{sent}</b>\n"
-
-            f"{EMOJI_3} فشل: "
-            f"<b>{failed}</b>",
-            parse_mode="HTML"
-        )
-
-        return True
-
-    # ========================================================
-    # صورة الترحيب
-    # ========================================================
-
-    if action == "welcome_photo":
-
-        if not message.photo:
-
-            await message.reply_text(
-                f"{EMOJI_3} أرسل صورة فقط."
+        print("[TON Market Error]", e)
+
+    with _ton_market_cache_lock:
+        if _ton_market_cache["price_usd"] is not None:
+            return (
+                _ton_market_cache["price_usd"],
+                _ton_market_cache["change_24h"] or 0,
+                _ton_market_cache["high_24h"],
+                _ton_market_cache["low_24h"]
             )
 
-            return True
+    return None, None, None, None
 
-        photo = message.photo[-1]
 
-        db["settings"][
-            "welcome_media_type"
-        ] = "photo"
-
-        db["settings"][
-            "welcome_media_id"
-        ] = photo.file_id
-
-        db["settings"][
-            "welcome_media_caption"
-        ] = message.caption or ""
-
-        save_db(db)
-
-        context.user_data.pop(
-            "admin_action",
-            None
-        )
-
-        await message.reply_text(
-            f"{EMOJI_6} "
-            f"تم حفظ صورة الترحيب بنجاح."
-        )
-
-        return True
-
-    # ========================================================
-    # فيديو الترحيب
-    # ========================================================
-
-    if action == "welcome_video":
-
-        if not message.video:
-
-            await message.reply_text(
-                f"{EMOJI_3} أرسل فيديو فقط."
-            )
-
-            return True
-
-        video = message.video
-
-        db["settings"][
-            "welcome_media_type"
-        ] = "video"
-
-        db["settings"][
-            "welcome_media_id"
-        ] = video.file_id
-
-        db["settings"][
-            "welcome_media_caption"
-        ] = message.caption or ""
-
-        save_db(db)
-
-        context.user_data.pop(
-            "admin_action",
-            None
-        )
-
-        await message.reply_text(
-            f"{EMOJI_6} "
-            f"تم حفظ فيديو الترحيب بنجاح."
-        )
-
-        return True
-
-    # ========================================================
-    # نص الترحيب
-    # ========================================================
-
-    if action == "welcome_text":
-
-        if not message.text:
-
-            await message.reply_text(
-                f"{EMOJI_3} أرسل نصاً فقط."
-            )
-
-            return True
-
-        db["settings"][
-            "welcome_text"
-        ] = message.text
-
-        save_db(db)
-
-        context.user_data.pop(
-            "admin_action",
-            None
-        )
-
-        await message.reply_text(
-            f"{EMOJI_6} "
-            f"<b>تم تحديث نص الترحيب.</b>\n\n"
-
-            f"{EMOJI_8} المتغيرات:\n"
-            f"<code>{{first_name}}</code>\n"
-            f"<code>{{username}}</code>\n"
-            f"<code>{{user_id}}</code>",
-            parse_mode="HTML"
-        )
-
-        return True
-
-    # ========================================================
-    # رسالة التحميل
-    # ========================================================
-
-    if action == "download_text":
-
-        if not message.text:
-
-            await message.reply_text(
-                f"{EMOJI_3} أرسل نصاً فقط."
-            )
-
-            return True
-
-        db["settings"][
-            "download_text"
-        ] = message.text
-
-        save_db(db)
-
-        context.user_data.pop(
-            "admin_action",
-            None
-        )
-
-        await message.reply_text(
-            f"{EMOJI_6} "
-            f"<b>تم تحديث رسالة التحميل.</b>",
-            parse_mode="HTML"
-        )
-
-        return True
-
-    # ========================================================
-    # إضافة قناة اشتراك
-    # ========================================================
-
-    if action == "force_add_channel":
-
-        if not message.text:
-
-            await message.reply_text(
-                f"{EMOJI_3} "
-                f"أرسل @username القناة."
-            )
-
-            return True
-
-        value = message.text.strip()
-
-        # دعم @username فقط أو @username|رابط القناة
-        parts = [
-            part.strip()
-            for part in value.split(
-                "|",
-                1
-            )
-        ]
-
-        channel = parts[0]
-
-        if not channel.startswith("@"):
-
-            await message.reply_text(
-                f"{EMOJI_3} "
-                f"يجب أن يبدأ معرف القناة بـ @"
-            )
-
-            return True
-
-        link = (
-            parts[1]
-            if len(parts) > 1
-            else ""
-        )
-
-        if link and not re.match(
-            r"^https?://",
-            link,
-            re.IGNORECASE
-        ):
-
-            await message.reply_text(
-                f"{EMOJI_3} "
-                f"الرابط يجب أن يبدأ بـ https://"
-            )
-
-            return True
-
-        added = add_force_channel(
-            channel,
-            link
-        )
-
-        context.user_data.pop(
-            "admin_action",
-            None
-        )
-
-        if added:
-
-            await message.reply_text(
-                f"{EMOJI_6} "
-                f"<b>تمت إضافة قناة الاشتراك.</b>\n\n"
-
-                f"{EMOJI_4} القناة:\n"
-                f"<code>{html.escape(channel)}</code>\n\n"
-
-                f"{EMOJI_7} الرابط:\n"
-                f"<code>{html.escape(link or 'تم توليده تلقائياً')}</code>\n\n"
-
-                f"{EMOJI_3} تأكد أن البوت أدمن داخل القناة.",
-                parse_mode="HTML"
-            )
-
-        else:
-
-            await message.reply_text(
-                f"{EMOJI_2} "
-                f"<b>القناة موجودة بالفعل وتم تحديث رابطها.</b>\n\n"
-                f"<code>{html.escape(channel)}</code>",
-                parse_mode="HTML"
-            )
-
-        return True
-
-    # ========================================================
-    # رابط القناة - توافق مع النظام القديم
-    # ========================================================
-
-    if action == "force_link":
-
-        if not message.text:
-
-            await message.reply_text(
-                f"{EMOJI_3} "
-                f"أرسل رابط القناة."
-            )
-
-            return True
-
-        link = message.text.strip()
-
-        if not re.match(
-            r"^https?://",
-            link,
-            re.IGNORECASE
-        ):
-
-            await message.reply_text(
-                f"{EMOJI_3} "
-                f"أرسل رابطاً يبدأ بـ https://"
-            )
-
-            return True
-
-        channels = get_force_channels()
-
-        if channels:
-
-            channels[0]["link"] = link
-            save_force_channels(channels)
-
-        else:
-
-            await message.reply_text(
-                f"{EMOJI_3} لا توجد قناة محفوظة لتعيين الرابط عليها. أضف قناة أولاً."
-            )
-            return True
-
-        context.user_data.pop(
-            "admin_action",
-            None
-        )
-
-        await message.reply_text(
-            f"{EMOJI_6} "
-            f"<b>تم حفظ رابط القناة.</b>",
-            parse_mode="HTML"
-        )
-
-        return True
-
-    # ========================================================
-    # إضافة مشرف
-    # ========================================================
-
-    if action == "add_admin":
-
-        if not message.text:
-            await message.reply_text(
-                f"{EMOJI_3} أرسل ID صحيح."
-            )
-            return True
-
-        try:
-            target_id = int(message.text.strip())
-        except ValueError:
-            await message.reply_text(
-                f"{EMOJI_3} الـ ID يجب أن يكون أرقاماً فقط."
-            )
-            return True
-
-        if target_id == int(ADMIN_ID):
-            context.user_data.pop("admin_action", None)
-            await message.reply_text(
-                "👑 هذا المستخدم هو المالك الأساسي بالفعل."
-            )
-            return True
-
-        admins = get_admins()
-
-        if target_id in admins:
-            context.user_data.pop("admin_action", None)
-            await message.reply_text(
-                f"⚠️ المستخدم <code>{target_id}</code> مشرف بالفعل.",
-                parse_mode="HTML"
-            )
-            return True
-
-        db.setdefault("admins", []).append(target_id)
-        save_db(db)
-        _refresh_fast_caches()
-        context.user_data.pop("admin_action", None)
-
-        await message.reply_text(
-            f"{EMOJI_6} <b>تمت إضافة المشرف بنجاح.</b>\n\n"
-            f"👑 ID: <code>{target_id}</code>\n\n"
-            "يمكنه الآن استخدام لوحة الأدمن وإدارتها.",
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-        return True
-
-    # ========================================================
-    # حذف مشرف
-    # ========================================================
-
-    if action == "remove_admin":
-
-        if not message.text:
-            await message.reply_text(
-                f"{EMOJI_3} أرسل ID صحيح."
-            )
-            return True
-
-        try:
-            target_id = int(message.text.strip())
-        except ValueError:
-            await message.reply_text(
-                f"{EMOJI_3} الـ ID يجب أن يكون أرقاماً فقط."
-            )
-            return True
-
-        if target_id == int(ADMIN_ID):
-            context.user_data.pop("admin_action", None)
-            await message.reply_text(
-                "🚫 لا يمكن حذف المالك الأساسي من المشرفين."
-            )
-            return True
-
-        admins = get_admins()
-
-        if target_id not in admins:
-            context.user_data.pop("admin_action", None)
-            await message.reply_text(
-                f"⚠️ المستخدم <code>{target_id}</code> ليس مشرفاً إضافياً.",
-                parse_mode="HTML"
-            )
-            return True
-
-        db["admins"] = [
-            int(x)
-            for x in db.get("admins", [])
-            if int(x) != target_id
-        ]
-        save_db(db)
-        _refresh_fast_caches()
-        context.user_data.pop("admin_action", None)
-
-        await message.reply_text(
-            f"{EMOJI_6} <b>تم حذف المشرف بنجاح.</b>\n\n"
-            f"👤 ID: <code>{target_id}</code>",
-            parse_mode="HTML",
-            reply_markup=get_back_admin_keyboard()
-        )
-        return True
-
-    # ========================================================
-    # حظر
-    # ========================================================
-
-    if action == "ban_user":
-
-        if not message.text:
-
-            await message.reply_text(
-                f"{EMOJI_3} "
-                f"أرسل ID صحيح."
-            )
-
-            return True
-
-        try:
-
-            target_id = int(
-                message.text.strip()
-            )
-
-        except ValueError:
-
-            await message.reply_text(
-                f"{EMOJI_3} "
-                f"الـ ID يجب أن يكون أرقاماً فقط."
-            )
-
-            return True
-
-        if target_id == ADMIN_ID:
-
-            await message.reply_text(
-                f"{EMOJI_3} "
-                f"لا يمكنك حظر الأدمن."
-            )
-
-            return True
-
-        if target_id not in db[
-            "banned_users"
-        ]:
-
-            db[
-                "banned_users"
-            ].append(target_id)
-
-        save_db(db)
-        _refresh_fast_caches()
-
-        context.user_data.pop(
-            "admin_action",
-            None
-        )
-
-        await message.reply_text(
-            f"{EMOJI_3} "
-            f"<b>تم حظر المستخدم:</b>\n"
-            f"<code>{target_id}</code>",
-            parse_mode="HTML"
-        )
-
-        return True
-
-    # ========================================================
-    # فك الحظر
-    # ========================================================
-
-    if action == "unban_user":
-
-        if not message.text:
-
-            await message.reply_text(
-                f"{EMOJI_3} "
-                f"أرسل ID صحيح."
-            )
-
-            return True
-
-        try:
-
-            target_id = int(
-                message.text.strip()
-            )
-
-        except ValueError:
-
-            await message.reply_text(
-                f"{EMOJI_3} "
-                f"الـ ID يجب أن يكون أرقاماً فقط."
-            )
-
-            return True
-
-        if target_id in db[
-            "banned_users"
-        ]:
-
-            db[
-                "banned_users"
-            ].remove(target_id)
-
-        save_db(db)
-        _refresh_fast_caches()
-
-        context.user_data.pop(
-            "admin_action",
-            None
-        )
-
-        await message.reply_text(
-            f"{EMOJI_6} "
-            f"<b>تم فك حظر المستخدم:</b>\n"
-            f"<code>{target_id}</code>",
-            parse_mode="HTML"
-        )
-
-        return True
-
-    return False
-
-
-# ============================================================
-# روابط المنصات
-# ============================================================
-
-def is_youtube_url(url):
-
-    return bool(
-        re.search(
-            r"(youtube\.com|youtu\.be|youtube-nocookie\.com)",
-            url,
-            re.IGNORECASE
-        )
-    )
-
-
-def is_tiktok_url(url):
-
-    return bool(
-        re.search(
-            r"(tiktok\.com|vm\.tiktok\.com)",
-            url,
-            re.IGNORECASE
-        )
-    )
-
-
-def is_facebook_url(url):
-    return bool(re.search(
-        r"(?:https?://)?(?:www\.|m\.|mbasic\.)?(?:facebook\.com|fb\.watch)(?:/|$)",
-        str(url or ""),
-        re.IGNORECASE
-    ))
-
-
-# ============================================================
-# إعدادات yt-dlp
-# ============================================================
-
-def get_youtube_cookies_file():
+def extract_ton_amount(text):
     """
-    العثور على ملف Cookies الخاص بيوتيوب.
-    يمكن تحديد المسار من YOUTUBE_COOKIES_FILE،
-    أو وضع youtube_cookies.txt / cookies.txt بجانب الملف.
+    يلتقط مبلغ TON بالشكل:
+    1TON / 1 TON / TON 1 / 1تون / 1 طن
     """
-    candidates = []
+    if not text:
+        return None
 
-    env_path = os.getenv("YOUTUBE_COOKIES_FILE", "").strip()
+    normalized = text.translate(
+        str.maketrans(
+            "٠١٢٣٤٥٦٧٨٩٫٬",
+            "0123456789.,"
+        )
+    )
 
-    if env_path:
-        candidates.append(env_path)
+    number_pattern = r"([0-9]+(?:[.,][0-9]+)?)"
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    patterns = [
+        rf"{number_pattern}\s*(?:TON|تون|طن)",
+        rf"(?:TON|تون|طن)\s*{number_pattern}"
+    ]
 
-    candidates.extend([
-        os.path.join(base_dir, "youtube_cookies.txt"),
-        os.path.join(base_dir, "cookies.txt"),
-        os.path.join(gettempdir(), "youtube_cookies.txt"),
-        os.path.join(gettempdir(), "cookies.txt"),
-    ])
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            normalized,
+            re.IGNORECASE
+        )
 
-    for path in candidates:
-        try:
-            if path and os.path.isfile(path) and os.path.getsize(path) > 20:
-                return path
-        except OSError:
+        if not match:
             continue
+
+        amount = normalize_money_number(
+            match.group(1)
+        )
+
+        if amount is not None:
+            return amount
 
     return None
 
 
-def make_ydl_opts(youtube_mode=False, facebook_mode=False):
-    opts = {
-        "outtmpl": os.path.join(
-            gettempdir(),
-            "%(title)s_%(id)s.%(ext)s"
-        ),
-        "restrictfilenames": True,
-        "quiet": True,
-        "no_warnings": True,
+def send_ton_conversion(message, ton_amount):
+    """عرض سعر TON فقط عند كتابة كمية TON."""
+    usd_egp, _ = get_currency_rates()
+    ton_usd, _, _, _ = get_ton_market_data()
 
-        # ملف واحد فيه الفيديو والصوت، حتى لا يحتاج التحميل إلى ffmpeg.
-        "format": (
-            "best[ext=mp4][acodec!=none][vcodec!=none][filesize<50M]/"
-            "best[ext=mp4][acodec!=none][vcodec!=none]/"
-            "best[acodec!=none][vcodec!=none][filesize<50M]/"
-            "best[acodec!=none][vcodec!=none]"
-        ),
+    if (
+        usd_egp is None
+        or ton_usd is None
+        or usd_egp <= 0
+        or ton_usd <= 0
+    ):
+        print("[TON Conversion] Could not get live rates.")
+        return False
 
-        "noplaylist": True,
-        "socket_timeout": 60,
-        "retries": 3,
-        "fragment_retries": 3,
-        "file_access_retries": 2,
-        "extractor_retries": 2,
-        "concurrent_fragment_downloads": 4,
-        "continuedl": True,
-        "overwrites": False,
-        "nocheckcertificate": True,
-        "geo_bypass": True,
+    usd_amount = ton_amount * ton_usd
+    egp_amount = usd_amount * usd_egp
+    price_emoji = tg_emoji(CE_TON_PRICE, "💎")
 
-        "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/131.0.0.0 Safari/537.36"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-        },
+    text = (
+        "<b>ToN</b>\n"
+        f"{price_emoji} <b>{format_money(egp_amount, 2)} EGP</b>\n"
+        f"{price_emoji} <b>{format_money(usd_amount, 4)} USD</b>"
+    )
+
+    markup = types.InlineKeyboardMarkup()
+    updates_button = button(
+        "MaX",
+        url=LOVELY_UPDATES_URL,
+        style="danger"
+    )
+    if updates_button is not None:
+        markup.add(updates_button)
+
+    try:
+        bot.reply_to(message, text, reply_markup=markup)
+        return True
+    except Exception as e:
+        print("[TON Conversion Send Error]", e)
+        return False
+
+
+def send_ton_analysis(message):
+    """تحليل TON: السعر الحالي واتجاه آخر 24 ساعة."""
+    usd_egp, _ = get_currency_rates()
+    ton_usd, change_24h, high_24h, low_24h = get_ton_market_data()
+
+    if (
+        usd_egp is None
+        or ton_usd is None
+        or usd_egp <= 0
+        or ton_usd <= 0
+    ):
+        bot.reply_to(
+            message,
+            "❌ تعذر جلب سعر TON حاليًا، حاول مرة أخرى بعد قليل."
+        )
+        return True
+
+    change_24h = change_24h or 0.0
+    if change_24h > 0:
+        trend = "<b>صعود</b>"
+        trend_value = f"+{change_24h:.2f}%"
+    elif change_24h < 0:
+        trend = "<b>هبوط</b>"
+        trend_value = f"{change_24h:.2f}%"
+    else:
+        trend = "<b>مستقر</b>"
+        trend_value = "0.00%"
+
+    price_emoji = tg_emoji(CE_TON_PRICE, "💎")
+    analysis_emoji = tg_emoji(CE_TON_ANALYSIS, "🔹")
+    text = (
+        f"{analysis_emoji} <b>تحليل ToN</b>\n"
+        "┈┅⊷━⊷┅┅┈\n"
+        f"{price_emoji} <b>{format_money(ton_usd * usd_egp, 2)} EGP</b>\n"
+        f"{price_emoji} <b>{format_money(ton_usd, 4)} USD</b>\n"
+        "┈┅⊷━⊷┅┅┈\n"
+        f"{trend} آخر 24 ساعة: <b>{trend_value}</b>"
+    )
+
+    if high_24h is not None and low_24h is not None:
+        text += (
+            "\n"
+            f"أعلى سعر: <b>{format_money(high_24h, 4)} USD</b>\n"
+            f"أقل سعر: <b>{format_money(low_24h, 4)} USD</b>"
+        )
+
+    markup = types.InlineKeyboardMarkup()
+    updates_button = button(
+        "MaX",
+        url=LOVELY_UPDATES_URL,
+        style="danger"
+    )
+    if updates_button is not None:
+        markup.add(updates_button)
+
+    bot.reply_to(message, text, reply_markup=markup)
+    return True
+
+def normalize_money_number(value):
+    """
+    يحول الأرقام المكتوبة بفواصل أو أرقام عربية إلى رقم قابل للحساب.
+    """
+    if not value:
+        return None
+
+    value = value.strip()
+
+    arabic_digits = str.maketrans(
+        "٠١٢٣٤٥٦٧٨٩٫٬",
+        "0123456789.,"
+    )
+    value = value.translate(arabic_digits)
+
+    value = value.replace(",", "")
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if number <= 0:
+        return None
+
+    return number
+
+
+def extract_usd_amount(text):
+    """
+    يلتقط مبلغ الدولار عندما يظهر بالشكل:
+    1$
+    $1
+    1 $
+    $ 1
+    1 USD
+    1 USDT
+    1 دولار
+    """
+    if not text:
+        return None
+
+    normalized = text.translate(
+        str.maketrans(
+            "٠١٢٣٤٥٦٧٨٩٫٬",
+            "0123456789.,"
+        )
+    )
+
+    number_pattern = r"([0-9]+(?:[.,][0-9]+)?)"
+
+    patterns = [
+        rf"\$\s*{number_pattern}",
+        rf"{number_pattern}\s*\$",
+        rf"{number_pattern}\s*(?:USD|USDT|دولار)\b"
+    ]
+
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            normalized,
+            re.IGNORECASE
+        )
+
+        if not match:
+            continue
+
+        # المجموعة الوحيدة في كل نمط هي قيمة الرقم.
+        amount = normalize_money_number(
+            match.group(1)
+        )
+
+        if amount is not None:
+            return amount
+
+    return None
+
+
+def format_money(value, decimals=2):
+    if value >= 1000000:
+        return f"{value:,.0f}"
+
+    if value >= 1000:
+        return f"{value:,.2f}"
+
+    return f"{value:,.{decimals}f}"
+
+
+def send_currency_conversion(message, usd_amount):
+    usd_egp, ton_usd = get_currency_rates()
+
+    if (
+        usd_egp is None
+        or ton_usd is None
+        or usd_egp <= 0
+        or ton_usd <= 0
+    ):
+        print("[Currency] Could not get live rates.")
+        return False
+
+    egp_amount = usd_amount * usd_egp
+    price_emoji = tg_emoji(CE_TON_PRICE, "💎")
+
+    text = (
+        "<b>DoLLar</b>\n"
+        f"{price_emoji} <b>{format_money(egp_amount, 2)} EGP</b>\n"
+        f"{price_emoji} <b>{format_money(usd_amount, 4)} USD</b>"
+    )
+
+    markup = types.InlineKeyboardMarkup()
+    updates_button = button(
+        "MaX",
+        url=LOVELY_UPDATES_URL,
+        style="danger"
+    )
+    if updates_button is not None:
+        markup.add(updates_button)
+
+    try:
+        bot.reply_to(message, text, reply_markup=markup)
+        return True
+    except Exception as e:
+        print("[Currency Send Error]", e)
+        return False
+
+
+def send_dollar_analysis(message):
+    """تحليل الدولار بصيغة موحدة مع تحليل TON."""
+    usd_egp, ton_usd = get_currency_rates()
+    if usd_egp is None or ton_usd is None or usd_egp <= 0 or ton_usd <= 0:
+        bot.reply_to(message, "تعذر جلب سعر الدولار حاليًا، حاول مرة أخرى بعد قليل.")
+        return True
+
+    price_emoji = tg_emoji(CE_TON_PRICE, "💎")
+    analysis_emoji = tg_emoji(CE_TON_ANALYSIS, "🔹")
+    text = (
+        f"{analysis_emoji} <b>تحليل DoLLar</b>\n"
+        "┈┅⊷━⊷┅┅┈\n"
+        f"{price_emoji} <b>{format_money(usd_egp, 2)} EGP</b>\n"
+        f"{price_emoji} <b>1.0000 USD</b>\n"
+        "┈┅⊷━⊷┅┅┈\n"
+        f"{price_emoji} <b>1 USD = {format_money(usd_egp, 2)} EGP</b>"
+    )
+    markup = types.InlineKeyboardMarkup()
+    b = button("MaX", url=LOVELY_UPDATES_URL, style="danger")
+    if b is not None:
+        markup.add(b)
+    try:
+        bot.reply_to(message, text, reply_markup=markup)
+        return True
+    except Exception as e:
+        print("[Dollar Analysis Send Error]", e)
+        return False
+
+
+def automatic_currency_conversion(message):
+    """
+    عند ظهور مبلغ بالدولار في الرسالة، يرسل التحويل تلقائيًا
+    إلى الجنيه المصري وTON.
+    """
+    if (
+        not message
+        or not message.from_user
+        or message.from_user.is_bot
+    ):
+        return False
+
+    text = message.text or message.caption or ""
+
+    if not text:
+        return False
+
+    ton_amount = extract_ton_amount(text)
+
+    if ton_amount is not None:
+        return send_ton_conversion(
+            message,
+            ton_amount
+        )
+
+    usd_amount = extract_usd_amount(text)
+
+    if usd_amount is None:
+        return False
+
+    return send_currency_conversion(
+        message,
+        usd_amount
+    )
+
+
+# =========================================================
+# المستخدمون
+# =========================================================
+def register_user(message, count_message=True):
+    if (
+        not message.from_user
+        or message.chat.type not in ("group", "supergroup")
+    ):
+        return
+
+    ensure_group(message.chat)
+
+    u = message.from_user
+    inc = 1 if count_message else 0
+
+    cursor.execute("""
+        INSERT INTO group_users
+        (
+            chat_id,
+            user_id,
+            first_name,
+            last_name,
+            username,
+            messages,
+            warnings,
+            joined_at,
+            last_seen
+        )
+        VALUES(?,?,?,?,?,?,?,?,?)
+
+        ON CONFLICT(chat_id,user_id)
+        DO UPDATE SET
+            first_name=excluded.first_name,
+            last_name=excluded.last_name,
+            username=excluded.username,
+            messages=group_users.messages+?,
+            last_seen=excluded.last_seen
+    """, (
+        message.chat.id,
+        u.id,
+        u.first_name or "",
+        u.last_name or "",
+        u.username or "",
+        inc,
+        0,
+        now(),
+        now(),
+        inc
+    ))
+
+    db.commit()
+
+
+def register_member(chat_id, user):
+    cursor.execute("""
+        INSERT INTO group_users
+        (
+            chat_id,
+            user_id,
+            first_name,
+            last_name,
+            username,
+            messages,
+            warnings,
+            joined_at,
+            last_seen
+        )
+        VALUES(?,?,?,?,?,?,?,?,?)
+
+        ON CONFLICT(chat_id,user_id)
+        DO UPDATE SET
+            first_name=excluded.first_name,
+            last_name=excluded.last_name,
+            username=excluded.username,
+            last_seen=excluded.last_seen
+    """, (
+        chat_id,
+        user.id,
+        user.first_name or "",
+        user.last_name or "",
+        user.username or "",
+        0,
+        0,
+        now(),
+        now()
+    ))
+
+    db.commit()
+
+
+# =========================================================
+# الرتب
+# =========================================================
+RANK_ORDER = {
+    "member": 0,
+    "animal": 10,
+    "moderator": 20,
+    "admin": 30,
+    "manager": 40,
+    "assistant_owner": 50,
+    "owner": 100
+}
+
+
+RANK_NAMES = {
+    "animal": "حيوان",
+    "moderator": "المشرف",
+    "admin": "الادمن",
+    "manager": "المدير",
+    "assistant_owner": "مساعد المالك",
+    "owner": "المالك"
+}
+
+
+TITLE_NAMES = {
+    "moderator": "المشرف",
+    "assistant_owner": "المشرف الكبــير"
+}
+
+
+def is_developer(user_id):
+    return user_id == DEVELOPER_ID
+
+
+def get_member(chat_id, user_id):
+    try:
+        return bot.get_chat_member(chat_id, user_id)
+    except Exception:
+        return None
+
+
+def is_creator(chat_id, user_id):
+    m = get_member(chat_id, user_id)
+    return bool(m and m.status == "creator")
+
+
+def is_admin(chat_id, user_id):
+    if is_developer(user_id):
+        return True
+
+    m = get_member(chat_id, user_id)
+
+    return bool(
+        m and m.status in ("administrator", "creator")
+    )
+
+
+def bot_is_admin(chat_id):
+    try:
+        me = bot.get_me()
+        m = bot.get_chat_member(chat_id, me.id)
+
+        return m.status in (
+            "administrator",
+            "creator"
+        )
+
+    except Exception:
+        return False
+
+
+def target_is_admin(chat_id, user_id):
+    m = get_member(chat_id, user_id)
+
+    return bool(
+        m and m.status in (
+            "administrator",
+            "creator"
+        )
+    )
+
+
+def get_rank(chat_id, user_id):
+    if is_creator(chat_id, user_id):
+        return "owner"
+
+    cursor.execute(
+        """
+        SELECT rank
+        FROM group_ranks
+        WHERE chat_id=? AND user_id=?
+        """,
+        (chat_id, user_id)
+    )
+
+    row = cursor.fetchone()
+
+    return row["rank"] if row else "member"
+
+
+def rank_level(rank):
+    return RANK_ORDER.get(rank, 0)
+
+
+def set_rank(chat_id, user_id, rank):
+    if rank == "member":
+
+        cursor.execute(
+            """
+            DELETE FROM group_ranks
+            WHERE chat_id=? AND user_id=?
+            """,
+            (chat_id, user_id)
+        )
+
+    else:
+
+        cursor.execute("""
+            INSERT INTO group_ranks(
+                chat_id,
+                user_id,
+                rank
+            )
+            VALUES(?,?,?)
+
+            ON CONFLICT(chat_id,user_id)
+            DO UPDATE SET rank=excluded.rank
+        """, (
+            chat_id,
+            user_id,
+            rank
+        ))
+
+    db.commit()
+
+
+def remove_rank_permissions(chat_id, user_id):
+    cursor.execute(
+        """
+        DELETE FROM rank_permissions
+        WHERE chat_id=? AND user_id=?
+        """,
+        (chat_id, user_id)
+    )
+
+    db.commit()
+
+
+def get_permissions(chat_id, user_id):
+    cursor.execute(
+        """
+        SELECT permission
+        FROM rank_permissions
+        WHERE chat_id=? AND user_id=?
+        """,
+        (chat_id, user_id)
+    )
+
+    return {
+        r["permission"]
+        for r in cursor.fetchall()
     }
 
-    if not youtube_mode:
-        # Facebook public downloads do not need an API.
-        # Cookies are optional and are only used if the admin supplies them.
-        cookie_candidates = []
 
-        env_fb = os.getenv("FACEBOOK_COOKIES_FILE", "").strip()
-        if env_fb:
-            cookie_candidates.append(env_fb)
+def can_manage_rank(actor_rank, target_rank, action):
+    if target_rank == "owner":
+        return False
 
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        cookie_candidates.extend([
-            os.path.join(base_dir, "facebook_cookies.txt"),
-            os.path.join(base_dir, "fb_cookies.txt"),
-            os.path.join(gettempdir(), "facebook_cookies.txt"),
-            os.path.join(gettempdir(), "fb_cookies.txt"),
-        ])
+    if actor_rank == "owner":
+        return True
 
-        for cookie_path in cookie_candidates:
-            try:
-                if os.path.isfile(cookie_path) and os.path.getsize(cookie_path) > 20:
-                    opts["cookiefile"] = cookie_path
-                    break
-            except OSError:
-                pass
-        if facebook_mode:
-            # Facebook لا يضمن وجود صيغة MP4 تحتوي على صوت وفيديو معاً،
-            # لذلك لا نطلب ext/acodec/vcodec/filesize بشكل صارم؛ هذا كان سبب
-            # الخطأ: Requested format is not available. نختار أفضل صيغة
-            # متاحة ثم نتحقق من حجم الملف بعد التحميل.
-            opts["format"] = "best[filesize<50M]/best"
-        else:
-            opts["format"] = (
-                "best[ext=mp4][acodec!=none][vcodec!=none][filesize<50M]/"
-                "best[ext=mp4][acodec!=none][vcodec!=none]/"
-                "best[acodec!=none][vcodec!=none][filesize<50M]/"
-                "best[acodec!=none][vcodec!=none]"
-            )
+    if actor_rank == "assistant_owner":
+        return target_rank != "assistant_owner"
 
-    if youtube_mode:
-        # لا نطلب video-only + audio-only لأن دمجهما يحتاج ffmpeg.
-        opts["format"] = (
-            "best[ext=mp4][acodec!=none][vcodec!=none][filesize<50M]/"
-            "best[ext=mp4][acodec!=none][vcodec!=none]/"
-            "best[acodec!=none][vcodec!=none][filesize<50M]/"
-            "best[acodec!=none][vcodec!=none]"
+    if actor_rank == "manager":
+        return target_rank in (
+            "admin",
+            "moderator",
+            "animal"
         )
 
-        cookies_file = get_youtube_cookies_file()
+    return False
 
-        if cookies_file:
-            opts["cookiefile"] = cookies_file
-            logger.info(
-                "YouTube cookies enabled: %s",
-                cookies_file
-            )
-        else:
-            logger.warning(
-                "YouTube cookies file not found. "
-                "Set YOUTUBE_COOKIES_FILE or add youtube_cookies.txt."
-            )
 
-        opts["extractor_args"] = {
-            "youtube": {
-                "player_client": [
-                    "web",
-                    "mweb",
-                    "web_embedded"
-                ]
-            }
+def can_use_moderation(actor_rank):
+    return rank_level(actor_rank) >= rank_level("admin")
+
+
+def rank_command_error(message, text):
+    bot.reply_to(message, text)
+    return True
+
+
+def bot_promote(
+    chat_id,
+    user_id,
+    rank,
+    permissions=None
+):
+    # رتب داخل البوت فقط
+    if rank in (
+        "animal",
+        "admin",
+        "manager"
+    ):
+        return True
+
+    if rank == "moderator" and permissions is None:
+        permissions = set()
+
+    if permissions is None:
+        permissions = {
+            "can_change_info",
+            "can_delete_messages",
+            "can_restrict_members",
+            "can_invite_users",
+            "can_pin_messages",
+            "can_manage_video_chats",
+            "can_manage_topics"
         }
 
-    return opts
+    kwargs = {
+        "can_change_info":
+            "can_change_info" in permissions,
 
+        "can_delete_messages":
+            "can_delete_messages" in permissions,
 
+        "can_restrict_members":
+            "can_restrict_members" in permissions,
 
-# ============================================================
-# تحميل الفيديو
-# ============================================================
+        "can_invite_users":
+            "can_invite_users" in permissions,
 
-def download_video_sync(url):
+        "can_pin_messages":
+            "can_pin_messages" in permissions,
 
-    def extract_and_find_file(youtube_mode=False, facebook_mode=False, force_best=False):
+        "can_manage_video_chats":
+            "can_manage_video_chats" in permissions,
 
-        opts = make_ydl_opts(
-            youtube_mode=youtube_mode,
-            facebook_mode=facebook_mode
+        "can_manage_topics":
+            "can_manage_topics" in permissions
+    }
+
+    # مساعد المالك
+    if rank == "assistant_owner":
+
+        kwargs.update({
+            "can_change_info": True,
+            "can_delete_messages": True,
+            "can_restrict_members": True,
+            "can_invite_users": True,
+            "can_pin_messages": True,
+            "can_manage_video_chats": True,
+            "can_manage_topics": True,
+            "can_promote_members": True
+        })
+
+    elif rank == "moderator":
+        kwargs["can_promote_members"] = False
+
+    try:
+
+        bot.promote_chat_member(
+            chat_id,
+            user_id,
+            **kwargs
         )
 
-        if force_best:
-            # Fallback أخير لفيسبوك إذا أعاد yt-dlp خطأ في اختيار الصيغة.
-            opts["format"] = "best"
+        title = TITLE_NAMES.get(rank)
 
-        with yt_dlp.YoutubeDL(
-            opts
-        ) as ydl:
+        if title:
 
-            info = ydl.extract_info(
-                url,
-                download=True
+            try:
+                bot.set_chat_administrator_custom_title(
+                    chat_id,
+                    user_id,
+                    title
+                )
+            except Exception:
+                pass
+
+        return True
+
+    except Exception as e:
+        print("[PROMOTE]", e)
+        return False
+
+
+def bot_demote(chat_id, user_id):
+    try:
+
+        bot.promote_chat_member(
+            chat_id,
+            user_id,
+            can_change_info=False,
+            can_delete_messages=False,
+            can_restrict_members=False,
+            can_invite_users=False,
+            can_pin_messages=False,
+            can_manage_video_chats=False,
+            can_manage_topics=False,
+            can_promote_members=False
+        )
+
+        return True
+
+    except Exception as e:
+        print("[DEMOTE]", e)
+        return False
+
+
+def target_protected(message, target):
+    if not target:
+        return True
+
+    tr = get_rank(
+        message.chat.id,
+        target.id
+    )
+
+    ar = get_rank(
+        message.chat.id,
+        message.from_user.id
+    )
+
+    if tr == "owner":
+        return True
+
+    if rank_level(tr) >= rank_level(ar):
+        return True
+
+    return False
+
+
+def admin_required(message):
+    if message.chat.type not in (
+        "group",
+        "supergroup"
+    ):
+        return False
+
+    ar = get_rank(
+        message.chat.id,
+        message.from_user.id
+    )
+
+    if not can_use_moderation(ar):
+
+        bot.reply_to(
+            message,
+            "❌ هذا الأمر للأدمن فما فوق."
+        )
+
+        return False
+
+    return True
+
+
+# =========================================================
+# سجل الإدارة
+# =========================================================
+def log_action(
+    chat_id,
+    admin_id,
+    target_id,
+    action,
+    details=""
+):
+    cursor.execute("""
+        INSERT INTO actions(
+            chat_id,
+            admin_id,
+            target_id,
+            action,
+            details,
+            created_at
+        )
+        VALUES(?,?,?,?,?,?)
+    """, (
+        chat_id,
+        admin_id,
+        target_id,
+        action,
+        details,
+        now()
+    ))
+
+    db.commit()
+
+
+# =========================================================
+# استخراج الهدف
+# =========================================================
+def get_target(message, argument=""):
+
+    # إذا تم تحديد هدف صريح بعد الأمر (@username أو ID) نستخدمه أولًا.
+    # هذا يسمح مثلًا بكتابة: "طرد 123456" حتى لو كانت الرسالة ردًا على شخص آخر.
+    argument = (argument or "").strip()
+
+    if argument:
+        target_token = argument.split(maxsplit=1)[0].strip()
+
+        if re.fullmatch(r"-?\d+", target_token):
+
+            m = get_member(
+                message.chat.id,
+                int(target_token)
             )
 
-            prepared = ydl.prepare_filename(
-                info
+            return m.user if m else None
+
+        username = target_token.lstrip("@").lower()
+
+        cursor.execute("""
+            SELECT user_id
+            FROM group_users
+            WHERE chat_id=?
+            AND LOWER(username)=?
+            LIMIT 1
+        """, (
+            message.chat.id,
+            username
+        ))
+
+        row = cursor.fetchone()
+
+        if row:
+
+            m = get_member(
+                message.chat.id,
+                row["user_id"]
             )
 
-            possible_files = [
-                prepared,
-                os.path.splitext(
-                    prepared
-                )[0] + ".mp4",
-                os.path.splitext(
-                    prepared
-                )[0] + ".mkv",
-                os.path.splitext(
-                    prepared
-                )[0] + ".webm",
-                os.path.splitext(
-                    prepared
-                )[0] + ".mov",
-            ]
+            return m.user if m else None
 
-            # بعد الدمج قد يكون اسم الملف النهائي مختلفاً قليلاً
-            if info.get("requested_downloads"):
-                for requested in info.get(
-                    "requested_downloads",
-                    []
-                ):
-                    path = requested.get(
-                        "filepath"
+    # بدون هدف صريح: استخدم المستخدم الذي تم الرد عليه.
+    if (
+        message.reply_to_message
+        and message.reply_to_message.from_user
+    ):
+        return message.reply_to_message.from_user
+
+    return None
+
+    cursor.execute("""
+        SELECT user_id
+        FROM group_users
+        WHERE chat_id=?
+        AND LOWER(username)=?
+        LIMIT 1
+    """, (
+        message.chat.id,
+        username
+    ))
+
+    row = cursor.fetchone()
+
+    if row:
+
+        m = get_member(
+            message.chat.id,
+            row["user_id"]
+        )
+
+        return m.user if m else None
+
+    return None
+
+
+# =========================================================
+# الكشف والمالك
+# =========================================================
+def show_profile(message, target):
+
+    if not target:
+
+        bot.reply_to(
+            message,
+            "❌ لم أستطع العثور على المستخدم.\n"
+            "استخدم الأمر بالرد أو بالـ ID."
+        )
+
+        return
+
+    cursor.execute(
+        """
+        SELECT messages,warnings
+        FROM group_users
+        WHERE chat_id=? AND user_id=?
+        """,
+        (
+            message.chat.id,
+            target.id
+        )
+    )
+
+    row = cursor.fetchone()
+
+    messages = row["messages"] if row else 0
+    warnings = row["warnings"] if row else 0
+
+    caption = (
+        f"🔎 <b>كشف المستخدم</b>\n"
+        f"<b>الاسم:</b> {mention(target)}\n"
+        f"┈┅⊷━⊷┅┅┈\n"
+        f"<b>اليوزر:</b> "
+        f"{html.escape(username_text(target))}\n"
+        f"┈┅⊷━⊷┅┅┈\n"
+        f"<b>الايدي:</b> "
+        f"<code>{target.id}</code>\n"
+        f"┈┅⊷━⊷┅┅┈\n"
+        f"<b>رسائله:</b> "
+        f"<code>{messages}</code>\n"
+        f"┈┅⊷━⊷┅┅┈\n"
+        f"<b>تحذيراته:</b> "
+        f"<code>{warnings}</code>"
+    )
+
+    markup = types.InlineKeyboardMarkup()
+
+    markup.add(
+        button(
+            full_name(target)[:30],
+            url=f"tg://user?id={target.id}",
+            style="success",
+            icon_custom_emoji_id=CE_MEMBER
+        )
+    )
+
+    try:
+
+        photos = bot.get_user_profile_photos(
+            target.id,
+            limit=1
+        )
+
+        if photos.total_count:
+
+            bot.send_photo(
+                message.chat.id,
+                photos.photos[0][-1].file_id,
+                caption=caption,
+                reply_markup=markup
+            )
+
+            return
+
+    except Exception:
+        pass
+
+    bot.send_message(
+        message.chat.id,
+        caption,
+        reply_markup=markup
+    )
+
+
+def get_owner_user(chat_id):
+
+    try:
+
+        admins = bot.get_chat_administrators(chat_id)
+
+        for m in admins:
+
+            if m.status == "creator":
+                return m.user
+
+    except Exception as e:
+        print("[OWNER]", e)
+
+    return None
+
+
+def owner_profile(message):
+
+    owner = get_owner_user(message.chat.id)
+
+    if not owner:
+
+        bot.reply_to(
+            message,
+            "❌ لم أستطع العثور على مالك المجموعة."
+        )
+
+        return
+
+    text = (
+        "✢ 𝐓𝐇𝐄 𝐎𝐖𝐍𝐄𝐑 ✢\n"
+        "┈┅⊷━⊷┅┅┈\n"
+        f"𝐍𝐀𝐌𝐄  :   ✢ {mention(owner, owner=True)} ✢\n"
+        "┈┅⊷━⊷┅┅┈\n"
+        f"𝐔𝐒𝐄𝐑  :   ✢ "
+        f"{html.escape(username_text(owner))} ✢\n"
+        "┈┅⊷━⊷┅┅┈\n"
+        f"𝐈𝐃  :  ✢ "
+        f"<code>{owner.id}</code> ✢\n"
+        "┈┅⊷━⊷┅┅┈"
+    )
+
+    markup = types.InlineKeyboardMarkup()
+
+    markup.add(
+        button(
+            full_name(owner)[:30],
+            url=f"tg://user?id={owner.id}",
+            style="success",
+            icon_custom_emoji_id=CE_OWNER_DEVELOPER
+        )
+    )
+
+    try:
+
+        photos = bot.get_user_profile_photos(
+            owner.id,
+            limit=1
+        )
+
+        if photos.total_count:
+
+            bot.send_photo(
+                message.chat.id,
+                photos.photos[0][-1].file_id,
+                caption=text,
+                reply_markup=markup
+            )
+
+            return
+
+    except Exception:
+        pass
+
+    bot.send_message(
+        message.chat.id,
+        text,
+        reply_markup=markup
+    )
+
+
+# =========================================================
+# التحذيرات والكتم
+# =========================================================
+def get_warnings(chat_id, user_id):
+
+    cursor.execute(
+        """
+        SELECT warnings
+        FROM group_users
+        WHERE chat_id=? AND user_id=?
+        """,
+        (
+            chat_id,
+            user_id
+        )
+    )
+
+    r = cursor.fetchone()
+
+    return r["warnings"] if r else 0
+
+
+def set_warnings(chat_id, user_id, count):
+
+    cursor.execute(
+        """
+        UPDATE group_users
+        SET warnings=?
+        WHERE chat_id=? AND user_id=?
+        """,
+        (
+            count,
+            chat_id,
+            user_id
+        )
+    )
+
+    db.commit()
+
+
+def mute_user(chat_id, user_id):
+
+    bot.restrict_chat_member(
+        chat_id,
+        user_id,
+        permissions=types.ChatPermissions(
+            can_send_messages=False
+        )
+    )
+
+
+def unmute_user(chat_id, user_id):
+
+    bot.restrict_chat_member(
+        chat_id,
+        user_id,
+        permissions=types.ChatPermissions(
+            can_send_messages=True,
+            can_send_audios=True,
+            can_send_documents=True,
+            can_send_photos=True,
+            can_send_videos=True,
+            can_send_video_notes=True,
+            can_send_voice_notes=True,
+            can_send_polls=True,
+            can_send_other_messages=True,
+            can_add_web_page_previews=True
+        )
+    )
+
+
+def ban_user(chat_id, user_id):
+    bot.ban_chat_member(
+        chat_id,
+        user_id
+    )
+
+
+def unban_user(chat_id, user_id):
+    bot.unban_chat_member(
+        chat_id,
+        user_id
+    )
+
+
+def kick_user(chat_id, user_id):
+
+    bot.ban_chat_member(
+        chat_id,
+        user_id
+    )
+
+    bot.unban_chat_member(
+        chat_id,
+        user_id
+    )
+
+
+def is_global_banned(user_id):
+    cursor.execute(
+        "SELECT 1 FROM global_bans WHERE user_id=? LIMIT 1",
+        (user_id,)
+    )
+    return cursor.fetchone() is not None
+
+
+def global_ban_user(user_id, admin_id=0):
+    cursor.execute(
+        "INSERT OR REPLACE INTO global_bans(user_id,created_at,admin_id) VALUES(?,?,?)",
+        (user_id, now(), admin_id)
+    )
+    db.commit()
+
+    cursor.execute("SELECT chat_id FROM groups")
+    chat_ids = [row["chat_id"] for row in cursor.fetchall()]
+
+    success = 0
+    skipped = 0
+
+    for group_chat_id in chat_ids:
+        try:
+            if not bot_is_admin(group_chat_id):
+                skipped += 1
+                continue
+
+            bot.ban_chat_member(
+                group_chat_id,
+                user_id
+            )
+            success += 1
+        except Exception as e:
+            skipped += 1
+            print(f"[Global Ban] {group_chat_id}: {e}")
+
+    return success, skipped
+
+
+def add_warning(message, target):
+
+    chat_id = message.chat.id
+
+    register_member(
+        chat_id,
+        target
+    )
+
+    current = (
+        get_warnings(
+            chat_id,
+            target.id
+        ) + 1
+    )
+
+    set_warnings(
+        chat_id,
+        target.id,
+        current
+    )
+
+    row = get_group(chat_id)
+
+    maximum = (
+        row["max_warnings"]
+        if row
+        else 3
+    )
+
+    log_action(
+        chat_id,
+        message.from_user.id,
+        target.id,
+        "تحذير",
+        f"{current}/{maximum}"
+    )
+
+    if current >= maximum:
+
+        try:
+
+            mute_user(
+                chat_id,
+                target.id
+            )
+
+            set_warnings(
+                chat_id,
+                target.id,
+                0
+            )
+
+            return (
+                f"⚠️ تم تحذير {mention(target)}\n"
+                f"📊 وصل إلى {maximum}\n"
+                "🔇 تم كتمه تلقائيًا."
+            )
+
+        except Exception:
+            pass
+
+    return (
+        f"⚠️ تم تحذير {mention(target)}\n"
+        f"📊 التحذيرات: "
+        f"<code>{current}/{maximum}</code>"
+    )
+
+
+# =========================================================
+# الحماية
+# =========================================================
+def contains_link(text):
+
+    if not text:
+        return False
+
+    return any(
+        re.search(
+            p,
+            text,
+            re.I
+        )
+        for p in [
+            r"https?://",
+            r"www\.",
+            r"t\.me/",
+            r"telegram\.me/",
+            r"@\w+\.\w+"
+        ]
+    )
+
+
+def is_blacklisted(chat_id, text):
+
+    if not text:
+        return False
+
+    cursor.execute(
+        """
+        SELECT word
+        FROM blacklist
+        WHERE chat_id=?
+        """,
+        (chat_id,)
+    )
+
+    return any(
+        r["word"].lower() in text.lower()
+        for r in cursor.fetchall()
+    )
+
+
+flood_cache = defaultdict(
+    lambda: defaultdict(deque)
+)
+
+
+def check_flood(chat_id, user_id):
+
+    q = flood_cache[
+        chat_id
+    ][
+        user_id
+    ]
+
+    t = time.time()
+
+    while q and t - q[0] > 5:
+        q.popleft()
+
+    q.append(t)
+
+    if len(q) >= 6:
+
+        q.clear()
+
+        return True
+
+    return False
+
+
+repeat_cache = defaultdict(
+    lambda: defaultdict(
+        lambda: deque(maxlen=4)
+    )
+)
+
+
+def check_repeat(chat_id, user_id, text):
+
+    if not text:
+        return False
+
+    q = repeat_cache[
+        chat_id
+    ][
+        user_id
+    ]
+
+    q.append(
+        text.strip().lower()
+    )
+
+    return (
+        len(q) >= 3
+        and len(set(q)) == 1
+    )
+
+
+def delete_message_safe(message):
+
+    try:
+
+        bot.delete_message(
+            message.chat.id,
+            message.message_id
+        )
+
+    except Exception:
+        pass
+
+
+# =========================================================
+# الإعدادات
+# =========================================================
+def all_locks(chat_id, state):
+
+    for c in [
+        "links",
+        "photos",
+        "videos",
+        "documents",
+        "stickers",
+        "audio",
+        "animations"
+    ]:
+
+        set_group_setting(
+            chat_id,
+            c,
+            state
+        )
+
+
+def send_settings(message):
+
+    row = get_group(
+        message.chat.id
+    )
+
+    if not row:
+        return
+
+    def icon(v):
+        return "🟢" if v else "🔴"
+
+    markup = types.InlineKeyboardMarkup(
+        row_width=2
+    )
+
+    fields = [
+        ("welcome", "الترحيب"),
+        ("links", "الروابط"),
+        ("photos", "الصور"),
+        ("videos", "الفيديو"),
+        ("documents", "الملفات"),
+        ("stickers", "الملصقات"),
+        ("audio", "الصوت"),
+        ("animations", "المتحركات"),
+        ("repeat_messages", "التكرار"),
+        ("new_member_protection", "حماية الجدد")
+    ]
+
+    for col, label in fields:
+
+        markup.add(
+            button(
+                f"{icon(row[col])} {label}",
+                callback_data="toggle_" + col,
+                style=(
+                    "success"
+                    if row[col]
+                    else "danger"
+                )
+            )
+        )
+
+    markup.add(
+        button(
+            "🔒 قفل الكل",
+            callback_data="lock_all",
+            style="danger"
+        ),
+        button(
+            "🔓 فتح الكل",
+            callback_data="unlock_all",
+            style="success"
+        )
+    )
+
+    bot.send_message(
+        message.chat.id,
+        "⚙️ <b>لوحة إعدادات الحماية</b>\n\n"
+        "🟢 مفعّل\n"
+        "🔴 معطّل",
+        reply_markup=markup
+    )
+
+
+# =========================================================
+# قائمة الأوامر التفاعلية
+# =========================================================
+def commands_menu_markup():
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    rows = [
+        ("🔒 أوامر القفل", "locks", "🔓 أوامر الفتح", "unlocks"),
+        ("👥 أوامر المجموعات", "groups", "👮 أوامر الإدارة", "admin"),
+        ("🛡️ أوامر الحماية", "protection", "👑 أوامر الرتب", "ranks"),
+        ("💬 أوامر الردود", "replies", "💎 أوامر TON", "ton"),
+    ]
+    for a, ac, b, bc in rows:
+        markup.row(
+            button(a, callback_data=f"cmdcat:{ac}", style="primary", icon_custom_emoji_id=CE_COMMANDS),
+            button(b, callback_data=f"cmdcat:{bc}", style="primary", icon_custom_emoji_id=CE_COMMANDS)
+        )
+    markup.row(button("📋 كل الأوامر", callback_data="cmdcat:all", style="primary", icon_custom_emoji_id=CE_COMMANDS))
+    return markup
+
+
+def command_category_text(category):
+    texts = {
+        "locks": "🔒 <b>أوامر القفل</b>\n┈┅⊷━⊷┅┅┈\n<code>قفل الروابط</code>\n<code>قفل الصور</code>\n<code>قفل الفيديو</code>\n<code>قفل الملفات</code>\n<code>قفل الملصقات</code>\n<code>قفل الصوت</code>\n<code>قفل المتحركات</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>\n<code>قفل الكل</code>",
+        "unlocks": "🔓 <b>أوامر الفتح</b>\n┈┅⊷━⊷┅┅┈\n<code>فتح الروابط</code>\n<code>فتح الصور</code>\n<code>فتح الفيديو</code>\n<code>فتح الملفات</code>\n<code>فتح الملصقات</code>\n<code>فتح الصوت</code>\n<code>فتح المتحركات</code>\n<code>فتح التكرار</code>\n<code>فتح حماية الجدد</code>\n<code>فتح الكل</code>",
+        "groups": "👥 <b>أوامر المجموعات</b>\n┈┅⊷━⊷┅┅┈\n<code>معلومات</code>\n<code>احصائيات</code>\n<code>السجل</code>\n<code>الاعدادات</code>\n<code>المالك</code>\n<code>المطور</code>",
+        "admin": "👮 <b>أوامر الإدارة</b>\n┈┅⊷━⊷┅┅┈\n<code>حظر</code>\n<code>فك حظر</code>\n<code>حظر عام</code>\n<code>طرد</code>\n<code>كتم</code>\n<code>فك كتم</code>\n<code>تحذير</code>\n<code>تحذيرات</code>\n<code>مسح التحذيرات</code>\n<code>الغاء تحذير</code>",
+        "protection": "🛡️ <b>أوامر الحماية</b>\n┈┅⊷━⊷┅┅┈\n<code>منع كلمة ...</code>\n<code>الغاء منع كلمة ...</code>\n<code>قائمة الكلمات</code>\n<code>قفل الروابط</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>",
+        "ranks": "👑 <b>أوامر الرتب</b>\n┈┅⊷━⊷┅┅┈\n<code>رفع مساعد المالك</code>\n<code>تنزيل مساعد المالك</code>\n<code>رفع مدير</code>\n<code>تنزيل مدير</code>\n<code>رفع ادمن</code>\n<code>تنزيل ادمن</code>\n<code>رفع مشرف</code>\n<code>تنزيل مشرف</code>\n<code>رفع حيوان</code>\n<code>تنزيل حيوان</code>",
+        "replies": "💬 <b>أوامر الردود</b>\n┈┅⊷━⊷┅┅┈\n<code>اضف رد</code>\nاتبع الخطوات لإضافة الكلمة والرد، ويمكنك إضافة أكثر من زر شفاف لنفس الرد.\n\n<code>حذف رد</code>\n<code>قائمة الردود</code>",
+        "ton": "💎 <b>أوامر TON</b>\n┈┅⊷━⊷┅┅┈\n<code>1ton</code> أو <code>1تون</code> — سعر TON\n<code>تحليل تون</code> — تحليل آخر 24 ساعة\n<code>تحليل دولار</code> — سعر الدولار مقابل الجنيه",
+    }
+    return texts.get(category, "📚 <b>قائمة أوامر البوت</b>")
+
+
+def commands_back_markup():
+    markup = types.InlineKeyboardMarkup()
+    markup.add(button("↩️ رجوع للأوامر", callback_data="cmdcat:home", style="primary", icon_custom_emoji_id=CE_COMMANDS))
+    return markup
+
+
+def send_commands_menu(message):
+    text = "📚 <b>قائمة أوامر البوت</b>\n┈┅⊷━⊷┅┅┈\nاختر القسم الذي تريد أوامره:"
+    bot.reply_to(message, text, reply_markup=commands_menu_markup())
+
+
+# =========================================================
+# الأوامر
+# =========================================================
+def commands_text(owner=None):
+
+    extra = (
+        f"\n\n👑 <b>مالك المجموعة:</b> "
+        f"{mention(owner, owner=True)}"
+        if owner
+        else ""
+    )
+
+    return (
+        "<b>قائمة أوامر البوت</b>\n"
+        "┈┅⊷━⊷┅┅┈\n"
+
+        "<b>للجميع:</b>\n"
+        "<code>الاوامر</code> • "
+        "<code>مساعدة</code> • "
+        "<code>ايدي</code> • "
+        "<code>معلوماتي</code>\n"
+
+        "<code>كشف</code> • "
+        "<code>معلومات</code> • "
+        "<code>البوت</code> • "
+        "<code>المطور</code> • "
+        "<code>المالك</code>\n"
+
+        "┈┅⊷━⊷┅┅┈\n"
+
+        "<b>الإدارة:</b>\n"
+        "<code>حظر</code> • "
+        "<code>فك حظر</code> • "
+        "<code>طرد</code> • "
+        "<code>كتم</code> • "
+        "<code>فك كتم</code>\n"
+
+        "<code>تحذير</code> • "
+        "<code>تحذيرات</code> • "
+        "<code>مسح التحذيرات</code> • "
+        "<code>الغاء تحذير</code>\n"
+
+        "┈┅⊷━⊷┅┅┈\n"
+
+        "<b>نظام الرتب:</b>\n"
+        "<code>رفع مساعد المالك</code> • "
+        "<code>تنزيل مساعد المالك</code>\n"
+
+        "<code>رفع مدير</code> • "
+        "<code>تنزيل مدير</code>\n"
+
+        "<code>رفع ادمن</code> • "
+        "<code>تنزيل ادمن</code>\n"
+
+        "<code>رفع مشرف</code> • "
+        "<code>تنزيل مشرف</code>\n"
+
+        "<code>رفع حيوان</code> • "
+        "<code>تنزيل حيوان</code>\n"
+
+        "┈┅⊷━⊷┅┅┈\n"
+
+        "<b>الحماية:</b>\n"
+        "<code>قفل الروابط</code> • "
+        "<code>قفل الصور</code> • "
+        "<code>قفل الفيديو</code>\n"
+
+        "<code>قفل الملفات</code> • "
+        "<code>قفل الملصقات</code> • "
+        "<code>قفل الصوت</code>\n"
+
+        "<code>قفل المتحركات</code> • "
+        "<code>قفل التكرار</code> • "
+        "<code>قفل حماية الجدد</code>\n"
+
+        "<code>قفل الكل</code> • "
+        "<code>فتح الكل</code>\n"
+
+        "┈┅⊷━⊷┅┅┈\n"
+
+        "<b>الكلمات:</b> "
+        "<code>منع كلمة ...</code> • "
+        "<code>الغاء منع كلمة ...</code> • "
+        "<code>قائمة الكلمات</code>\n"
+
+        "<b>الردود:</b> "
+        "<code>اضف رد ...</code> • "
+        "<code>حذف رد ...</code> • "
+        "<code>قائمة الردود</code>\n"
+
+        "<b>الإدارة:</b> "
+        "<code>الاعدادات</code> • "
+        "<code>احصائيات</code> • "
+        "<code>السجل</code>"
+
+        + extra
+    )
+
+
+# =========================================================
+# لوحة صلاحيات المشرف
+# =========================================================
+MOD_PERMS = {
+
+    "change_info": (
+        "✏️ تغيير المعلومات",
+        "can_change_info"
+    ),
+
+    "delete_messages": (
+        "🗑 حذف الرسائل",
+        "can_delete_messages"
+    ),
+
+    "restrict_members": (
+        "🔇 تقييد الأعضاء",
+        "can_restrict_members"
+    ),
+
+    "invite_users": (
+        "👥 دعوة الأعضاء",
+        "can_invite_users"
+    ),
+
+    "pin_messages": (
+        "📌 تثبيت الرسائل",
+        "can_pin_messages"
+    ),
+
+    "manage_video_chats": (
+        "🎥 إدارة المكالمات",
+        "can_manage_video_chats"
+    ),
+
+    "manage_topics": (
+        "🧵 إدارة المواضيع",
+        "can_manage_topics"
+    )
+}
+
+
+pending_promotions = {}
+
+
+def moderator_panel(call, token):
+
+    p = pending_promotions.get(token)
+
+    if not p:
+
+        bot.answer_callback_query(
+            call.id,
+            "❌ انتهت العملية.",
+            show_alert=True
+        )
+
+        return
+
+    selected = p["permissions"]
+
+    markup = types.InlineKeyboardMarkup(
+        row_width=2
+    )
+
+    for key, (label, _) in MOD_PERMS.items():
+
+        on = key in selected
+
+        markup.add(
+            button(
+                ("🟢 " if on else "🔴 ") + label,
+                callback_data=f"mp:{token}:{key}",
+                style=(
+                    "success"
+                    if on
+                    else "danger"
+                )
+            )
+        )
+
+    markup.add(
+        button(
+            "✅ تأكيد رفع المشرف",
+            callback_data=f"mconfirm:{token}",
+            style="success"
+        )
+    )
+
+    markup.add(
+        button(
+            "❌ إلغاء",
+            callback_data=f"mcancel:{token}",
+            style="danger"
+        )
+    )
+
+    bot.edit_message_text(
+        "🛡️ <b>اختيار صلاحيات المشرف</b>\n"
+        "┈┅⊷━⊷┅┅┈\n"
+        f"👤 الهدف: {mention(p['target'])}\n\n"
+        "اختر الصلاحيات ثم اضغط تأكيد.\n"
+        "⚠️ صلاحية رفع المشرفين محجوزة "
+        "لنظام الرتب ولا تُمنح للمشرف.",
+
+        call.message.chat.id,
+        call.message.message_id,
+        reply_markup=markup
+    )
+
+
+# =========================================================
+# الردود التلقائية
+# =========================================================
+reply_pending = {}
+admin_pending = {}
+broadcast_pending = {}
+
+
+def get_auto_reply(chat_id, text):
+    if not text:
+        return None
+
+    key = clean_text(text)
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM auto_replies
+        WHERE chat_id=? AND trigger=?
+        LIMIT 1
+        """,
+        (chat_id, key)
+    )
+    row = cursor.fetchone()
+    if row:
+        return row
+
+    # الرد العام يُطبق على كل المجموعات ما لم يوجد رد خاص بالمجموعة.
+    cursor.execute(
+        """
+        SELECT *
+        FROM auto_replies
+        WHERE chat_id=0 AND trigger=?
+        LIMIT 1
+        """,
+        (key,)
+    )
+    return cursor.fetchone()
+
+
+def save_auto_reply(
+    chat_id,
+    trigger,
+    reply_text,
+    button_enabled=False,
+    button_text="",
+    button_url="",
+    button_emoji_id="",
+    reply_entities="",
+    button_data=None
+):
+    """حفظ الرد مع دعم أكثر من زر شفاف، مع إبقاء الحقول القديمة للتوافق."""
+    if button_data is None:
+        button_data = []
+        if button_enabled and button_url:
+            button_data.append({
+                "text": button_text or "MaX",
+                "url": button_url,
+                "emoji_id": button_emoji_id or ""
+            })
+
+    try:
+        button_data_json = json.dumps(button_data, ensure_ascii=False)
+    except Exception:
+        button_data_json = "[]"
+
+    first = button_data[0] if button_data else {}
+    first_text = first.get("text", button_text or "")
+    first_url = first.get("url", button_url or "")
+    first_emoji = first.get("emoji_id", button_emoji_id or "")
+
+    cursor.execute(
+        """
+        INSERT INTO auto_replies(
+            chat_id,
+            trigger,
+            reply_text,
+            button_enabled,
+            button_text,
+            button_url,
+            button_emoji_id,
+            reply_entities,
+            button_data
+        )
+        VALUES(?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(chat_id,trigger)
+        DO UPDATE SET
+            reply_text=excluded.reply_text,
+            button_enabled=excluded.button_enabled,
+            button_text=excluded.button_text,
+            button_url=excluded.button_url,
+            button_emoji_id=excluded.button_emoji_id,
+            reply_entities=excluded.reply_entities,
+            button_data=excluded.button_data
+        """,
+        (
+            chat_id,
+            clean_text(trigger),
+            reply_text,
+            1 if button_data else 0,
+            first_text,
+            first_url,
+            first_emoji,
+            reply_entities or "",
+            button_data_json
+        )
+    )
+    db.commit()
+
+
+def get_reply_buttons(row):
+    """إرجاع كل الأزرار المحفوظة، مع دعم الردود القديمة ذات الزر الواحد."""
+    if not row:
+        return []
+
+    raw = row["button_data"] if "button_data" in row.keys() else ""
+    if raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                result = []
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                    text = str(item.get("text", "")).strip()
+                    if text == "Lovely Updates":
+                        text = "MaX"
+                    url = str(item.get("url", "")).strip()
+                    if text and url:
+                        result.append({
+                            "text": text,
+                            "url": url,
+                            "emoji_id": str(item.get("emoji_id", "") or "")
+                        })
+                if result:
+                    return result
+        except Exception:
+            pass
+
+    if row["button_enabled"] and row["button_url"]:
+        return [{
+            "text": ("MaX" if row["button_text"] == "Lovely Updates" else (row["button_text"] or "MaX")),
+            "url": row["button_url"],
+            "emoji_id": row["button_emoji_id"] or ""
+        }]
+
+    return []
+
+
+def serialize_message_entities(message):
+    """حفظ تنسيق رسالة الرد كما أرسلها المستخدم."""
+    entities = getattr(message, "entities", None)
+    if not entities:
+        entities = getattr(message, "caption_entities", None)
+    if not entities:
+        return ""
+
+    payload = []
+    fields = (
+        "type", "offset", "length", "url", "language",
+        "custom_emoji_id", "expandable"
+    )
+
+    for entity in entities:
+        item = {}
+        for field in fields:
+            value = getattr(entity, field, None)
+            if value is not None:
+                item[field] = value
+        if item.get("type"):
+            payload.append(item)
+
+    try:
+        return json.dumps(payload, ensure_ascii=False)
+    except Exception:
+        return ""
+
+
+def deserialize_message_entities(raw):
+    """إعادة MessageEntity objects لإرسال الرد بنفس التنسيق."""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(data, list):
+            return None
+        entities = []
+        for item in data:
+            if not isinstance(item, dict) or not item.get("type"):
+                continue
+            try:
+                entities.append(types.MessageEntity(**item))
+            except Exception:
+                basic = {
+                    key: item[key]
+                    for key in ("type", "offset", "length")
+                    if key in item
+                }
+                for key in ("url", "language", "custom_emoji_id", "expandable"):
+                    if key in item:
+                        basic[key] = item[key]
+                try:
+                    entities.append(types.MessageEntity(**basic))
+                except Exception:
+                    pass
+        return entities or None
+    except Exception:
+        return None
+
+
+def delete_auto_reply(chat_id, trigger):
+    cursor.execute(
+        "DELETE FROM auto_replies WHERE chat_id=? AND trigger=?",
+        (chat_id, clean_text(trigger))
+    )
+    db.commit()
+    return cursor.rowcount > 0
+
+
+def extract_custom_emoji_id(message):
+    """
+    يلتقط ID الإيموجي المخصص تلقائيًا من الرسالة،
+    بدون أن يكتب المستخدم الـ ID يدويًا.
+    """
+    if not message:
+        return None
+
+    entities = []
+
+    for attr in ("entities", "caption_entities"):
+        value = getattr(message, attr, None)
+        if value:
+            entities.extend(value)
+
+    for entity in entities:
+        if getattr(entity, "type", "") == "custom_emoji":
+            emoji_id = getattr(entity, "custom_emoji_id", None)
+            if emoji_id:
+                return str(emoji_id)
+
+    return None
+
+
+def reply_button_markup(row):
+    buttons = get_reply_buttons(row)
+    if not buttons:
+        return None
+
+    markup = types.InlineKeyboardMarkup()
+    for item in buttons:
+        b = transparent_url_button(
+            item["text"],
+            item["url"],
+            emoji_id=item.get("emoji_id") or None
+        )
+        if b is not None:
+            markup.add(b)
+
+    return markup if markup.keyboard else None
+
+
+def send_saved_auto_reply(message, row):
+    if not row:
+        return False
+
+    markup = reply_button_markup(row)
+    entities = deserialize_message_entities(
+        row["reply_entities"] if "reply_entities" in row.keys() else ""
+    )
+
+    try:
+        kwargs = {"reply_markup": markup}
+        if entities:
+            kwargs["entities"] = entities
+            kwargs["parse_mode"] = None
+
+        kwargs["reply_to_message_id"] = message.message_id
+        _original_send_message(
+            message.chat.id,
+            row["reply_text"],
+            **kwargs
+        )
+        return True
+    except Exception as e:
+        print("[Auto Reply Send Error]", e)
+        return False
+
+
+def ask_reply_button(call, token):
+    p = reply_pending.get(token)
+    if not p:
+        bot.answer_callback_query(
+            call.id,
+            "❌ انتهت العملية.",
+            show_alert=True
+        )
+        return
+
+    markup = types.InlineKeyboardMarkup()
+    markup.row(
+        button(
+            "نعم",
+            callback_data=f"replybtn_yes:{token}",
+            style="primary",
+            icon_custom_emoji_id=CE_REPLY_BUTTON
+        ),
+        button(
+            "لا",
+            callback_data=f"replybtn_no:{token}",
+            style="primary",
+            icon_custom_emoji_id=CE_REPLY_BUTTON
+        )
+    )
+
+    bot.answer_callback_query(call.id)
+    bot.send_message(
+        call.message.chat.id,
+        "هل تريد إضافة زر شفاف للرد؟",
+        reply_markup=markup
+    )
+
+
+def start_add_reply(message, trigger):
+    token = secrets.token_hex(8)
+
+    if not trigger:
+        reply_pending[token] = {
+            "chat_id": message.chat.id,
+            "initiator": message.from_user.id,
+            "trigger": "",
+            "step": "trigger",
+            "buttons": []
+        }
+        bot.reply_to(message, "أرسل الآن الكلمة التي تريد إضافة رد لها.")
+        return True
+
+    reply_pending[token] = {
+        "chat_id": message.chat.id,
+        "initiator": message.from_user.id,
+        "trigger": clean_text(trigger),
+        "step": "reply",
+        "buttons": []
+    }
+
+    bot.reply_to(
+        message,
+        f"تم اختيار الكلمة: <code>{html.escape(trigger)}</code>\n\n"
+        "أرسل الآن نص الرد الذي تريد حفظه."
+    )
+    return True
+
+
+def ask_more_reply_buttons(chat_id, token):
+    markup = types.InlineKeyboardMarkup()
+    markup.row(
+        button(
+            "إضافة زر آخر",
+            callback_data=f"replybtn_more_yes:{token}",
+            style="primary",
+            icon_custom_emoji_id=CE_REPLY_BUTTON
+        ),
+        button(
+            "حفظ الرد",
+            callback_data=f"replybtn_more_no:{token}",
+            style="primary",
+            icon_custom_emoji_id=CE_REPLY_BUTTON
+        )
+    )
+    bot.send_message(
+        chat_id,
+        "✅ تم إضافة الزر.\n\nهل تريد إضافة زر شفاف آخر؟",
+        reply_markup=markup
+    )
+
+
+def _save_pending_reply(token, with_buttons=True):
+    p = reply_pending.get(token)
+    if not p:
+        return False
+
+    buttons = p.get("buttons", []) if with_buttons else []
+    first = buttons[0] if buttons else {}
+    save_auto_reply(
+        p["chat_id"],
+        p["trigger"],
+        p.get("reply_text", ""),
+        bool(buttons),
+        first.get("text", ""),
+        first.get("url", ""),
+        first.get("emoji_id", ""),
+        p.get("reply_entities", ""),
+        buttons
+    )
+    reply_pending.pop(token, None)
+    return True
+
+
+def continue_reply_setup(message):
+    if not message or not message.from_user:
+        return False
+
+    for token, p in list(reply_pending.items()):
+        pending_chat_id = p.get("chat_id")
+        if (
+            pending_chat_id not in (0, message.chat.id)
+            or p.get("initiator") != message.from_user.id
+        ):
+            continue
+        if pending_chat_id == 0 and message.from_user.id != DEVELOPER_ID:
+            continue
+
+        step = p.get("step")
+
+        if step == "trigger":
+            trigger = (message.text or "").strip()
+            if not trigger:
+                bot.reply_to(message, "أرسل كلمة نصية صالحة للرد.")
+                return True
+            p["trigger"] = clean_text(trigger)
+            p["step"] = "reply"
+            bot.reply_to(message, "تم اختيار الكلمة. أرسل الآن نص الرد الذي تريد حفظه.")
+            return True
+
+        if step == "reply":
+            reply_text = message.text or message.caption or ""
+            if not reply_text.strip():
+                bot.reply_to(message, "❌ أرسل نص الرد فقط.")
+                return True
+
+            p["reply_text"] = reply_text
+            p["reply_entities"] = serialize_message_entities(message)
+            p["step"] = "button_choice"
+            ask_markup = types.InlineKeyboardMarkup()
+            ask_markup.row(
+                button(
+                    "نعم",
+                    callback_data=f"replybtn_yes:{token}",
+                    style="primary",
+                    icon_custom_emoji_id=CE_REPLY_BUTTON
+                ),
+                button(
+                    "لا",
+                    callback_data=f"replybtn_no:{token}",
+                    style="primary",
+                    icon_custom_emoji_id=CE_REPLY_BUTTON
+                )
+            )
+            bot.reply_to(
+                message,
+                "✅ تم حفظ نص الرد مؤقتًا.\n\nهل تريد إضافة زر شفاف للرد؟",
+                reply_markup=ask_markup
+            )
+            return True
+
+        if step == "button_text":
+            text = message.text or ""
+            if not text.strip():
+                bot.reply_to(message, "❌ أرسل نص الزر. ويمكنك وضع أي إيموجي عادي داخل اسم الزر.")
+                return True
+            # أسماء الأزرار لا تدعم MessageEntity؛ نزيل Emoji العادي من الاسم
+            # ونستخدم custom_emoji_id كأيقونة للزر إن كان موجودًا.
+            p["button_text"] = strip_non_custom_emoji(text.strip()).strip() or "زر"
+            p["step"] = "button_url"
+            bot.reply_to(
+                message,
+                "🔗 أرسل رابط الزر كاملًا.\n"
+                "يدعم روابط Telegram والروابط https/http وأي رابط صالح تقبله Telegram."
+            )
+            return True
+
+        if step == "button_url":
+            url = (message.text or "").strip()
+            if not url or not re.match(r"^(?:https?|tg)://\S+$", url, re.I):
+                bot.reply_to(message, "❌ أرسل رابطًا صالحًا مثل: <code>https://t.me/LeaDeR_E</code>")
+                return True
+            p["button_url"] = url
+            p["step"] = "button_emoji"
+            bot.reply_to(
+                message,
+                "✨ أرسل Premium Emoji للزر إذا أردت أيقونة مخصصة، أو اكتب <code>تخطي</code>.\n"
+                "يدعم روابط Telegram وhttp/https وPremium Emoji تلقائيًا."
+            )
+            return True
+
+        if step == "button_emoji":
+            raw = (message.text or "").strip()
+            emoji_id = extract_custom_emoji_id(message)
+            if raw and clean_text(raw) in ("تخطي", "تخطي الايموجي", "بدون", "لا"):
+                emoji_id = ""
+            elif not emoji_id and not raw:
+                bot.reply_to(message, "❌ أرسل Premium Emoji أو اكتب تخطي.")
+                return True
+
+            p.setdefault("buttons", []).append({
+                "text": p.get("button_text", "زر"),
+                "url": p.get("button_url", ""),
+                "emoji_id": emoji_id or ""
+            })
+            p.pop("button_text", None)
+            p.pop("button_url", None)
+            p["step"] = "button_more"
+            ask_more_reply_buttons(message.chat.id, token)
+            return True
+
+        return True
+
+    return False
+
+
+def finalize_reply_without_button(call, token):
+    p = reply_pending.get(token)
+    if not p:
+        bot.answer_callback_query(call.id, "❌ انتهت العملية.", show_alert=True)
+        return
+
+    if p.get("initiator") != call.from_user.id:
+        bot.answer_callback_query(call.id, "❌ هذه العملية ليست لك.", show_alert=True)
+        return
+
+    _save_pending_reply(token, with_buttons=False)
+    bot.answer_callback_query(call.id, "✅ تم حفظ الرد")
+    try:
+        bot.edit_message_text(
+            "✅ تم حفظ الرد بدون زر.",
+            call.message.chat.id,
+            call.message.message_id
+        )
+    except Exception:
+        pass
+
+
+def continue_reply_button_setup(call, token):
+    p = reply_pending.get(token)
+    if not p:
+        bot.answer_callback_query(call.id, "❌ انتهت العملية.", show_alert=True)
+        return
+
+    if p.get("initiator") != call.from_user.id:
+        bot.answer_callback_query(call.id, "❌ هذه العملية ليست لك.", show_alert=True)
+        return
+
+    p["step"] = "button_text"
+    bot.answer_callback_query(call.id)
+    bot.send_message(
+        call.message.chat.id,
+        "🔘 أرسل اسم الزر الأول.\nيمكنك كتابة أي إيموجي عادي داخله."
+    )
+
+
+
+# =========================================================
+# لوحة الأدمن الخاصة بالمطور
+# =========================================================
+def admin_panel_markup():
+    markup = types.InlineKeyboardMarkup(row_width=2)
+
+    markup.row(
+        button("الإحصائيات", callback_data="admin:stats", icon_custom_emoji_id=CE_ADMIN),
+        button("المجموعات", callback_data="admin:groups", icon_custom_emoji_id=CE_MEMBER)
+    )
+    markup.row(
+        button("الردود", callback_data="admin:replies", icon_custom_emoji_id=CE_REPLY_BUTTON),
+        button("السجل", callback_data="admin:actions", icon_custom_emoji_id=CE_COMMANDS)
+    )
+    markup.row(
+        button("الإذاعة", callback_data="admin:broadcast", icon_custom_emoji_id=CE_REPLY_BUTTON),
+        button("إضافة رد عام", callback_data="admin:global_reply", icon_custom_emoji_id=CE_REPLY_BUTTON)
+    )
+    markup.row(
+        button("تصدير الأعضاء", callback_data="admin:export", icon_custom_emoji_id=CE_MEMBER),
+        button("استرجاع الأعضاء", callback_data="admin:restore", icon_custom_emoji_id=CE_MEMBER)
+    )
+    markup.row(
+        button("الاشتراك الإجباري", callback_data="admin:force_channels", icon_custom_emoji_id=CE_FORCE_SUB),
+        button("التحكم", callback_data="admin:control", icon_custom_emoji_id=CE_ADMIN)
+    )
+    markup.row(
+        button("تحديث", callback_data="admin:refresh", icon_custom_emoji_id=CE_REPLY_BUTTON),
+        button("إغلاق", callback_data="admin:close", icon_custom_emoji_id=CE_ERROR)
+    )
+    return markup
+
+
+def admin_control_markup():
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.row(
+        button("المجموعات", callback_data="admin:groups", icon_custom_emoji_id=CE_MEMBER),
+        button("الردود", callback_data="admin:replies", icon_custom_emoji_id=CE_REPLY_BUTTON)
+    )
+    markup.row(
+        button("الإذاعة", callback_data="admin:broadcast", icon_custom_emoji_id=CE_REPLY_BUTTON),
+        button("إضافة رد عام", callback_data="admin:global_reply", icon_custom_emoji_id=CE_REPLY_BUTTON)
+    )
+    markup.row(
+        button("الاشتراك الإجباري", callback_data="admin:force_channels", icon_custom_emoji_id=CE_FORCE_SUB),
+        button("السجل", callback_data="admin:actions", icon_custom_emoji_id=CE_COMMANDS)
+    )
+    markup.row(button("رجوع", callback_data="admin:open", icon_custom_emoji_id=CE_COMMANDS))
+    return markup
+
+
+def admin_control_text():
+    return (
+        "<b>التحكم الكامل بالبوت</b>\n"
+        "┈┅⊷━⊷┅┅┈\n"
+        "من هنا تتحكم في المجموعات، الردود، الاشتراك الإجباري، والسجل.\n"
+        "إدارة القنوات الإجبارية متاحة من زر الاشتراك الإجباري."
+    )
+
+
+def export_members_file(chat_id):
+    cursor.execute("SELECT * FROM group_users ORDER BY chat_id,user_id")
+    members = [dict(r) for r in cursor.fetchall()]
+    cursor.execute("SELECT * FROM groups ORDER BY chat_id")
+    groups = [dict(r) for r in cursor.fetchall()]
+    cursor.execute("SELECT * FROM force_sub_channels ORDER BY id")
+    force_channels = [dict(r) for r in cursor.fetchall()]
+    payload = {
+        "format": "protection_bot_members_v2",
+        "created_at": now(),
+        "members": members,
+        "groups": groups,
+        "force_sub_channels": force_channels
+    }
+    data = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    f = io.BytesIO(data)
+    f.name = "protection_bot_members_backup.json"
+    bot.send_document(chat_id, f, caption="نسخة احتياطية لأعضاء البوت والمجموعات.")
+
+
+def _iter_backup_members(payload):
+    """يدعم نسخ JSON القديمة والجديدة حتى لا تظهر نتيجة 0 عضو بسبب اختلاف اسم المفتاح."""
+    candidates = []
+    if isinstance(payload, dict):
+        for key in ("members", "group_users", "users", "members_data", "data"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                candidates.extend(value)
+            elif isinstance(value, dict):
+                for chat_key, rows in value.items():
+                    if isinstance(rows, list):
+                        for item in rows:
+                            if isinstance(item, dict) and "chat_id" not in item:
+                                item = dict(item)
+                                try:
+                                    item["chat_id"] = int(chat_key)
+                                except Exception:
+                                    pass
+                            candidates.append(item)
+    elif isinstance(payload, list):
+        candidates.extend(payload)
+    return candidates
+
+
+def _iter_backup_groups(payload):
+    if not isinstance(payload, dict):
+        return []
+    for key in ("groups", "chats", "group_data"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
+def restore_members_file(message):
+    if not message.document:
+        bot.reply_to(message, "أرسل ملف JSON الخاص بالنسخة الاحتياطية.")
+        return True
+    try:
+        info = bot.get_file(message.document.file_id)
+        raw = bot.download_file(info.file_path)
+        payload = json.loads(raw.decode("utf-8-sig"))
+
+        members = _iter_backup_members(payload)
+        groups = _iter_backup_groups(payload)
+        restored_members = 0
+        restored_groups = 0
+        seen = set()
+
+        group_cols = [
+            "chat_id", "title", "welcome", "links", "photos", "videos",
+            "documents", "stickers", "audio", "animations", "spam",
+            "flood", "repeat_messages", "new_member_protection", "max_warnings"
+        ]
+
+        for g in groups:
+            if not isinstance(g, dict) or g.get("chat_id") is None:
+                continue
+            vals = [g.get(c, 0 if c not in ("title",) else "") for c in group_cols]
+            placeholders = ",".join("?" for _ in group_cols)
+            cursor.execute(
+                f"INSERT OR IGNORE INTO groups({','.join(group_cols)}) VALUES({placeholders})",
+                vals
+            )
+            if cursor.rowcount:
+                restored_groups += 1
+
+        for m in members:
+            if not isinstance(m, dict):
+                continue
+            chat_id = m.get("chat_id", m.get("group_id", m.get("chat")))
+            user_id = m.get("user_id", m.get("id"))
+            if isinstance(chat_id, dict):
+                chat_id = chat_id.get("id")
+            if isinstance(user_id, dict):
+                user_id = user_id.get("id")
+            try:
+                chat_id = int(chat_id)
+                user_id = int(user_id)
+            except (TypeError, ValueError):
+                continue
+            if (chat_id, user_id) in seen:
+                continue
+            seen.add((chat_id, user_id))
+
+            # إذا كانت نسخة قديمة لا تحتوي اسم الأعمدة، ندعم aliases الشائعة.
+            first_name = m.get("first_name", m.get("name", "")) or ""
+            last_name = m.get("last_name", "") or ""
+            username = m.get("username", m.get("user_name", "")) or ""
+            cursor.execute("""
+                INSERT INTO group_users(
+                    chat_id,user_id,first_name,last_name,username,messages,warnings,joined_at,last_seen
+                ) VALUES(?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(chat_id,user_id) DO UPDATE SET
+                    first_name=excluded.first_name,
+                    last_name=excluded.last_name,
+                    username=excluded.username,
+                    messages=excluded.messages,
+                    warnings=excluded.warnings,
+                    joined_at=excluded.joined_at,
+                    last_seen=excluded.last_seen
+            """, (
+                chat_id, user_id, first_name, last_name, username,
+                int(m.get("messages", 0) or 0),
+                int(m.get("warnings", 0) or 0),
+                int(m.get("joined_at", m.get("created_at", 0)) or 0),
+                int(m.get("last_seen", 0) or 0)
+            ))
+            restored_members += 1
+
+        if isinstance(payload, dict):
+            for fc in payload.get("force_sub_channels", payload.get("force_channels", [])) or []:
+                if not isinstance(fc, dict) or fc.get("chat_id") is None:
+                    continue
+                cursor.execute("""
+                    INSERT INTO force_sub_channels(chat_id,username,title,url,button_text,emoji_id,enabled)
+                    VALUES(?,?,?,?,?,?,?)
+                    ON CONFLICT(chat_id) DO UPDATE SET
+                        username=excluded.username,title=excluded.title,url=excluded.url,
+                        button_text=excluded.button_text,emoji_id=excluded.emoji_id,enabled=excluded.enabled
+                """, (
+                    fc.get("chat_id"), fc.get("username", ""), fc.get("title", ""),
+                    fc.get("url", ""), fc.get("button_text", "Update MaX"),
+                    fc.get("emoji_id", CE_FORCE_SUB), fc.get("enabled", 1)
+                ))
+
+        db.commit()
+        bot.reply_to(
+            message,
+            f"تم استرجاع <b>{restored_members}</b> عضو و<b>{restored_groups}</b> مجموعة بنجاح."
+        )
+    except Exception as e:
+        print("[Restore Members Error]", e)
+        bot.reply_to(message, "تعذر استرجاع الملف. تأكد أنه ملف JSON صحيح أو نسخة قديمة من البوت.")
+    return True
+
+
+def send_admin_panel(chat_id, message_id=None):
+
+    if chat_id != DEVELOPER_ID:
+        return False
+
+    text = (
+        "🛡️ <b>لوحة أدمن البوت</b>\n"
+        "┈┅⊷━⊷┅┅┈\n"
+        "مرحبًا بك في لوحة التحكم الخاصة بالمطور.\n\n"
+        "من هنا يمكنك متابعة حالة البوت، المجموعات،\n"
+        "الردود التلقائية، وسجل الإجراءات.\n"
+        "┈┅⊷━⊷┅┅┈"
+    )
+
+    if message_id is not None:
+        try:
+            bot.edit_message_text(
+                text,
+                chat_id,
+                message_id,
+                reply_markup=admin_panel_markup()
+            )
+            return True
+        except Exception:
+            pass
+
+    bot.send_message(
+        chat_id,
+        text,
+        reply_markup=admin_panel_markup()
+    )
+    return True
+
+
+def admin_stats_text():
+
+    cursor.execute("SELECT COUNT(*) AS c FROM groups")
+    groups_count = cursor.fetchone()["c"]
+
+    cursor.execute("SELECT COUNT(*) AS c FROM group_users")
+    members_count = cursor.fetchone()["c"]
+
+    cursor.execute("SELECT COUNT(*) AS c FROM auto_replies")
+    replies_count = cursor.fetchone()["c"]
+
+    cursor.execute("SELECT COUNT(*) AS c FROM actions")
+    actions_count = cursor.fetchone()["c"]
+
+    return (
+        "📊 <b>إحصائيات البوت</b>\n"
+        "┈┅⊷━⊷┅┅┈\n"
+        f"👥 المجموعات: <code>{groups_count}</code>\n"
+        f"👤 الأعضاء المسجلون: <code>{members_count}</code>\n"
+        f"💬 الردود التلقائية: <code>{replies_count}</code>\n"
+        f"📝 إجراءات الإدارة: <code>{actions_count}</code>\n"
+        "┈┅⊷━⊷┅┅┈"
+    )
+
+
+def admin_groups_text():
+
+    cursor.execute(
+        "SELECT chat_id,title FROM groups ORDER BY rowid DESC LIMIT 30"
+    )
+    rows = cursor.fetchall()
+
+    if not rows:
+        return "👥 <b>المجموعات</b>\n┈┅⊷━⊷┅┅┈\nلا توجد مجموعات مسجلة حتى الآن."
+
+    lines = [
+        "👥 <b>المجموعات المسجلة</b>",
+        "┈┅⊷━⊷┅┅┈"
+    ]
+
+    for index, row in enumerate(rows, 1):
+        title = html.escape(row["title"] or "بدون اسم")
+        lines.append(
+            f"{index}. <b>{title}</b> — <code>{row['chat_id']}</code>"
+        )
+
+    return "\n".join(lines)
+
+
+def admin_replies_text():
+
+    cursor.execute(
+        "SELECT chat_id,trigger,button_enabled FROM auto_replies ORDER BY rowid DESC LIMIT 40"
+    )
+    rows = cursor.fetchall()
+
+    if not rows:
+        return "💬 <b>الردود التلقائية</b>\n┈┅⊷━⊷┅┅┈\nلا توجد ردود محفوظة."
+
+    lines = [
+        "💬 <b>آخر الردود التلقائية</b>",
+        "┈┅⊷━⊷┅┅┈"
+    ]
+
+    for index, row in enumerate(rows, 1):
+        trigger = html.escape(row["trigger"] or "")
+        has_button = "🔘" if row["button_enabled"] else "▫️"
+        lines.append(
+            f"{index}. <code>{trigger}</code> {has_button} — <code>{row['chat_id']}</code>"
+        )
+
+    return "\n".join(lines)
+
+
+def admin_actions_text():
+
+    cursor.execute(
+        "SELECT chat_id,admin_id,target_id,action,details,created_at FROM actions ORDER BY id DESC LIMIT 25"
+    )
+    rows = cursor.fetchall()
+
+    if not rows:
+        return "📝 <b>سجل الإجراءات</b>\n┈┅⊷━⊷┅┅┈\nلا يوجد سجل حتى الآن."
+
+    lines = [
+        "📝 <b>آخر إجراءات الإدارة</b>",
+        "┈┅⊷━⊷┅┅┈"
+    ]
+
+    for row in rows:
+        action = html.escape(row["action"] or "")
+        details = html.escape(row["details"] or "")
+        suffix = f" — {details}" if details else ""
+        lines.append(
+            f"• <b>{action}</b> — <code>{row['admin_id']}</code>{suffix}"
+        )
+
+    return "\n".join(lines)
+
+
+def send_admin_section(call, text):
+
+    if call.from_user.id != DEVELOPER_ID:
+        bot.answer_callback_query(
+            call.id,
+            "❌ هذه اللوحة للمطور فقط.",
+            show_alert=True
+        )
+        return
+
+    bot.answer_callback_query(call.id)
+
+    try:
+        bot.edit_message_text(
+            text,
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=admin_panel_markup()
+        )
+    except Exception:
+        bot.send_message(
+            call.message.chat.id,
+            text,
+            reply_markup=admin_panel_markup()
+        )
+
+
+# =========================================================
+# الاشتراك الإجباري للمجموعات
+# =========================================================
+def get_force_channels():
+    cursor.execute(
+        "SELECT * FROM force_sub_channels WHERE enabled=1 ORDER BY id"
+    )
+    return cursor.fetchall()
+
+
+def normalize_channel_ref(value):
+    value = (value or "").strip()
+    if value.startswith("https://t.me/"):
+        tail = value.split("https://t.me/", 1)[1].strip("/")
+        if tail and not tail.startswith("+"):
+            return "@" + tail.split("/", 1)[0]
+    if value.startswith("http://t.me/"):
+        tail = value.split("http://t.me/", 1)[1].strip("/")
+        if tail and not tail.startswith("+"):
+            return "@" + tail.split("/", 1)[0]
+    if value.startswith("@"): return value.split()[0]
+    if re.fullmatch(r"-100\d+", value): return value
+    if re.fullmatch(r"[A-Za-z0-9_]{4,}", value): return "@" + value
+    return value
+
+
+def add_force_channel(value):
+    ref = normalize_channel_ref(value)
+    if not ref:
+        return False, "أرسل @username أو رابط القناة العام."
+    try:
+        chat = bot.get_chat(ref)
+    except Exception as e:
+        return False, "تعذر الوصول للقناة. تأكد أن اليوزر صحيح وأن البوت موجود في القناة."
+    if chat.type != "channel":
+        return False, "المصدر المضاف يجب أن يكون قناة Telegram."
+    username = getattr(chat, "username", None) or ""
+    url = f"https://t.me/{username}" if username else ""
+    if not url:
+        return False, "القناة يجب أن تكون لها رابط عام @username حتى يستطيع المستخدم فتحها."
+    cursor.execute("""
+        INSERT INTO force_sub_channels(chat_id,username,title,url,button_text,emoji_id,enabled)
+        VALUES(?,?,?,?,?,?,1)
+        ON CONFLICT(chat_id) DO UPDATE SET
+            username=excluded.username,
+            title=excluded.title,
+            url=excluded.url,
+            enabled=1
+    """, (chat.id, username, chat.title or "", url, "Update MaX", CE_FORCE_SUB))
+    db.commit()
+    return True, chat.title or username
+
+
+def remove_force_channel(channel_id):
+    cursor.execute("DELETE FROM force_sub_channels WHERE id=?", (channel_id,))
+    db.commit()
+    return cursor.rowcount > 0
+
+
+def user_subscribed_to_channel(user_id, row):
+    try:
+        member = bot.get_chat_member(row["chat_id"], user_id)
+        return member.status in ("creator", "administrator", "member")
+    except Exception as e:
+        print("[Force Sub Check]", row["chat_id"], e)
+        return False
+
+
+def force_sub_missing(user_id):
+    missing = []
+    for row in get_force_channels():
+        if not user_subscribed_to_channel(user_id, row):
+            missing.append(row)
+    return missing
+
+
+def force_sub_markup(user_id, channels=None):
+    channels = channels if channels is not None else get_force_channels()
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    for row in channels:
+        subscribed = user_subscribed_to_channel(user_id, row)
+        channel_url = row["url"] or ""
+        channel_title = row["title"] or row["username"] or "الاشتراك"
+        if channel_url:
+            subscribe_btn = transparent_url_button(
+                "اشتراك " + channel_title[:18],
+                channel_url,
+                emoji_id=row["emoji_id"] or CE_FORCE_SUB
+            )
+            if subscribe_btn:
+                markup.row(
+                    subscribe_btn,
+                    button(
+                        "تم التحقق" if subscribed else "تحقق",
+                        callback_data=f"force_sub_check:{row['id']}",
+                        icon_custom_emoji_id=CE_FORCE_SUB
                     )
+                )
+        else:
+            markup.add(button(
+                "تم التحقق" if subscribed else "تحقق",
+                callback_data=f"force_sub_check:{row['id']}",
+                icon_custom_emoji_id=CE_FORCE_SUB
+            ))
 
-                    if path:
-                        possible_files.append(
-                            path
-                        )
+    update_btn = transparent_url_button("Update Max", UPDATE_MAX_URL, emoji_id=CE_REPLY_BUTTON)
+    if update_btn:
+        markup.add(update_btn)
+    return markup
 
-            for path in dict.fromkeys(
-                possible_files
+
+def send_force_sub_prompt(message, missing=None):
+    if not message.from_user:
+        return True
+    missing = missing if missing is not None else force_sub_missing(message.from_user.id)
+    if not missing:
+        return False
+    markup = force_sub_markup(message.from_user.id, get_force_channels())
+    text = (
+        "<b>الاشتراك الإجباري</b>\n"
+        "┈┅⊷━⊷┅┅┈\n"
+        "يجب الاشتراك في القنوات المطلوبة قبل الكتابة في المجموعة.\n"
+        "اضغط على الزر للاشتراك، ثم اضغط عليه مرة أخرى للتحقق."
+    )
+    try:
+        sent = bot.send_message(message.chat.id, text, reply_markup=markup)
+        Thread(target=lambda: (time.sleep(90), delete_message_safe(sent)), daemon=True).start()
+    except Exception as e:
+        print("[Force Sub Prompt]", e)
+    return True
+
+
+def enforce_force_subscription(message):
+    if (not message.from_user or message.from_user.is_bot or
+            message.chat.type not in ("group", "supergroup")):
+        return False
+    if not get_force_channels():
+        return False
+    # الإدارة والمالك مستثنون حتى لا يتعطل التحكم بالمجموعة.
+    if is_admin(message.chat.id, message.from_user.id):
+        return False
+    missing = force_sub_missing(message.from_user.id)
+    if not missing:
+        return False
+    delete_message_safe(message)
+    send_force_sub_prompt(message, missing)
+    return True
+
+
+def force_channels_admin_text():
+    rows = get_force_channels()
+    lines = ["<b>قنوات الاشتراك الإجباري</b>", "┈┅⊷━⊷┅┅┈"]
+    if not rows:
+        lines.append("لا توجد قنوات مضافة.")
+    else:
+        for i, row in enumerate(rows, 1):
+            lines.append(f"{i}. <b>{html.escape(row['title'] or row['username'] or '')}</b> — <code>{html.escape(row['username'] or '')}</code>")
+    return "\n".join(lines)
+
+
+def force_channels_admin_markup():
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.row(
+        button("إضافة قناة", callback_data="admin:force_add", style="primary", icon_custom_emoji_id=CE_FORCE_SUB),
+        button("حذف قناة", callback_data="admin:force_remove", style="danger", icon_custom_emoji_id=CE_ERROR)
+    )
+    markup.row(button("تحديث", callback_data="admin:force_channels", style="success", icon_custom_emoji_id=CE_REPLY_BUTTON))
+    markup.row(button("رجوع", callback_data="admin:open", style="primary", icon_custom_emoji_id=CE_COMMANDS))
+    return markup
+
+
+def send_force_channels_admin(chat_id, message_id=None):
+    text = force_channels_admin_text()
+    markup = force_channels_admin_markup()
+    if message_id is not None:
+        try:
+            bot.edit_message_text(text, chat_id, message_id, reply_markup=markup)
+            return True
+        except Exception:
+            pass
+    bot.send_message(chat_id, text, reply_markup=markup)
+    return True
+
+
+def force_remove_admin_markup():
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for row in get_force_channels():
+        markup.add(button(
+            f"حذف: {row['title'] or row['username']}",
+            callback_data=f"admin:force_delete:{row['id']}",
+            style="danger",
+            icon_custom_emoji_id=CE_ERROR
+        ))
+    markup.add(button("رجوع", callback_data="admin:force_channels", style="primary", icon_custom_emoji_id=CE_COMMANDS))
+    return markup
+
+
+# =========================================================
+# START الخاص
+# =========================================================
+def start_private(message):
+    user = message.from_user
+    safe_name = html.escape(full_name(user))
+
+    track_private_user(message, notify=True)
+
+    text = (
+        f"{tg_emoji(CE_WELCOME_HELLO, '•')} مرحبًـا يـ {safe_name}\n"
+        "┈┅⊷━⊷┅┅┈\n"
+        f"{tg_emoji(CE_WELCOME_INFO, '•')}هذا البوت مخصص لإدارة وحماية المجموعات بالكـامل.\n"
+        "┈┅⊷━⊷┅┅┈\n"
+        f"{tg_emoji(CE_WELCOME_INFO, '•')} اضـف البـوت فـي المجـموعـه الخـاصـه بـك وارفـعـه مشـرف مع جمـيع الصـلاحيـات."
+    )
+
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        button(
+            "اضفني لمجموعتك",
+            url=ADD_TO_GROUP_URL,
+            icon_custom_emoji_id=CE_ADD_TO_GROUP_REQUESTED
+        )
+    )
+    markup.add(
+        button(
+            "Update Max",
+            url=UPDATE_MAX_URL,
+            icon_custom_emoji_id=CE_REPLY_BUTTON
+        )
+    )
+
+    if user.id == DEVELOPER_ID:
+        markup.add(
+            button(
+                "لوحة الأدمن",
+                callback_data="admin:open",
+                icon_custom_emoji_id=CE_ADMIN
+            )
+        )
+
+    bot.send_message(message.chat.id, text, reply_markup=markup)
+
+
+# =========================================================
+# الحظر العام
+# =========================================================
+def enforce_global_ban(message):
+    if (
+        not message.from_user
+        or message.from_user.is_bot
+        or message.chat.type not in ("group", "supergroup")
+    ):
+        return False
+
+    if not is_global_banned(message.from_user.id):
+        return False
+
+    try:
+        if bot_is_admin(message.chat.id):
+            bot.ban_chat_member(
+                message.chat.id,
+                message.from_user.id
+            )
+            delete_message_safe(message)
+    except Exception as e:
+        print("[Global Ban Enforcement]", e)
+
+    return True
+
+
+# =========================================================
+# الأعضاء الجدد
+# =========================================================
+
+@bot.my_chat_member_handler()
+def bot_chat_membership_handler(message):
+    try:
+        new_status = getattr(getattr(message, "new_chat_member", None), "status", "")
+        old_status = getattr(getattr(message, "old_chat_member", None), "status", "")
+
+        if message.chat.type in ("group", "supergroup"):
+            if new_status in ("member", "administrator") and old_status in ("left", "kicked", ""):
+                ensure_group(message.chat)
+                notify_group_event("added", message)
+            elif new_status in ("left", "kicked") and old_status in ("member", "administrator", "creator"):
+                ensure_group(message.chat)
+                notify_group_event("removed", message)
+        elif message.chat.type == "private":
+            # فتح الخاص/إلغاء الحظر يُسجل كمستخدم.
+            if new_status in ("member", "administrator"):
+                track_private_user(message, notify=True)
+
+        print(f"[Bot Membership] {message.chat.id} old={old_status} new={new_status}")
+    except Exception as e:
+        print("[Group Tracking Error]", e)
+
+
+# النسخة الأصلية محفوظة كما هي دون تشغيلها، لضمان عدم فقد أي وظيفة/سطر من النسخة السابقة.
+def new_members_handler_legacy_original(message):
+
+    ensure_group(message.chat)
+
+    if not group_setting(
+        message.chat.id,
+        "welcome"
+    ):
+        return
+
+    names = []
+
+    for u in message.new_chat_members or []:
+
+        if u.is_bot:
+            continue
+
+        register_member(
+            message.chat.id,
+            u
+        )
+
+        names.append(
+            mention(u)
+        )
+
+    if not names:
+        return
+
+    text = (
+        "🎉 <b>أهلًا وسهلًا!</b>\n"
+        "┈┅⊷━⊷┅┅┈\n"
+        + "\n".join(names)
+        + "\n"
+        "┈┅⊷━⊷┅┅┈\n"
+        "❤️ نورتوا الجروب!"
+    )
+
+    markup = types.InlineKeyboardMarkup()
+
+    markup.row(
+        button(
+            "📖 الأوامر",
+            callback_data="show_commands",
+            style="primary"
+        ),
+
+        button(
+            "⚙️ الإعدادات",
+            callback_data="settings",
+            style="primary"
+        )
+    )
+
+    try:
+
+        sent = bot.send_message(
+            message.chat.id,
+            text,
+            reply_markup=markup
+        )
+
+        Thread(
+            target=lambda: (
+                time.sleep(60),
+                delete_message_safe(sent)
+            ),
+            daemon=True
+        ).start()
+
+    except Exception:
+        pass
+
+
+@bot.message_handler(
+    content_types=["new_chat_members"]
+)
+def new_members_handler(message):
+    ensure_group(message.chat)
+
+    # نُسجل كل عضو جديد حتى لو كان البوت سيغلق رسالة الترحيب لاحقًا.
+    for u in message.new_chat_members or []:
+        if u.is_bot:
+            register_known_bot(message.chat.id, u)
+            continue
+        register_member(message.chat.id, u)
+
+        if is_global_banned(u.id):
+            try:
+                if bot_is_admin(message.chat.id):
+                    bot.ban_chat_member(message.chat.id, u.id)
+            except Exception as e:
+                print("[Global Ban New Member]", e)
+            continue
+
+        if not group_setting(message.chat.id, "welcome"):
+            continue
+
+        safe_name = html.escape(full_name(u))
+        welcome_text = (
+            f"{tg_emoji(CE_WELCOME_HELLO, '•')} مرحبًـا يـ {safe_name}\n"
+            "┈┅⊷━⊷┅┅┈\n"
+            f"{tg_emoji(CE_WELCOME_INFO, '•')}هذا البوت مخصص لإدارة وحماية المجموعات بالكـامل.\n"
+            "┈┅⊷━⊷┅┅┈\n"
+            f"{tg_emoji(CE_WELCOME_INFO, '•')} اضـف البـوت فـي المجـموعـه الخـاصـه بـك وارفـعـه مشـرف مع جمـيع الصـلاحيـات."
+        )
+
+        markup = types.InlineKeyboardMarkup()
+        add_btn = transparent_url_button(
+            "اضفني لمجموعتك",
+            ADD_TO_GROUP_URL,
+            emoji_id=CE_ADD_TO_GROUP_REQUESTED
+        )
+        if add_btn:
+            markup.add(add_btn)
+        update_btn = transparent_url_button(
+            "Update Max",
+            UPDATE_MAX_URL,
+            emoji_id=CE_REPLY_BUTTON
+        )
+        if update_btn:
+            markup.add(update_btn)
+
+        try:
+            photos = bot.get_user_profile_photos(u.id, limit=1)
+            if photos.total_count:
+                sent = bot.send_photo(
+                    message.chat.id,
+                    photos.photos[0][-1].file_id,
+                    caption=welcome_text,
+                    reply_markup=markup
+                )
+            else:
+                sent = bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
+            Thread(
+                target=lambda m=sent: (time.sleep(60), delete_message_safe(m)),
+                daemon=True
+            ).start()
+        except Exception as e:
+            print("[Welcome Error]", e)
+            try:
+                sent = bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
+                Thread(
+                    target=lambda m=sent: (time.sleep(60), delete_message_safe(m)),
+                    daemon=True
+                ).start()
+            except Exception:
+                pass
+
+
+# =========================================================
+# التتبع والإذاعة وإدارة البوتات
+# =========================================================
+def track_private_user(message, notify=True):
+    if not message or not message.from_user or message.chat.type != "private":
+        return
+    u = message.from_user
+    ts = now()
+    cursor.execute("""
+        INSERT INTO bot_private_users(user_id,first_name,last_name,username,first_seen,last_seen)
+        VALUES(?,?,?,?,?,?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            first_name=excluded.first_name,
+            last_name=excluded.last_name,
+            username=excluded.username,
+            last_seen=excluded.last_seen
+    """, (u.id, u.first_name or "", u.last_name or "", u.username or "", ts, ts))
+    db.commit()
+
+    if not notify or u.id == DEVELOPER_ID:
+        return
+    cursor.execute("SELECT 1 FROM developer_notifications WHERE user_id=?", (u.id,))
+    if cursor.fetchone():
+        return
+    try:
+        notify_text = (
+            f"{tg_emoji(CE_ADMIN, '•')} مستخدم جديد استخدم البوت\n"
+            "┈┅⊷━⊷┅┅┈\n"
+            f"{tg_emoji(CE_PERSON, '•')} الاسم: <a href=\"tg://user?id={u.id}\">{html.escape(full_name(u))}</a>\n"
+            f"{tg_emoji(CE_USERNAME, '•')} اليوزر: {html.escape(username_text(u))}\n"
+            f"{tg_emoji(CE_ID, '•')} الايدي: <code>{u.id}</code>"
+        )
+        bot.send_message(DEVELOPER_ID, notify_text)
+        cursor.execute(
+            "INSERT OR REPLACE INTO developer_notifications(user_id,notified_at) VALUES(?,?)",
+            (u.id, ts)
+        )
+        db.commit()
+    except Exception as e:
+        print("[Developer User Notification]", e)
+
+
+def register_known_bot(chat_id, user):
+    if not user or not getattr(user, "is_bot", False):
+        return
+    cursor.execute("""
+        INSERT INTO known_bots(chat_id,user_id,first_name,username,discovered_at)
+        VALUES(?,?,?,?,?)
+        ON CONFLICT(chat_id,user_id) DO UPDATE SET
+            first_name=excluded.first_name,
+            username=excluded.username
+    """, (chat_id, user.id, user.first_name or "", user.username or "", now()))
+    db.commit()
+
+
+def notify_group_event(kind, message):
+    if not message or not message.from_user:
+        return
+    chat = message.chat
+    actor = message.from_user
+    label = "تمت إضافة البوت إلى مجموعة" if kind == "added" else "تمت إزالة البوت من مجموعة"
+    try:
+        text = (
+            f"{tg_emoji(CE_ADMIN, '•')} {label}\n"
+            "┈┅⊷━⊷┅┅┈\n"
+            f"{tg_emoji(CE_MEMBER, '•')} المجموعة: <b>{html.escape(chat.title or 'بدون اسم')}</b>\n"
+            f"{tg_emoji(CE_ID, '•')} ايدي المجموعة: <code>{chat.id}</code>\n"
+            f"{tg_emoji(CE_PERSON, '•')} بواسطة: <a href=\"tg://user?id={actor.id}\">{html.escape(full_name(actor))}</a>\n"
+            f"{tg_emoji(CE_USERNAME, '•')} اليوزر: {html.escape(username_text(actor))}"
+        )
+        bot.send_message(DEVELOPER_ID, text)
+    except Exception as e:
+        print("[Developer Group Notification]", e)
+
+
+def get_known_group_bots(chat_id):
+    bots = {}
+    try:
+        admins = bot.get_chat_administrators(chat_id)
+        for admin in admins:
+            if admin.user and admin.user.is_bot:
+                bots[admin.user.id] = admin.user
+                register_known_bot(chat_id, admin.user)
+    except Exception as e:
+        print("[Bots Admin Scan]", e)
+
+    cursor.execute("SELECT user_id,first_name,username FROM known_bots WHERE chat_id=?", (chat_id,))
+    for row in cursor.fetchall():
+        if row["user_id"] not in bots:
+            class _KnownBot:
+                pass
+            u = _KnownBot()
+            u.id = row["user_id"]
+            u.first_name = row["first_name"] or "Bot"
+            u.last_name = ""
+            u.username = row["username"] or ""
+            u.is_bot = True
+            bots[u.id] = u
+
+    # تأكد أن السجلات القديمة ما زالت تشير لأعضاء موجودين.
+    result = []
+    for u in list(bots.values()):
+        try:
+            m = bot.get_chat_member(chat_id, u.id)
+            if m and m.status not in ("left", "kicked"):
+                result.append(m.user)
+        except Exception:
+            # إذا تعذر الفحص، لا نعرض السجل القديم لتجنب نتائج وهمية.
+            pass
+    return result
+
+
+def format_bot_list(message):
+    bots = get_known_group_bots(message.chat.id)
+    if not bots:
+        return "لا توجد بوتات معروفة حاليًا في المجموعة. Telegram لا يتيح للبوتات قراءة قائمة جميع الأعضاء." 
+    lines = ["<b>البوتات الموجودة</b>", "┈┅⊷━⊷┅┅┈"]
+    for i, u in enumerate(bots, 1):
+        uname = f"@{html.escape(u.username)}" if getattr(u, "username", None) else "لا يوجد يوزر"
+        lines.append(f"{i}. <a href=\"tg://user?id={u.id}\">{html.escape(full_name(u))}</a> — {uname}")
+    return "\n".join(lines)
+
+
+def kick_all_known_bots(message):
+    bots = get_known_group_bots(message.chat.id)
+    if not bots:
+        bot.reply_to(message, "لا توجد بوتات معروفة يمكن طردها حاليًا.")
+        return True
+    me = bot.get_me()
+    kicked = 0
+    skipped = 0
+    for u in bots:
+        if u.id == me.id:
+            skipped += 1
+            continue
+        try:
+            member = bot.get_chat_member(message.chat.id, u.id)
+            if member.status == "administrator":
+                try:
+                    bot.promote_chat_member(
+                        message.chat.id, u.id,
+                        can_change_info=False,
+                        can_delete_messages=False,
+                        can_invite_users=False,
+                        can_restrict_members=False,
+                        can_pin_messages=False,
+                        can_manage_video_chats=False,
+                        can_manage_topics=False,
+                        can_promote_members=False
+                    )
+                except Exception:
+                    skipped += 1
+                    continue
+            if member.status == "creator":
+                skipped += 1
+                continue
+            kick_user(message.chat.id, u.id)
+            kicked += 1
+        except Exception as e:
+            print("[Kick Bot]", u.id, e)
+            skipped += 1
+    bot.reply_to(message, f"تم طرد <b>{kicked}</b> بوت. تعذر طرد <b>{skipped}</b>.")
+    return True
+
+
+def send_admins_list(message):
+    try:
+        admins = bot.get_chat_administrators(message.chat.id)
+    except Exception:
+        bot.reply_to(message, "تعذر جلب المشرفين حاليًا.")
+        return True
+    lines = ["<b>مشرفو المجموعة</b>", "┈┅⊷━⊷┅┅┈"]
+    for i, admin in enumerate(admins, 1):
+        u = admin.user
+        uname = f"@{html.escape(u.username)}" if u.username else "لا يوجد يوزر"
+        lines.append(
+            f"{i}. {tg_emoji(CE_ADMIN_USERNAME, '•')} "
+            f"<a href=\"tg://user?id={u.id}\">{html.escape(full_name(u))}</a> — {uname}"
+        )
+    bot.reply_to(message, "\n".join(lines))
+    return True
+
+
+def broadcast_recipients():
+    cursor.execute("SELECT user_id FROM bot_private_users")
+    private_ids = {int(r["user_id"]) for r in cursor.fetchall()}
+    cursor.execute("SELECT chat_id FROM groups")
+    group_ids = {int(r["chat_id"]) for r in cursor.fetchall()}
+    return sorted(private_ids | group_ids)
+
+
+def perform_broadcast(source_message, reply_markup=None):
+    recipients = broadcast_recipients()
+    ok = 0
+    failed = 0
+    for target_id in recipients:
+        if target_id == DEVELOPER_ID:
+            continue
+        try:
+            kwargs = {
+                "chat_id": target_id,
+                "from_chat_id": source_message.chat.id,
+                "message_id": source_message.message_id
+            }
+            if reply_markup is not None:
+                kwargs["reply_markup"] = reply_markup
+            bot.copy_message(**kwargs)
+            ok += 1
+            time.sleep(0.03)
+        except Exception as e:
+            failed += 1
+            print("[Broadcast]", target_id, e)
+    return ok, failed
+
+
+def start_broadcast(message):
+    admin_pending[message.from_user.id] = "broadcast_message"
+    bot.send_message(
+        message.chat.id,
+        "أرسل الآن رسالة الإذاعة بأي نوع يدعمه Telegram.\n"
+        "بعدها يمكنك إضافة زر شفاف للرابط مع Premium Emoji تلقائيًا."
+    )
+
+
+def broadcast_button_choice(uid):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.row(
+        button("شفاف", callback_data=f"broadcast_btn_yes:{uid}", icon_custom_emoji_id=CE_REPLY_BUTTON),
+        button("إرسال الآن", callback_data=f"broadcast_btn_no:{uid}", icon_custom_emoji_id=CE_REPLY_BUTTON)
+    )
+    return markup
+
+
+def start_global_reply(message):
+    token = secrets.token_hex(8)
+    reply_pending[token] = {
+        "chat_id": 0,
+        "initiator": message.from_user.id,
+        "trigger": "",
+        "step": "trigger",
+        "buttons": [],
+        "global": True
+    }
+    bot.send_message(message.chat.id, "أرسل الآن كلمة الرد العام.")
+
+# =========================================================
+# الراوتر
+# =========================================================
+@bot.message_handler(
+    content_types=[
+        "text",
+        "photo",
+        "video",
+        "document",
+        "audio",
+        "voice",
+        "sticker",
+        "animation",
+        "video_note",
+        "contact",
+        "location",
+        "poll"
+    ]
+)
+def main_handler(message):
+
+    try:
+
+        if (
+            message.from_user
+            and not message.from_user.is_bot
+        ):
+            register_user(
+                message,
+                True
+            )
+
+        if message.chat.type == "private":
+
+            if message.from_user:
+                track_private_user(message, notify=True)
+
+            if message.from_user and message.from_user.id == DEVELOPER_ID and admin_pending.get(message.from_user.id) == "broadcast_message":
+                admin_pending.pop(message.from_user.id, None)
+                broadcast_pending[message.from_user.id] = {"message": message}
+                bot.send_message(
+                    message.chat.id,
+                    "تم تجهيز رسالة الإذاعة. هل تريد إضافة زر شفاف؟",
+                    reply_markup=broadcast_button_choice(message.from_user.id)
+                )
+                return
+
+            if message.from_user and message.from_user.id == DEVELOPER_ID and message.from_user.id in admin_pending:
+                pending = admin_pending.get(message.from_user.id)
+                if pending == "broadcast_button_text":
+                    data = broadcast_pending.get(message.from_user.id)
+                    if not data:
+                        admin_pending.pop(message.from_user.id, None)
+                        bot.send_message(message.chat.id, "انتهت عملية الإذاعة. ابدأها من لوحة الأدمن مرة أخرى.")
+                        return
+                    text = strip_non_custom_emoji((message.text or "").strip()).strip()
+                    if not text:
+                        bot.send_message(message.chat.id, "أرسل اسم الزر بدون Emoji عادي؛ Premium Emoji يمكن إرساله وسيتم التقاطه تلقائيًا.")
+                        return
+                    data["button_text"] = text
+                    admin_pending[message.from_user.id] = "broadcast_button_url"
+                    bot.send_message(message.chat.id, "أرسل رابط الزر كاملًا. يدعم Telegram وhttp/https.")
+                    return
+
+                if pending == "broadcast_button_url":
+                    data = broadcast_pending.get(message.from_user.id)
+                    url = (message.text or "").strip()
+                    if not data:
+                        admin_pending.pop(message.from_user.id, None)
+                        bot.send_message(message.chat.id, "انتهت عملية الإذاعة.")
+                        return
+                    if not re.match(r"^(?:https?|tg)://\S+$", url, re.I):
+                        bot.send_message(message.chat.id, "أرسل رابطًا صالحًا يبدأ بـ https:// أو http:// أو tg://")
+                        return
+                    data["button_url"] = url
+                    admin_pending[message.from_user.id] = "broadcast_button_emoji"
+                    bot.send_message(message.chat.id, "أرسل Premium Emoji للزر، أو اكتب تخطي.")
+                    return
+
+                if pending == "broadcast_button_emoji":
+                    data = broadcast_pending.get(message.from_user.id)
+                    if not data:
+                        admin_pending.pop(message.from_user.id, None)
+                        bot.send_message(message.chat.id, "انتهت عملية الإذاعة.")
+                        return
+                    raw = (message.text or "").strip()
+                    emoji_id = extract_custom_emoji_id(message)
+                    if raw and clean_text(raw) in ("تخطي", "بدون", "لا"):
+                        emoji_id = ""
+                    data["button_emoji_id"] = emoji_id or ""
+                    admin_pending.pop(message.from_user.id, None)
+                    source = data["message"]
+                    b = transparent_url_button(data.get("button_text", "زر"), data.get("button_url", ""), data.get("button_emoji_id") or None)
+                    markup = types.InlineKeyboardMarkup()
+                    if b:
+                        markup.add(b)
+                    ok, failed = perform_broadcast(source, markup if markup.keyboard else None)
+                    broadcast_pending.pop(message.from_user.id, None)
+                    bot.send_message(message.chat.id, f"تمت الإذاعة إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
+                    return
+
+            if message.from_user and message.from_user.id == DEVELOPER_ID and message.document and admin_pending.get(message.from_user.id) == "restore_members":
+                admin_pending.pop(message.from_user.id, None)
+                restore_members_file(message)
+                return
+
+            if automatic_currency_conversion(message):
+                return
+
+            handle_private(message)
+            return
+
+        ensure_group(
+            message.chat
+        )
+
+        # تنفيذ الحظر العام قبل أي رد أو أمر آخر.
+        if enforce_global_ban(message):
+            return
+
+        if enforce_force_subscription(message):
+            return
+
+        if message.text and message.text.strip() == ".":
+            markup = types.InlineKeyboardMarkup()
+            btn = transparent_url_button(
+                "صلي علي النبي",
+                "https://t.me/LeaDeR_E"
+            )
+            if btn:
+                markup.add(btn)
+            bot.send_message(
+                message.chat.id,
+                "صلي علي النبي",
+                reply_markup=markup
+            )
+            return
+
+        if message.text and clean_text(message.text) == "بوت":
+            try:
+                me = bot.get_me()
+                bot_name = full_name(me)
+            except Exception:
+                bot_name = BOT_USERNAME
+
+            bot.send_message(
+                message.chat.id,
+                "تاارا اسمي "
+                + html.escape(bot_name)
+                + " متشوف "
+                + tg_emoji(CE_BOT_REPLY, "🤖")
+            )
+            return
+
+        if continue_reply_setup(message):
+            return
+
+        if automatic_currency_conversion(message):
+            return
+
+        if message.text:
+
+            command, argument = command_parts(
+                message
+            )
+
+            if (
+                command
+                and handle_command(
+                    message,
+                    command,
+                    argument
+                )
             ):
+                return
 
-                if os.path.exists(path):
+        if message.text:
+            saved_reply = get_auto_reply(
+                message.chat.id,
+                message.text
+            )
+            if saved_reply:
+                send_saved_auto_reply(message, saved_reply)
+                return
 
-                    return path
+        protection_engine(message)
 
-            # البحث عن أحدث ملف فيديو في temp عند عدم تطابق الاسم
-            temp_dir = gettempdir()
-            candidates = []
+    except Exception as e:
+        print("[Handler Error]", e)
 
-            for name in os.listdir(
-                temp_dir
-            ):
 
-                full_path = os.path.join(
-                    temp_dir,
-                    name
+def handle_private(message):
+
+    raw_text = (message.text or "").strip()
+
+    if (
+        message.from_user
+        and message.from_user.id == DEVELOPER_ID
+        and clean_text(raw_text) in (
+            "لوحة الادمن",
+            "لوحة الادمن",
+            "لوحه الادمن",
+            "admin",
+            "panel"
+        )
+    ):
+        send_admin_panel(message.chat.id)
+        return
+
+    if message.from_user and message.from_user.id == DEVELOPER_ID and message.from_user.id in admin_pending and message.text:
+        pending_action = admin_pending.get(message.from_user.id)
+        if pending_action == "force_add":
+            admin_pending.pop(message.from_user.id, None)
+            ok, result = add_force_channel(message.text)
+            if ok:
+                bot.send_message(message.chat.id, f"تمت إضافة القناة: <b>{html.escape(str(result))}</b>")
+                send_force_channels_admin(message.chat.id)
+            else:
+                bot.send_message(message.chat.id, f"تعذر الإضافة: {html.escape(str(result))}")
+            return
+
+    command, argument = command_parts(
+        message
+    )
+
+    if command == "start":
+
+        start_private(message)
+        return
+
+    if command in (
+        "الاوامر",
+        "مساعده"
+    ):
+        send_commands_menu(message)
+        return
+
+    if command == "ايدي":
+
+        bot.send_message(
+            message.chat.id,
+            f"🆔 <b>الـ ID الخاص بك:</b>\n"
+            f"<code>{message.from_user.id}</code>"
+        )
+
+        return
+
+    if command == "البوت":
+
+        bot.send_message(
+            message.chat.id,
+            "🤖 <b>بوت حماية وإدارة المجموعات</b>\n\n"
+            "⚡ Polling\n"
+            "💾 SQLite\n"
+            "🛡️ حماية وإدارة"
+        )
+
+        return
+
+    if command == "المطور":
+
+        mk = types.InlineKeyboardMarkup()
+
+        mk.add(
+            button(
+                "المطور",
+                url=f"tg://user?id={DEVELOPER_ID}",
+                style="success",
+                icon_custom_emoji_id=CE_OWNER_DEVELOPER
+            )
+        )
+
+        bot.send_message(
+            message.chat.id,
+            "👨‍💻 <b>مطور البوت</b>",
+            reply_markup=mk
+        )
+
+
+# =========================================================
+# معالجة الرتب
+# =========================================================
+def rank_action(
+    message,
+    action,
+    rank,
+    target
+):
+
+    chat_id = message.chat.id
+
+    actor = message.from_user
+
+    actor_rank = get_rank(
+        chat_id,
+        actor.id
+    )
+
+    target_rank = get_rank(
+        chat_id,
+        target.id
+    )
+
+    if not can_manage_rank(
+        actor_rank,
+        target_rank,
+        action
+    ):
+
+        return rank_command_error(
+            message,
+            f"❌ لا يمكنك {action} "
+            f"رتبة "
+            f"{RANK_NAMES.get(target_rank,target_rank)}.\n"
+            f"رتبتك: "
+            f"<b>{RANK_NAMES.get(actor_rank,actor_rank)}</b>"
+        )
+
+    if (
+        target.id == actor.id
+        and rank != "animal"
+    ):
+
+        return rank_command_error(
+            message,
+            "❌ لا يمكنك استخدام هذا الأمر على نفسك."
+        )
+
+    if (
+        rank == "assistant_owner"
+        and not is_creator(
+            chat_id,
+            actor.id
+        )
+    ):
+
+        return rank_command_error(
+            message,
+            "❌ رفع وتنزيل مساعد المالك للمالك فقط."
+        )
+
+    if (
+        rank == "manager"
+        and actor_rank not in (
+            "owner",
+            "assistant_owner"
+        )
+    ):
+
+        return rank_command_error(
+            message,
+            "❌ رفع المدير للمالك أو مساعد المالك فقط."
+        )
+
+    if (
+        rank == "admin"
+        and actor_rank not in (
+            "owner",
+            "assistant_owner",
+            "manager"
+        )
+    ):
+
+        return rank_command_error(
+            message,
+            "❌ لا يمكنك رفع أدمن."
+        )
+
+    if (
+        rank == "moderator"
+        and actor_rank not in (
+            "owner",
+            "assistant_owner",
+            "manager"
+        )
+    ):
+
+        return rank_command_error(
+            message,
+            "❌ لا يمكنك رفع مشرف."
+        )
+
+    if (
+        rank == "animal"
+        and actor_rank not in (
+            "owner",
+            "assistant_owner",
+            "manager"
+        )
+    ):
+
+        return rank_command_error(
+            message,
+            "❌ لا يمكنك رفع حيوان."
+        )
+
+    # رفع مشرف
+    if (
+        action == "رفع"
+        and rank == "moderator"
+    ):
+
+        token = secrets.token_hex(5)
+
+        pending_promotions[token] = {
+            "chat_id": chat_id,
+            "target": target,
+            "initiator": actor.id,
+            "rank": "moderator",
+            "permissions": set()
+        }
+
+        fake_call = type(
+            "C",
+            (),
+            {
+                "id": None,
+                "message": message
+            }
+        )()
+
+        moderator_panel(
+            fake_call,
+            token
+        )
+
+        return True
+
+    # الرفع
+    if action == "رفع":
+
+        if not bot_promote(
+            chat_id,
+            target.id,
+            rank
+        ):
+
+            return rank_command_error(
+                message,
+                "❌ فشل رفع الرتبة. "
+                "تأكد أن البوت أدمن ولديه "
+                "صلاحية إضافة مشرفين."
+            )
+
+        set_rank(
+            chat_id,
+            target.id,
+            rank
+        )
+
+        if rank != "moderator":
+            remove_rank_permissions(
+                chat_id,
+                target.id
+            )
+
+        log_action(
+            chat_id,
+            actor.id,
+            target.id,
+            "رفع " + RANK_NAMES[rank]
+        )
+
+        bot.reply_to(
+            message,
+            f"✅ تم رفع {mention(target)} "
+            f"إلى <b>{RANK_NAMES[rank]}</b>."
+        )
+
+        return True
+
+    # تنزيل
+    if target_rank != rank:
+
+        return rank_command_error(
+            message,
+            f"❌ المستخدم ليس برتبة "
+            f"<b>{RANK_NAMES[rank]}</b>."
+        )
+
+    remove_rank_permissions(
+        chat_id,
+        target.id
+    )
+
+    set_rank(
+        chat_id,
+        target.id,
+        "member"
+    )
+
+    if target_rank in (
+        "moderator",
+        "assistant_owner"
+    ):
+
+        if not bot_demote(
+            chat_id,
+            target.id
+        ):
+
+            set_rank(
+                chat_id,
+                target.id,
+                target_rank
+            )
+
+            return rank_command_error(
+                message,
+                "❌ فشل تنزيل المشرف من Telegram. "
+                "تأكد من صلاحيات البوت."
+            )
+
+    log_action(
+        chat_id,
+        actor.id,
+        target.id,
+        "تنزيل " + RANK_NAMES[rank]
+    )
+
+    bot.reply_to(
+        message,
+        f"✅ تم تنزيل {mention(target)} "
+        f"من رتبة <b>{RANK_NAMES[rank]}</b>."
+    )
+
+    return True
+
+
+# =========================================================
+# الأوامر الرئيسية
+# =========================================================
+def handle_command(
+    message,
+    command,
+    argument
+):
+
+    chat_id = message.chat.id
+
+    # أدوات المجموعة الخاصة بالبوتات والمشرفين.
+    if command in ("البوتات", "بوتات"):
+        return_command = format_bot_list(message)
+        bot.reply_to(message, return_command)
+        return True
+
+    if command in ("طرد_البوتات", "طردالبوتات"):
+        if not admin_required(message):
+            return True
+        return kick_all_known_bots(message)
+
+    if command == "المشرفين":
+        return send_admins_list(message)
+
+    # الأوامر
+    if command in (
+        "الاوامر",
+        "مساعده"
+    ):
+        send_commands_menu(message)
+        return True
+
+    # ايدي / معلوماتي
+    if command in (
+        "ايدي",
+        "معلوماتي"
+    ):
+
+        u = message.from_user
+
+        bot.reply_to(
+            message,
+            f"👤 {mention(u)}\n"
+            "┈┅⊷━⊷┅┅┈\n"
+            f"🆔 <code>{u.id}</code>\n"
+            "┈┅⊷━⊷┅┅┈\n"
+            f"👤 {html.escape(username_text(u))}"
+        )
+
+        return True
+
+    # كشف
+    if command == "كشف":
+
+        show_profile(
+            message,
+            get_target(
+                message,
+                argument
+            )
+        )
+
+        return True
+
+    # المالك
+    if command == "المالك":
+
+        owner_profile(
+            message
+        )
+
+        return True
+
+    # معلومات
+    if command == "معلومات":
+
+        try:
+            members = bot.get_chat_member_count(
+                chat_id
+            )
+
+        except Exception:
+            members = "غير معروف"
+
+        bot.reply_to(
+            message,
+            f"🏠 <b>معلومات المجموعة</b>\n"
+            "┈┅⊷━⊷┅┅┈\n"
+            f"📌 {html.escape(message.chat.title or '')}\n"
+            f"🆔 <code>{chat_id}</code>\n"
+            f"👥 <code>{members}</code>"
+        )
+
+        return True
+
+    # تحليل TON
+    if command == "تحليل_تون":
+        return send_ton_analysis(message)
+
+    # تحليل الدولار
+    if command == "تحليل_دولار":
+        return send_dollar_analysis(message)
+
+    # البوت
+    if command == "البوت":
+
+        bot.reply_to(
+            message,
+            "🤖 <b>بوت حماية متطور</b>\n"
+            "💾 SQLite\n"
+            "🛡️ حماية روابط وكلمات ووسائط\n"
+            "⚠️ نظام تحذيرات\n"
+            "👑 نظام رتب"
+        )
+
+        return True
+
+    # المطور
+    if command == "المطور":
+
+        mk = types.InlineKeyboardMarkup()
+
+        mk.add(
+            button(
+                "المطور",
+                url=f"tg://user?id={DEVELOPER_ID}",
+                style="success",
+                icon_custom_emoji_id=CE_OWNER_DEVELOPER
+            )
+        )
+
+        bot.reply_to(
+            message,
+            "👨‍💻 <b>مطور البوت</b>",
+            reply_markup=mk
+        )
+
+        return True
+
+    # أوامر الرتب
+    if command in (
+        "رفع",
+        "تنزيل"
+    ):
+
+        arg = clean_text(
+            argument
+        )
+
+        rank_alias = {
+            "مساعد المالك": "assistant_owner",
+            "مدير": "manager",
+            "ادمن": "admin",
+            "ادمـن": "admin",
+            "مشرف": "moderator",
+            "حيوان": "animal"
+        }
+
+        found = None
+        target_arg = ""
+
+        for label, rank in rank_alias.items():
+
+            if arg == label:
+
+                found = rank
+                target_arg = ""
+                break
+
+            prefix = label + " "
+
+            if arg.startswith(prefix):
+
+                found = rank
+
+                target_arg = argument[
+                    len(label):
+                ].strip()
+
+                break
+
+        if found:
+
+            target = get_target(
+                message,
+                target_arg
+            )
+
+            if not target:
+
+                bot.reply_to(
+                    message,
+                    "❌ استخدم الأمر بالرد على "
+                    "المستخدم أو اكتب @username أو ID."
                 )
 
-                if not os.path.isfile(
-                    full_path
-                ):
-                    continue
+                return True
 
-                if name.endswith(
-                    (
-                        ".mp4",
-                        ".mkv",
-                        ".webm",
-                        ".mov"
-                    )
-                ):
+            return rank_action(
+                message,
+                command,
+                found,
+                target
+            )
 
+    # الردود التلقائية
+    if command == "اضف_رد":
+        return start_add_reply(message, argument)
+
+    if command == "حذف_رد":
+        if not argument:
+            bot.reply_to(message, "❌ اكتب الكلمة التي تريد حذف ردها.")
+            return True
+        if delete_auto_reply(chat_id, argument):
+            bot.reply_to(message, f"✅ تم حذف رد <code>{html.escape(argument)}</code>.")
+        else:
+            bot.reply_to(message, "❌ لا يوجد رد محفوظ بهذه الكلمة.")
+        return True
+
+    if command == "قائمة_الردود":
+        cursor.execute("SELECT trigger FROM auto_replies WHERE chat_id=? ORDER BY trigger COLLATE NOCASE", (chat_id,))
+        rows = cursor.fetchall()
+        text = "📋 <b>الردود التلقائية</b>\n┈┅⊷━⊷┅┅┈\n"
+        text += "\n".join(f"• <code>{html.escape(r['trigger'])}</code>" for r in rows) if rows else "لا توجد ردود تلقائية محفوظة."
+        bot.reply_to(message, text)
+        return True
+
+    # أوامر الإدارة
+    admin_commands = {
+        "حظر",
+        "حظرعام",
+        "فك",
+        "فكحظر",
+        "طرد",
+        "كتم",
+        "فككتم",
+        "تحذير",
+        "تحذيرات",
+        "مسح",
+        "الغاء",
+        "قفل",
+        "فتح",
+        "منع",
+        "احصائيات",
+        "السجل",
+        "الاعدادات"
+    }
+
+    if (
+        command in admin_commands
+        and not admin_required(message)
+    ):
+        return True
+
+    actor_rank = get_rank(
+        chat_id,
+        message.from_user.id
+    )
+
+    # حظر عام
+    if command == "حظرعام":
+
+        t = get_target(
+            message,
+            argument
+        )
+
+        if not t:
+            bot.reply_to(
+                message,
+                "❌ استخدم الأمر: حظر عام بالرد أو حظر عام ID أو @username."
+            )
+            return True
+
+        if target_protected(message, t) or t.id == DEVELOPER_ID:
+            bot.reply_to(
+                message,
+                "❌ لا يمكنك تنفيذ الحظر العام على هذا المستخدم."
+            )
+            return True
+
+        try:
+            success, skipped = global_ban_user(
+                t.id,
+                message.from_user.id
+            )
+
+            log_action(
+                chat_id,
+                message.from_user.id,
+                t.id,
+                "حظر عام",
+                f"groups={success};skipped={skipped}"
+            )
+
+            bot.reply_to(
+                message,
+                f"🚫 تم الحظر العام لـ {mention(t)}.\n"
+                f"تم الحظر في {success} مجموعة، وتعذر التنفيذ في {skipped} مجموعة."
+            )
+
+        except Exception as e:
+            print("[Global Ban Error]", e)
+            bot.reply_to(
+                message,
+                "❌ فشل تنفيذ الحظر العام."
+            )
+
+        return True
+
+    # حظر
+    if command == "حظر":
+
+        t = get_target(
+            message,
+            argument
+        )
+
+        if not t:
+
+            bot.reply_to(
+                message,
+                "❌ استخدم الأمر بالرد "
+                "أو @username أو ID."
+            )
+
+            return True
+
+        if (
+            target_protected(message, t)
+            or target_is_admin(
+                chat_id,
+                t.id
+            )
+        ):
+
+            bot.reply_to(
+                message,
+                "❌ لا يمكنك حظر هذا "
+                "المستخدم بسبب رتبته."
+            )
+
+            return True
+
+        try:
+
+            ban_user(
+                chat_id,
+                t.id
+            )
+
+            log_action(
+                chat_id,
+                message.from_user.id,
+                t.id,
+                "حظر"
+            )
+
+            bot.reply_to(
+                message,
+                f"🚫 تم حظر {mention(t)}."
+            )
+
+        except Exception:
+
+            bot.reply_to(
+                message,
+                "❌ فشل الحظر."
+            )
+
+        return True
+
+    # فك الحظر
+    if command in (
+        "فك",
+        "فكحظر"
+    ):
+
+        t = get_target(
+            message,
+            argument
+        )
+
+        if not t:
+
+            bot.reply_to(
+                message,
+                "❌ استخدم الأمر بالرد أو ID."
+            )
+
+            return True
+
+        try:
+
+            unban_user(
+                chat_id,
+                t.id
+            )
+
+            log_action(
+                chat_id,
+                message.from_user.id,
+                t.id,
+                "فك حظر"
+            )
+
+            bot.reply_to(
+                message,
+                f"✅ تم فك حظر {mention(t)}."
+            )
+
+        except Exception:
+
+            bot.reply_to(
+                message,
+                "❌ لم أستطع فك الحظر."
+            )
+
+        return True
+
+    # طرد
+    if command == "طرد":
+
+        t = get_target(
+            message,
+            argument
+        )
+
+        if not t:
+
+            bot.reply_to(
+                message,
+                "❌ استخدم الأمر بالرد."
+            )
+
+            return True
+
+        if (
+            target_protected(message, t)
+            or target_is_admin(
+                chat_id,
+                t.id
+            )
+        ):
+
+            bot.reply_to(
+                message,
+                "❌ لا يمكنك طرد هذا المستخدم."
+            )
+
+            return True
+
+        try:
+
+            kick_user(
+                chat_id,
+                t.id
+            )
+
+            log_action(
+                chat_id,
+                message.from_user.id,
+                t.id,
+                "طرد"
+            )
+
+            bot.reply_to(
+                message,
+                f"👢 تم طرد {mention(t)}."
+            )
+
+        except Exception:
+
+            bot.reply_to(
+                message,
+                "❌ فشل الطرد."
+            )
+
+        return True
+
+    # كتم وفك كتم
+    if command in (
+        "كتم",
+        "فككتم"
+    ):
+
+        t = get_target(
+            message,
+            argument
+        )
+
+        if not t:
+
+            bot.reply_to(
+                message,
+                "❌ استخدم الأمر بالرد."
+            )
+
+            return True
+
+        if (
+            command == "كتم"
+            and target_protected(
+                message,
+                t
+            )
+        ):
+
+            bot.reply_to(
+                message,
+                "❌ لا يمكنك كتم هذه الرتبة."
+            )
+
+            return True
+
+        try:
+
+            if command == "كتم":
+                mute_user(
+                    chat_id,
+                    t.id
+                )
+            else:
+                unmute_user(
+                    chat_id,
+                    t.id
+                )
+
+            log_action(
+                chat_id,
+                message.from_user.id,
+                t.id,
+                command
+            )
+
+            bot.reply_to(
+                message,
+                (
+                    "🔇 تم كتم "
+                    if command == "كتم"
+                    else "🔊 تم فك كتم "
+                )
+                + mention(t)
+                + "."
+            )
+
+        except Exception:
+
+            bot.reply_to(
+                message,
+                "❌ تعذر تنفيذ الأمر."
+            )
+
+        return True
+
+    # تحذير
+    if command == "تحذير":
+
+        t = get_target(
+            message,
+            argument
+        )
+
+        if not t:
+
+            bot.reply_to(
+                message,
+                "❌ استخدم الأمر بالرد."
+            )
+
+            return True
+
+        if target_protected(
+            message,
+            t
+        ):
+
+            bot.reply_to(
+                message,
+                "❌ لا يمكنك تحذير هذه الرتبة."
+            )
+
+            return True
+
+        bot.reply_to(
+            message,
+            add_warning(
+                message,
+                t
+            )
+        )
+
+        return True
+
+    # التحذيرات
+    if command == "تحذيرات":
+
+        t = (
+            get_target(
+                message,
+                argument
+            )
+            or message.from_user
+        )
+
+        row = get_group(chat_id)
+
+        mx = (
+            row["max_warnings"]
+            if row
+            else 3
+        )
+
+        bot.reply_to(
+            message,
+            f"⚠️ <b>تحذيرات {mention(t)}</b>\n"
+            f"📊 <code>"
+            f"{get_warnings(chat_id,t.id)}"
+            f"/{mx}</code>"
+        )
+
+        return True
+
+    # مسح التحذيرات
+    if (
+        command == "مسح"
+        and clean_text(argument) == "التحذيرات"
+    ):
+
+        t = get_target(
+            message,
+            ""
+        )
+
+        if not t:
+
+            bot.reply_to(
+                message,
+                "❌ استخدم الأمر بالرد."
+            )
+
+            return True
+
+        set_warnings(
+            chat_id,
+            t.id,
+            0
+        )
+
+        log_action(
+            chat_id,
+            message.from_user.id,
+            t.id,
+            "مسح التحذيرات"
+        )
+
+        bot.reply_to(
+            message,
+            "✅ تم مسح التحذيرات."
+        )
+
+        return True
+
+    # الغاء
+    if command == "الغاء":
+
+        a = clean_text(
+            argument
+        )
+
+        if a == "تحذير":
+
+            t = get_target(
+                message,
+                ""
+            )
+
+            if not t:
+
+                bot.reply_to(
+                    message,
+                    "❌ استخدم الأمر بالرد."
+                )
+
+                return True
+
+            set_warnings(
+                chat_id,
+                t.id,
+                max(
+                    0,
+                    get_warnings(
+                        chat_id,
+                        t.id
+                    ) - 1
+                )
+            )
+
+            bot.reply_to(
+                message,
+                "✅ تم إلغاء تحذير."
+            )
+
+            return True
+
+        if a.startswith("منع كلمه "):
+
+            word = argument.split(
+                maxsplit=2
+            )[2].strip().lower()
+
+            cursor.execute(
+                """
+                DELETE FROM blacklist
+                WHERE chat_id=? AND word=?
+                """,
+                (
+                    chat_id,
+                    word
+                )
+            )
+
+            db.commit()
+
+            bot.reply_to(
+                message,
+                "✅ تم إلغاء منع "
+                f"<code>{html.escape(word)}</code>"
+            )
+
+            return True
+
+    # قفل وفتح
+    if command in (
+        "قفل",
+        "فتح"
+    ):
+
+        a = clean_text(
+            argument
+        )
+
+        lm = {
+            "الروابط": "links",
+            "الصور": "photos",
+            "الفيديو": "videos",
+            "الملفات": "documents",
+            "الملصقات": "stickers",
+            "الصوت": "audio",
+            "المتحركات": "animations",
+            "التكرار": "repeat_messages"
+        }
+
+        if a == "الكل":
+
+            all_locks(
+                chat_id,
+                command == "قفل"
+            )
+
+            bot.reply_to(
+                message,
+                (
+                    "🔒 تم قفل الكل."
+                    if command == "قفل"
+                    else
+                    "🔓 تم فتح الكل."
+                )
+            )
+
+            return True
+
+        if a in (
+            "حمايه الجدد",
+            "حماية الجدد"
+        ):
+
+            set_group_setting(
+                chat_id,
+                "new_member_protection",
+                command == "قفل"
+            )
+
+            bot.reply_to(
+                message,
+                (
+                    "🔒 تم تفعيل حماية الجدد."
+                    if command == "قفل"
+                    else
+                    "🔓 تم تعطيل حماية الجدد."
+                )
+            )
+
+            return True
+
+        if a in lm:
+
+            set_group_setting(
+                chat_id,
+                lm[a],
+                command == "قفل"
+            )
+
+            bot.reply_to(
+                message,
+                (
+                    "🔒 تم قفل "
+                    if command == "قفل"
+                    else
+                    "🔓 تم فتح "
+                )
+                + argument
+                + "."
+            )
+
+            return True
+
+    # منع كلمة
+    if command == "منع":
+
+        a = argument.strip()
+
+        if clean_text(a).startswith(
+            "كلمه "
+        ):
+
+            a = a.split(
+                maxsplit=1
+            )[1]
+
+        if not a:
+
+            bot.reply_to(
+                message,
+                "❌ اكتب الكلمة."
+            )
+
+            return True
+
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO blacklist(
+                chat_id,
+                word
+            )
+            VALUES(?,?)
+            """,
+            (
+                chat_id,
+                a.lower()
+            )
+        )
+
+        db.commit()
+
+        bot.reply_to(
+            message,
+            "🚫 تمت إضافة "
+            f"<code>{html.escape(a)}</code>"
+        )
+
+        return True
+
+    # قائمة الكلمات
+    if (
+        command == "قائمة"
+        and clean_text(argument) == "الكلمات"
+    ):
+
+        cursor.execute(
+            """
+            SELECT word
+            FROM blacklist
+            WHERE chat_id=?
+            """,
+            (chat_id,)
+        )
+
+        words = [
+            r["word"]
+            for r in cursor.fetchall()
+        ]
+
+        bot.reply_to(
+            message,
+            "📋 <b>الكلمات الممنوعة</b>\n"
+            "┈┅⊷━⊷┅┅┈\n"
+            + (
+                "\n".join(
+                    "🚫 " + html.escape(w)
+                    for w in words
+                )
+                if words
+                else
+                "لا توجد كلمات ممنوعة."
+            )
+        )
+
+        return True
+
+    # الاحصائيات
+    if command == "احصائيات":
+
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) users,
+                COALESCE(
+                    SUM(messages),
+                    0
+                ) messages
+            FROM group_users
+            WHERE chat_id=?
+            """,
+            (chat_id,)
+        )
+
+        s = cursor.fetchone()
+
+        cursor.execute(
+            """
+            SELECT COUNT(*) n
+            FROM blacklist
+            WHERE chat_id=?
+            """,
+            (chat_id,)
+        )
+
+        w = cursor.fetchone()["n"]
+
+        cursor.execute(
+            """
+            SELECT COUNT(*) n
+            FROM actions
+            WHERE chat_id=?
+            """,
+            (chat_id,)
+        )
+
+        a = cursor.fetchone()["n"]
+
+        bot.reply_to(
+            message,
+            "📊 <b>إحصائيات المجموعة</b>\n"
+            "┈┅⊷━⊷┅┅┈\n"
+            f"👥 <code>{s['users']}</code>\n"
+            f"💬 <code>{s['messages']}</code>\n"
+            f"🚫 <code>{w}</code>\n"
+            f"📝 <code>{a}</code>"
+        )
+
+        return True
+
+    # السجل
+    if command == "السجل":
+
+        cursor.execute(
+            """
+            SELECT *
+            FROM actions
+            WHERE chat_id=?
+            ORDER BY id DESC
+            LIMIT 20
+            """,
+            (chat_id,)
+        )
+
+        rows = cursor.fetchall()
+
+        if not rows:
+
+            bot.reply_to(
+                message,
+                "📝 لا يوجد سجل."
+            )
+
+            return True
+
+        lines = [
+            "📝 <b>آخر إجراءات الإدارة</b>",
+            "┈┅⊷━⊷┅┅┈"
+        ]
+
+        for r in rows:
+
+            lines.append(
+                f"• <b>"
+                f"{html.escape(r['action'] or '')}"
+                f"</b> — "
+                f"<code>{r['admin_id']}</code>"
+            )
+
+        bot.reply_to(
+            message,
+            "\n".join(lines)
+        )
+
+        return True
+
+    # الإعدادات
+    if command == "الاعدادات":
+
+        send_settings(
+            message
+        )
+
+        return True
+
+    return False
+
+
+# =========================================================
+# Callbacks
+# =========================================================
+@bot.callback_query_handler(
+    func=lambda call: True
+)
+def callbacks(call):
+
+    try:
+
+        if not call.message:
+            return
+
+        chat_id = call.message.chat.id
+        uid = call.from_user.id
+
+        # لوحة الأدمن الخاصة بالمطور
+        if call.data == "admin:open":
+            if uid != DEVELOPER_ID or chat_id != DEVELOPER_ID:
+                bot.answer_callback_query(
+                    call.id,
+                    "❌ لوحة الأدمن للمطور فقط.",
+                    show_alert=True
+                )
+                return
+
+            bot.answer_callback_query(call.id)
+            send_admin_panel(chat_id, call.message.message_id)
+            return
+
+        if call.data.startswith("admin:"):
+            if uid != DEVELOPER_ID or chat_id != DEVELOPER_ID:
+                bot.answer_callback_query(
+                    call.id,
+                    "❌ لوحة الأدمن للمطور فقط.",
+                    show_alert=True
+                )
+                return
+
+            action = call.data.split(":", 1)[1]
+
+            if action in ("refresh", "open"):
+                bot.answer_callback_query(call.id)
+                send_admin_panel(chat_id, call.message.message_id)
+                return
+
+            if action == "stats":
+                send_admin_section(call, admin_stats_text())
+                return
+
+            if action == "groups":
+                send_admin_section(call, admin_groups_text())
+                return
+
+            if action == "replies":
+                send_admin_section(call, admin_replies_text())
+                return
+
+            if action == "actions":
+                send_admin_section(call, admin_actions_text())
+                return
+
+            if action == "broadcast":
+                admin_pending[uid] = "broadcast_message"
+                bot.answer_callback_query(call.id)
+                bot.send_message(
+                    chat_id,
+                    "أرسل الآن رسالة الإذاعة بأي نوع يدعمه Telegram.\nسيتم الحفاظ على النص والتنسيق والروابط وPremium Emoji والوسائط."
+                )
+                return
+
+            if action == "global_reply":
+                bot.answer_callback_query(call.id)
+                start_global_reply(call.message)
+                return
+
+            if action == "export":
+                bot.answer_callback_query(call.id, "جاري تجهيز النسخة...")
+                export_members_file(chat_id)
+                return
+
+            if action == "restore":
+                admin_pending[uid] = "restore_members"
+                bot.answer_callback_query(call.id)
+                bot.send_message(chat_id, "أرسل الآن ملف JSON الذي تم تصديره من البوت لاسترجاع الأعضاء.")
+                return
+
+            if action == "control":
+                bot.answer_callback_query(call.id)
+                bot.edit_message_text(admin_control_text(), chat_id, call.message.message_id, reply_markup=admin_control_markup())
+                return
+
+            if action == "force_channels":
+                bot.answer_callback_query(call.id)
+                send_force_channels_admin(chat_id, call.message.message_id)
+                return
+
+            if action == "force_add":
+                admin_pending[uid] = "force_add"
+                bot.answer_callback_query(call.id)
+                bot.send_message(chat_id, "أرسل @username القناة أو رابطها العام لإضافتها للاشتراك الإجباري.")
+                return
+
+            if action == "force_remove":
+                bot.answer_callback_query(call.id)
+                bot.edit_message_text(force_channels_admin_text(), chat_id, call.message.message_id, reply_markup=force_remove_admin_markup())
+                return
+
+            if action.startswith("force_delete:"):
+                try:
+                    channel_id = int(action.split(":",1)[1])
+                    remove_force_channel(channel_id)
+                    bot.answer_callback_query(call.id, "تم حذف القناة")
+                    send_force_channels_admin(chat_id, call.message.message_id)
+                except Exception:
+                    bot.answer_callback_query(call.id, "تعذر حذف القناة", show_alert=True)
+                return
+
+            if action == "close":
+                bot.answer_callback_query(call.id, "تم إغلاق لوحة الأدمن")
+                try:
+                    bot.delete_message(chat_id, call.message.message_id)
+                except Exception:
                     try:
-                        candidates.append(
-                            (
-                                os.path.getmtime(
-                                    full_path
-                                ),
-                                full_path
-                            )
+                        bot.edit_message_text(
+                            "✅ تم إغلاق لوحة الأدمن.",
+                            chat_id,
+                            call.message.message_id
                         )
                     except Exception:
                         pass
+                return
 
-            if candidates:
-                candidates.sort(
-                    reverse=True
+        # إعداد زر شفاف للإذاعة.
+        if call.data.startswith("broadcast_btn_yes:"):
+            try:
+                target_uid = int(call.data.split(":", 1)[1])
+            except Exception:
+                target_uid = -1
+            if uid != DEVELOPER_ID or target_uid != uid or uid not in broadcast_pending:
+                bot.answer_callback_query(call.id, "هذه العملية ليست لك أو انتهت.", show_alert=True)
+                return
+            admin_pending[uid] = "broadcast_button_text"
+            bot.answer_callback_query(call.id)
+            bot.send_message(chat_id, "أرسل اسم الزر الشفاف.")
+            return
+
+        if call.data.startswith("broadcast_btn_no:"):
+            try:
+                target_uid = int(call.data.split(":", 1)[1])
+            except Exception:
+                target_uid = -1
+            data = broadcast_pending.get(uid)
+            if uid != DEVELOPER_ID or target_uid != uid or not data:
+                bot.answer_callback_query(call.id, "هذه العملية ليست لك أو انتهت.", show_alert=True)
+                return
+            admin_pending.pop(uid, None)
+            source = data["message"]
+            broadcast_pending.pop(uid, None)
+            bot.answer_callback_query(call.id, "جاري الإرسال...")
+            ok, failed = perform_broadcast(source)
+            bot.send_message(chat_id, f"تمت الإذاعة إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
+            return
+
+        # فحص الاشتراك الإجباري: نفس الزر يفتح القناة عند عدم الاشتراك، ويتحول للأخضر بعد الاشتراك.
+        if call.data.startswith("force_sub_check:"):
+            try:
+                channel_id = int(call.data.split(":", 1)[1])
+                cursor.execute("SELECT * FROM force_sub_channels WHERE id=? AND enabled=1", (channel_id,))
+                row = cursor.fetchone()
+                if not row:
+                    bot.answer_callback_query(call.id, "القناة لم تعد موجودة.", show_alert=True)
+                    return
+                if user_subscribed_to_channel(uid, row):
+                    bot.answer_callback_query(call.id, "تم التحقق من الاشتراك.")
+                    try:
+                        bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=force_sub_markup(uid))
+                    except Exception:
+                        pass
+                else:
+                    bot.answer_callback_query(call.id, "لم يتم التحقق بعد. اشترك أولًا ثم اضغط تحقق.", url=row["url"] or None)
+                return
+            except Exception as e:
+                print("[Force Sub Callback]", e)
+                bot.answer_callback_query(call.id, "تعذر التحقق الآن.", show_alert=True)
+                return
+
+        # اختيار إضافة زر للرد
+        if call.data.startswith("replybtn_yes:"):
+
+            token = call.data.split(":", 1)[1]
+            p = reply_pending.get(token)
+
+            if not p or p.get("initiator") != uid:
+                bot.answer_callback_query(
+                    call.id,
+                    "❌ هذه العملية ليست لك أو انتهت.",
+                    show_alert=True
+                )
+                return
+
+            continue_reply_button_setup(call, token)
+            return
+
+        if call.data.startswith("replybtn_more_yes:"):
+            token = call.data.split(":", 1)[1]
+            p = reply_pending.get(token)
+            if not p or p.get("initiator") != uid:
+                bot.answer_callback_query(call.id, "❌ هذه العملية ليست لك أو انتهت.", show_alert=True)
+                return
+            p["step"] = "button_text"
+            bot.answer_callback_query(call.id)
+            bot.send_message(
+                chat_id,
+                "🔘 أرسل اسم الزر التالي.\nيمكنك إرسال Premium Emoji داخل الرسالة وسيتم التقاطه تلقائيًا."
+            )
+            return
+
+        if call.data.startswith("replybtn_more_no:"):
+            token = call.data.split(":", 1)[1]
+            p = reply_pending.get(token)
+            if not p or p.get("initiator") != uid:
+                bot.answer_callback_query(call.id, "❌ هذه العملية ليست لك أو انتهت.", show_alert=True)
+                return
+            _save_pending_reply(token, with_buttons=True)
+            bot.answer_callback_query(call.id, "✅ تم حفظ الرد والأزرار")
+            try:
+                bot.edit_message_text(
+                    "✅ تم حفظ الرد وكل الأزرار بنجاح.",
+                    chat_id,
+                    call.message.message_id
+                )
+            except Exception:
+                pass
+            return
+
+        if call.data.startswith("replybtn_no:"):
+
+            token = call.data.split(":", 1)[1]
+            finalize_reply_without_button(call, token)
+            return
+
+        # قائمة الأوامر
+        if call.data == "show_commands":
+
+            bot.answer_callback_query(
+                call.id
+            )
+
+            owner = get_owner_user(
+                chat_id
+            )
+
+            mk = types.InlineKeyboardMarkup()
+
+            if owner:
+
+                mk.add(
+                    button(
+                        full_name(owner)[:30],
+                        url=f"tg://user?id={owner.id}",
+                        style="primary",
+                        icon_custom_emoji_id=CE_OWNER_DEVELOPER
+                    )
                 )
 
-                return candidates[0][1]
-
-            raise FileNotFoundError(
-                "لم يتم العثور على الملف بعد التحميل."
+            bot.send_message(
+                chat_id,
+                "📚 <b>قائمة أوامر البوت</b>\n┈┅⊷━⊷┅┅┈\nاختر القسم الذي تريد أوامره:",
+                reply_markup=commands_menu_markup()
             )
 
-    facebook_mode = is_facebook_url(url)
+            return
 
-    try:
-
-        return extract_and_find_file(
-            facebook_mode=facebook_mode
-        )
-
-    except Exception as e:
-
-        error_text = str(e).lower()
-
-        # YouTube يتغير باستمرار؛ إعادة المحاولة بعد تحديث yt-dlp
-        youtube_error = (
-            "youtube" in url.lower()
-            and (
-                "sign in to confirm" in error_text
-                or "confirm you’re not a bot" in error_text
-                or "confirm you're not a bot" in error_text
-                or "requested format is not available" in error_text
-                or "unable to extract" in error_text
-                or "nsig" in error_text
-                or "signature" in error_text
-                or "po token" in error_text
-                or "player response" in error_text
-                or "http error 403" in error_text
+        if call.data.startswith("cmdcat:"):
+            category = call.data.split(":", 1)[1]
+            bot.answer_callback_query(call.id)
+            if category == "home":
+                bot.edit_message_text(
+                    "📚 <b>قائمة أوامر البوت</b>\n┈┅⊷━⊷┅┅┈\nاختر القسم الذي تريد أوامره:",
+                    chat_id, call.message.message_id,
+                    reply_markup=commands_menu_markup()
+                )
+                return
+            if category == "all":
+                text = commands_text(get_owner_user(chat_id))
+            else:
+                text = command_category_text(category)
+            bot.edit_message_text(
+                text, chat_id, call.message.message_id,
+                reply_markup=commands_back_markup()
             )
-        )
+            return
 
-        if youtube_error:
+        # الإعدادات
+        if call.data == "settings":
 
-            logger.warning(
-                "YouTube extractor error detected; trying yt-dlp update."
+            if not can_use_moderation(
+                get_rank(
+                    chat_id,
+                    uid
+                )
+            ):
+
+                bot.answer_callback_query(
+                    call.id,
+                    "❌ الأدمن فما فوق فقط.",
+                    show_alert=True
+                )
+
+                return
+
+            bot.answer_callback_query(
+                call.id
+            )
+
+            send_settings(
+                call.message
+            )
+
+            return
+
+        # لوحة المشرف
+        if call.data.startswith("mp:"):
+
+            _, token, key = call.data.split(
+                ":",
+                2
+            )
+
+            p = pending_promotions.get(
+                token
+            )
+
+            if (
+                not p
+                or p["chat_id"] != chat_id
+                or p["initiator"] != uid
+            ):
+
+                bot.answer_callback_query(
+                    call.id,
+                    "❌ هذه اللوحة ليست لك أو انتهت.",
+                    show_alert=True
+                )
+
+                return
+
+            if key in p["permissions"]:
+
+                p["permissions"].remove(
+                    key
+                )
+
+            else:
+
+                p["permissions"].add(
+                    key
+                )
+
+            bot.answer_callback_query(
+                call.id,
+                "تم التعديل"
+            )
+
+            moderator_panel(
+                call,
+                token
+            )
+
+            return
+
+        # تأكيد رفع المشرف
+        if call.data.startswith(
+            "mconfirm:"
+        ):
+
+            token = call.data.split(
+                ":",
+                1
+            )[1]
+
+            p = pending_promotions.get(
+                token
+            )
+
+            if (
+                not p
+                or p["chat_id"] != chat_id
+                or p["initiator"] != uid
+            ):
+
+                bot.answer_callback_query(
+                    call.id,
+                    "❌ انتهت العملية.",
+                    show_alert=True
+                )
+
+                return
+
+            target = p["target"]
+
+            if not can_manage_rank(
+                get_rank(chat_id, uid),
+                get_rank(chat_id, target.id),
+                "رفع"
+            ):
+
+                bot.answer_callback_query(
+                    call.id,
+                    "❌ لم تعد تملك صلاحية الرفع.",
+                    show_alert=True
+                )
+
+                return
+
+            perms = {
+                MOD_PERMS[k][1]
+                for k in p["permissions"]
+            }
+
+            if not bot_promote(
+                chat_id,
+                target.id,
+                "moderator",
+                perms
+            ):
+
+                bot.answer_callback_query(
+                    call.id,
+                    "❌ فشل الرفع. "
+                    "تأكد من صلاحيات البوت.",
+                    show_alert=True
+                )
+
+                return
+
+            set_rank(
+                chat_id,
+                target.id,
+                "moderator"
+            )
+
+            remove_rank_permissions(
+                chat_id,
+                target.id
+            )
+
+            for perm in p["permissions"]:
+
+                cursor.execute(
+                    """
+                    INSERT OR IGNORE INTO rank_permissions(
+                        chat_id,
+                        user_id,
+                        permission
+                    )
+                    VALUES(?,?,?)
+                    """,
+                    (
+                        chat_id,
+                        target.id,
+                        perm
+                    )
+                )
+
+            db.commit()
+
+            log_action(
+                chat_id,
+                uid,
+                target.id,
+                "رفع مشرف",
+                ",".join(
+                    p["permissions"]
+                )
+            )
+
+            pending_promotions.pop(
+                token,
+                None
+            )
+
+            bot.answer_callback_query(
+                call.id,
+                "✅ تم رفع المشرف"
+            )
+
+            bot.edit_message_text(
+                f"✅ تم رفع {mention(target)} "
+                "إلى <b>المشرف</b>.",
+                chat_id,
+                call.message.message_id
+            )
+
+            return
+
+        # إلغاء
+        if call.data.startswith(
+            "mcancel:"
+        ):
+
+            token = call.data.split(
+                ":",
+                1
+            )[1]
+
+            p = pending_promotions.get(
+                token
+            )
+
+            if (
+                p
+                and p["initiator"] == uid
+            ):
+
+                pending_promotions.pop(
+                    token,
+                    None
+                )
+
+            bot.answer_callback_query(
+                call.id,
+                "تم الإلغاء"
             )
 
             try:
-                return extract_and_find_file(
-                    youtube_mode=True
-                )
-            except Exception as alternate_error:
-                logger.warning(
-                    "YouTube alternate player clients failed: %s",
-                    alternate_error
+
+                bot.edit_message_text(
+                    "❌ تم إلغاء رفع المشرف.",
+                    chat_id,
+                    call.message.message_id
                 )
 
-            if update_yt_dlp_tiktok_fallback():
+            except Exception:
+                pass
 
-                return extract_and_find_file(
-                    youtube_mode=True
-                )
+            return
 
-        if facebook_mode and (
-            "requested format is not available" in error_text
-            or "no video formats found" in error_text
-            or "unable to extract" in error_text
-            or "format" in error_text
-        ):
-            logger.warning(
-                "Facebook format selection failed; retrying with plain best format."
+        # صلاحيات الإدارة
+        if not can_use_moderation(
+            get_rank(
+                chat_id,
+                uid
             )
+        ):
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ هذا للأدمن فما فوق.",
+                show_alert=True
+            )
+
+            return
+
+        # قفل الكل / فتح الكل
+        if call.data in (
+            "lock_all",
+            "unlock_all"
+        ):
+
+            all_locks(
+                chat_id,
+                call.data == "lock_all"
+            )
+
+            bot.answer_callback_query(
+                call.id,
+                "تم"
+            )
+
             try:
-                return extract_and_find_file(
-                    facebook_mode=True,
-                    force_best=True
-                )
-            except Exception as facebook_retry_error:
-                logger.warning(
-                    "Facebook best-format retry failed: %s",
-                    facebook_retry_error
+
+                bot.delete_message(
+                    chat_id,
+                    call.message.message_id
                 )
 
-        if (
-            "tiktok" in url.lower()
-            and (
-                "unable to extract universal data for rehydration"
-                in error_text
-                or "universal data" in error_text
+            except Exception:
+                pass
+
+            send_settings(
+                call.message
             )
+
+            return
+
+        # تبديل الإعداد
+        if call.data.startswith(
+            "toggle_"
         ):
 
-            logger.warning(
-                "TikTok extractor error detected; trying yt-dlp fallback update."
+            setting = call.data[7:]
+
+            valid = {
+                "welcome",
+                "links",
+                "photos",
+                "videos",
+                "documents",
+                "stickers",
+                "audio",
+                "animations",
+                "repeat_messages",
+                "new_member_protection"
+            }
+
+            if setting not in valid:
+                return
+
+            cur = group_setting(
+                chat_id,
+                setting
             )
 
-            if update_yt_dlp_tiktok_fallback():
+            set_group_setting(
+                chat_id,
+                setting,
+                not cur
+            )
 
-                return extract_and_find_file()
+            bot.answer_callback_query(
+                call.id,
+                "✅ تم التعديل"
+            )
 
-        raise
+            try:
 
+                bot.delete_message(
+                    chat_id,
+                    call.message.message_id
+                )
 
-# ============================================================
-# تنظيف الملف
-# ============================================================
+            except Exception:
+                pass
 
-def remove_file(path):
-
-    if not path:
-        return
-
-    try:
-
-        if os.path.exists(path):
-            os.remove(path)
+            send_settings(
+                call.message
+            )
 
     except Exception as e:
 
-        logger.warning(
-            "File remove error: %s",
+        print(
+            "[Callback Error]",
             e
         )
 
 
-# ============================================================
-# معالجة الروابط ورسائل الأدمن
-# ============================================================
+# =========================================================
+# محرك الحماية
+# =========================================================
+def protection_engine(message):
 
-async def handle_url(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    user = update.effective_user
-
-    if not user:
-        return
-
-    add_user(user)
-
-    # ========================================================
-    # الأدمن
-    # ========================================================
-
-    if is_admin(user.id):
-
-        handled = await handle_admin_message(
-            update,
-            context
-        )
-
-        if handled:
-            return
-
-    # ========================================================
-    # الحظر
-    # ========================================================
-
-    if is_banned(user.id):
-
-        await update.effective_message.reply_text(
-            f"{EMOJI_3} "
-            f"<b>تم حظرك من استخدام البوت.</b>",
-            parse_mode="HTML"
-        )
-
-        return
-
-    # ========================================================
-    # الاشتراك
-    # ========================================================
-
-    if not await check_force_subscription(
-        update,
-        context
+    if (
+        not message.from_user
+        or message.from_user.is_bot
     ):
         return
 
-    # ========================================================
-    # التأكد من وجود نص
-    # ========================================================
+    chat_id = message.chat.id
+    uid = message.from_user.id
 
-    url = (
-        update.effective_message.text or ""
-    ).strip()
-
-    if not url:
+    if can_use_moderation(
+        get_rank(
+            chat_id,
+            uid
+        )
+    ):
         return
 
-    # ========================================================
-    # المنصة المختارة
-    # ========================================================
-
-    platform = context.user_data.get(
-        "selected_platform"
+    row = get_group(
+        chat_id
     )
 
-    if not platform:
+    if not row:
+        return
 
-        await update.effective_message.reply_text(
-            f"{EMOJI_3} "
-            f"يرجى اختيار المنصة أولاً عبر /start"
+    text = (
+        message.text
+        or message.caption
+        or ""
+    )
+
+    # الكلمات والروابط
+    if (
+        is_blacklisted(
+            chat_id,
+            text
+        )
+        or (
+            row["links"]
+            and contains_link(text)
+        )
+    ):
+
+        delete_message_safe(
+            message
         )
 
         return
 
-    # ========================================================
-    # فحص الرابط
-    # ========================================================
-
-    if platform == "TikTok":
-
-        if not is_tiktok_url(url):
-
-            await update.effective_message.reply_text(
-                f"{EMOJI_3} "
-                f"هذا ليس رابط TikTok صحيحاً."
-            )
-
-            return
-
-    elif platform == "Facebook":
-
-        if not is_facebook_url(url):
-
-            await update.effective_message.reply_text(
-                f"{EMOJI_3} "
-                f"هذا ليس رابط Facebook صحيحاً. أرسل رابط فيديو أو Reels من Facebook."
-            )
-
-            return
-
-    # ========================================================
-    # رسالة التحميل
-    # ========================================================
-
-    download_message = get_message_setting(
-        "download_status",
-        db["settings"].get("download_text", MESSAGE_DEFAULTS["download_status"])
-    )
-
-    try:
-        # نُبقي HTML آمناً، ثم نسمح فقط بصيغة Premium Emoji الخاصة بنا.
-        raw_download_message = str(download_message)
-        protected, saved = _protect_custom_emoji_tokens(raw_download_message)
-        protected = html.escape(protected)
-        protected = _restore_custom_emoji_tokens(protected, saved)
-        download_message = _render_custom_emoji_markup(protected)
-    except Exception:
-        download_message = "⏳ جاري تحميل الفيديو..."
-
-    status_message = await (
-        update.effective_message.reply_text(
-            f"{EMOJI_2} "
-            f"{download_message}\n\n"
-
-            f"{EMOJI_4} المنصة: "
-            f"<b>{html.escape(platform)}</b>",
-            parse_mode="HTML"
+    # Flood
+    if (
+        row["flood"]
+        and check_flood(
+            chat_id,
+            uid
         )
-    )
-
-    file_path = None
-
-    try:
-
-        # ====================================================
-        # تحميل خارج Event Loop
-        # ====================================================
-
-        file_path = await asyncio.to_thread(
-            download_video_sync,
-            url
-        )
-
-        if (
-            not file_path
-            or not os.path.exists(file_path)
-        ):
-
-            raise Exception(
-                "لم يتم تحميل الملف."
-            )
-
-        # ====================================================
-        # الحجم
-        # ====================================================
-
-        file_size = os.path.getsize(
-            file_path
-        )
-
-        if file_size > MAX_FILE_SIZE_BYTES:
-
-            size_mb = (
-                file_size
-                / (1024 * 1024)
-            )
-
-            await status_message.edit_text(
-                f"{EMOJI_3} "
-                f"<b>حجم الفيديو كبير جداً</b>\n\n"
-
-                f"{EMOJI_4} الحجم: "
-                f"<b>{size_mb:.1f} MB</b>\n"
-
-                f"{EMOJI_9} الحد الأقصى: "
-                f"<b>{MAX_FILE_SIZE_MB} MB</b>",
-                parse_mode="HTML"
-            )
-
-            return
-
-        # ====================================================
-        # إرسال الفيديو
-        # ====================================================
-
-        await status_message.edit_text(
-            _render_custom_emoji_markup(get_message_setting("sending_status", MESSAGE_DEFAULTS["sending_status"])),
-            parse_mode="HTML"
-        )
-
-        with open(
-            file_path,
-            "rb"
-        ) as video_file:
-
-            await update.effective_message.reply_video(
-                video=video_file,
-
-                caption=format_welcome_text(
-                    get_message_setting("success", MESSAGE_DEFAULTS["success"]),
-                    user.first_name or "",
-                    "@" + user.username if user.username else "لا يوجد",
-                    user.id
-                ).replace("{platform}", html.escape(platform)),
-
-                parse_mode="HTML",
-
-                supports_streaming=True
-            )
-
-        increment_download(
-            user.id
-        )
-
-        context.user_data.pop(
-            "selected_platform",
-            None
-        )
+    ):
 
         try:
 
-            await status_message.delete()
+            mute_user(
+                chat_id,
+                uid
+            )
 
         except Exception:
-
             pass
 
-    except Exception as e:
+        return
 
-        logger.exception(
-            "Download error"
+    # التكرار
+    if (
+        row["repeat_messages"]
+        and text
+        and check_repeat(
+            chat_id,
+            uid,
+            text
         )
-
-        error_text = str(e)
-
-        if len(error_text) > 500:
-
-            error_text = (
-                error_text[:500]
-                + "..."
-            )
-
-        try:
-
-            await status_message.edit_text(
-                _render_custom_emoji_markup(get_message_setting("download_error", MESSAGE_DEFAULTS["download_error"]).replace("{error}", html.escape(error_text))),
-                parse_mode="HTML"
-            )
-
-        except Exception:
-
-            try:
-
-                await update.effective_message.reply_text(
-                    f"{EMOJI_3} "
-                    f"حدث خطأ أثناء تحميل الفيديو."
-                )
-
-            except Exception:
-
-                pass
-
-    finally:
-
-        remove_file(
-            file_path
-        )
-
-
-# ============================================================
-# /help
-# ============================================================
-
-async def help_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    text_value = get_message_setting("help", MESSAGE_DEFAULTS["help"])
-    await update.effective_message.reply_text(
-        _render_custom_emoji_markup(text_value),
-        parse_mode="HTML"
-    )
-
-
-# ============================================================
-# /cancel
-# ============================================================
-
-async def cancel_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    user = update.effective_user
-
-    if not user or not is_admin(
-        user.id
     ):
-        return
 
-    context.user_data.pop(
-        "admin_action",
-        None
-    )
-
-    await update.effective_message.reply_text(
-        f"{EMOJI_6} "
-        f"<b>تم إلغاء العملية.</b>",
-        parse_mode="HTML"
-    )
-
-
-# ============================================================
-# Error Handler
-# ============================================================
-
-async def error_handler(
-    update,
-    context
-):
-
-    error = context.error
-
-    logger.exception(
-        "Unhandled exception: %s",
-        error
-    )
-
-
-# ============================================================
-# تشغيل البوت
-# ============================================================
-
-def main():
-
-    update_yt_dlp()
-
-    if not BOT_TOKEN:
-
-        print(
-            "❌ لم يتم العثور على BOT_TOKEN. أضفه في Railway Variables."
+        delete_message_safe(
+            message
         )
 
         return
 
-    print(
-        "======================================"
-    )
+    ct = message.content_type
 
-    print(
-        "🤖 Social Downloader Bot"
-    )
-
-    print(
-        "======================================"
-    )
-
-    print(
-        f"👑 Admin ID: {ADMIN_ID}"
-    )
-
-    print(
-        f"👥 Users: {get_user_count()}"
-    )
-
-    print(
-        f"💾 Database: {DB_FILE}"
-    )
-
-    print(
-        f"📢 Force Sub Channels: {len(get_force_channels())}"
-    )
-
-    print(
-        "🚀 Starting bot..."
-    )
-
-    app = (
-        Application
-        .builder()
-        .token(BOT_TOKEN)
-        # يسمح بمعالجة تحديثات عدة مستخدمين بالتوازي.
-        .concurrent_updates(32)
-        # زيادة اتصالات Telegram المتاحة لتقليل انتظار الطلبات.
-        .connection_pool_size(64)
-        .pool_timeout(10.0)
-        .build()
-    )
-
-    # ========================================================
-    # Commands
-    # ========================================================
-
-    app.add_handler(
-        CommandHandler(
-            "start",
-            start
+    if (
+        (
+            row["photos"]
+            and ct == "photo"
         )
-    )
 
-    app.add_handler(
-        CommandHandler(
-            "admin",
-            admin_command
+        or (
+            row["videos"]
+            and ct == "video"
         )
-    )
 
-    app.add_handler(
-        CommandHandler(
-            "help",
-            help_command
+        or (
+            row["documents"]
+            and ct == "document"
         )
-    )
 
-    app.add_handler(
-        CommandHandler(
-            "cancel",
-            cancel_command
+        or (
+            row["stickers"]
+            and ct == "sticker"
         )
-    )
 
-    # ========================================================
-    # Callback Buttons
-    # ========================================================
-
-    app.add_handler(
-        CallbackQueryHandler(
-            button_callback
-        )
-    )
-
-    # ========================================================
-    # النصوص
-    # ========================================================
-
-    app.add_handler(
-        MessageHandler(
-            filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
-            handle_url
-        )
-    )
-
-    # ========================================================
-    # صور وفيديوهات الأدمن
-    # ========================================================
-
-    app.add_handler(
-        MessageHandler(
-            filters.ChatType.PRIVATE & (filters.PHOTO | filters.VIDEO),
-            handle_url
-        )
-    )
-
-    # ========================================================
-    # ملفات الأدمن (استرجاع قاعدة الأعضاء)
-    # ========================================================
-
-    app.add_handler(
-        MessageHandler(
-            filters.ChatType.PRIVATE & filters.Document.ALL,
-            handle_url
-        )
-    )
-
-    # ========================================================
-    # Error Handler
-    # ========================================================
-
-    app.add_error_handler(
-        error_handler
-    )
-
-    print(
-        "======================================"
-    )
-
-    print(
-        "✅ البوت يعمل الآن."
-    )
-
-    print(
-        "======================================"
-    )
-
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES
-    )
-
-
-
-# ============================================================
-# V3 ENHANCEMENTS
-# ============================================================
-
-_ORIGINAL_ADMIN_CALLBACK = admin_callback
-_ORIGINAL_HANDLE_ADMIN_MESSAGE = handle_admin_message
-_ORIGINAL_BUTTON_CALLBACK = button_callback
-_ORIGINAL_HANDLE_URL = handle_url
-
-ENHANCED_MESSAGE_DEFAULTS = {
-    "home": "",
-    "new_user_welcome": "",
-    "platform_tiktok": "تم اختيار TikTok\n\nأرسل رابط الفيديو الآن.",
-    "download_status": "⏳ جاري تحميل الفيديو، يرجى الانتظار...",
-    "sending_status": "🚀 جاري إرسال الفيديو...",
-    "success": "✅ تم تحميل الفيديو بنجاح\n\nالمصدر: {platform}",
-    "download_error": "❌ فشل تحميل الفيديو\n\n{error}",
-    "help": "طريقة الاستخدام:\n\n/start - فتح البوت\n/referrals - نظام الإحالات\n/top - المتصدرون\n/help - المساعدة",
-    "force_sub": "يجب عليك الاشتراك في القنوات المطلوبة أولاً.",
-    "force_sub_done": "بعد الاشتراك اضغط على زر التحقق.",
-    "maintenance": "🛠 البوت في وضع الصيانة حالياً.\n\nحاول مرة أخرى لاحقاً.",
-    "referral_welcome": "🎁 نظام الإحالات\n\nشارك رابطك مع أصدقائك واحصل على نقاط عند دخول مستخدم جديد من رابطك.",
-    "referral_stats": "🎁 إحالاتك: {referrals}\n🏆 نقاطك: {points}\n🔗 رابطك:\n{link}",
-    "leaderboard": "🏆 المتصدرون\n\n{leaders}",
-    "referral_new": "🎉 تمت إضافة إحالة جديدة إلى حسابك!\n\nعدد الإحالات: {referrals}\nالنقاط: {points}",
-    "referral_invalid": "⚠️ رابط الإحالة غير صالح.",
-    "duplicate_referral": "ℹ️ تم تسجيل حسابك من قبل، ولا يمكن احتساب الإحالة مرة أخرى.",
-    "no_platform": "يرجى اختيار المنصة أولاً عبر /start.",
-    "banned": "🚫 تم حظرك من استخدام البوت.",
-}
-for _k, _v in ENHANCED_MESSAGE_DEFAULTS.items():
-    MESSAGE_DEFAULTS.setdefault(_k, _v)
-
-def _ensure_enhanced_settings():
-    s = db.setdefault("settings", {})
-    s.setdefault("maintenance_enabled", False)
-    s.setdefault("maintenance_text", ENHANCED_MESSAGE_DEFAULTS["maintenance"])
-    s.setdefault("referrals_enabled", True)
-    s.setdefault("referral_points", 1)
-    s.setdefault("referral_leaders_limit", 10)
-    s.setdefault("referral_claimed_users", {})
-    s.setdefault("button_styles", {})
-    s.setdefault("custom_emoji_library", [])
-    if not isinstance(s["referral_claimed_users"], dict):
-        s["referral_claimed_users"] = {}
-    if not isinstance(s["button_styles"], dict):
-        s["button_styles"] = {}
-    if not isinstance(s["custom_emoji_library"], list):
-        s["custom_emoji_library"] = []
-    for eid in AVAILABLE_CUSTOM_EMOJI_IDS:
-        if eid not in s["custom_emoji_library"]:
-            s["custom_emoji_library"].append(eid)
-    save_db(db, create_backup=False)
-
-_ensure_enhanced_settings()
-
-def _repair_repeated_button_emojis():
-    # إصلاح حالة قديمة كان فيها نفس Premium Emoji يظهر على كل الأزرار.
-    settings = db.setdefault("settings", {})
-    button_settings = settings.setdefault("button_settings", {})
-    pairs = []
-    for key in BUTTON_DEFAULTS:
-        item = button_settings.get(key)
-        if isinstance(item, dict):
-            eid = str(item.get("emoji_id", "") or "").strip()
-            if eid:
-                pairs.append((key, eid))
-    if len(pairs) < 3 or len({eid for _, eid in pairs}) != 1:
-        return
-    shared = pairs[0][1]
-    # لا نغيّر إعداداً مقصوداً إذا كان مطابقاً للإيموجي الافتراضي لنفس الزر.
-    if any(str(default_emoji) == shared for _, default_emoji in BUTTON_DEFAULTS.values()):
-        return
-    changed = False
-    for key, _default in BUTTON_DEFAULTS.items():
-        item = button_settings.get(key)
-        if isinstance(item, dict) and str(item.get("emoji_id", "") or "").strip() == shared:
-            item["emoji_id"] = ""
-            button_settings[key] = item
-            changed = True
-    if changed:
-        save_db(db)
-
-_repair_repeated_button_emojis()
-
-def _enhanced_message(key, fallback=None, **values):
-    fallback = ENHANCED_MESSAGE_DEFAULTS.get(key, fallback or "")
-    try:
-        value = get_message_setting(key, fallback)
-        protected, saved = _protect_custom_emoji_tokens(value)
-        if values:
-            protected = protected.format_map(SafeFormatDict(values))
-        protected = _restore_custom_emoji_tokens(protected, saved)
-        rendered = _render_custom_emoji_markup(protected)
-        return _replace_plain_emojis(rendered)
-    except Exception:
-        return _replace_plain_emojis(_render_custom_emoji_markup(fallback))
-
-def _button_style(key, fallback="primary"):
-    styles = db["settings"].get("button_styles", {})
-    value = str(styles.get(key, "") or "").lower().strip()
-    if not value:
-        value = str(styles.get("__all__", fallback) or fallback).lower().strip()
-    return "primary" if value == "default" else (value if value in {"primary", "success", "danger"} else fallback)
-
-# Premium Emoji requested by the owner: glyph -> Telegram custom emoji ID.
-REQUESTED_CUSTOM_EMOJI_MAP = {
-    '⭐': "5890978075201509010",
-    '✅': "5891033729387731017",
-    '☑️': "5891264747088647482",
-    '♦️': "5891150947635173714",
-    '💪': "5888979137292408953",
-    '⚜️': "5890944978183528164",
-    '📞': "5891198458563402576",
-    '✈️': "5891223481042868350",
-    '👑': "5888585967396198556",
-    '🌟': "",
-    '❤️': "5888684446701328138",
-    '🆕': "5890711263243147926",
-    '✔️': "5891235511246264255",
-    '‼️': "5888630540566796058",
-    '💯': "5891061762639271906",
-    '💎': "5890946721940248671",
-    '🛍': "5890989903541441900",
-    '⌛': "5891071937416795775",
-    '🔝': "5891162831809681617",
-    '💰': "5890866066749397234",
-    '🥇': "5891182846357281226",
-    '😭': "5890933368886924480",
-    '🛡': "5891225499677496831",
-    '🔜': "5890723834612422946",
-    '☠': "5890969691425347748",
-    '☄️': "5890795783904565270",
-    '💫': "5890891742063893790",
-    '🖤': "5888903253810222656",
-    '🤍': "5890932136231311080",
-    '🧡': "5891075716988016811",
-    '😍': "5890808771885668859",
-    '🔥': "5888663955412359816",
-    '😢': "5890864005165096780",
-    '🟢': "5116425257883796621",
-    '🆓': "5116503323209368474",
-    '📱': "5118372789329331110",
-    '⭕️': "5118775829060387648",
-    '📶': "5139127540182418615",
-    '🛜': "5136607107344237807",
-    '🔐': "5139095048754824143",
-    '🧑\u200d🦱': "5136867713074857101",
-    '🍏': "5136688518449333393",
-    '🛒': "5136444126220256119",
-    '🤖': "5136697855708234673",
-    '💻': "5136382085417665757",
-    '💙': "5136828508613379215",
-    '💬': "5136634337436894358",
-    '📹': "5138796703146574994",
-    '💩': "5138693920284214322",
-    '🏳': "5136758303077958598",
-}
-
-# Match all supplied custom emoji glyphs, longest first (e.g. ❤️ / ☄️ / ☑️).
-_REQUESTED_EMOJI_RE = re.compile(
-    "|".join(re.escape(x) for x in sorted(REQUESTED_CUSTOM_EMOJI_MAP, key=len, reverse=True))
-)
-
-def _replace_plain_emojis(text):
-    """Replace normal emoji in visible text with Telegram Premium Emoji markup."""
-    if text is None:
-        return ""
-    value = str(text)
-    parts = re.split(r'(<tg-emoji\\b[^>]*>.*?</tg-emoji>)', value, flags=re.S | re.I)
-    for i in range(0, len(parts), 2):
-        parts[i] = _REQUESTED_EMOJI_RE.sub(
-            lambda m: f'<tg-emoji emoji-id="{REQUESTED_CUSTOM_EMOJI_MAP[m.group(0)]}">{m.group(0)}</tg-emoji>',
-            parts[i]
-        )
-    return "".join(parts)
-
-def _make_button(text, callback_data=None, url=None, key="", emoji_id=None, style=None):
-    # Never expose ordinary emoji in buttons; use a Telegram custom emoji icon instead.
-    raw_text = str(text or "")
-    plain_emoji_ids = [REQUESTED_CUSTOM_EMOJI_MAP[e] for e in _REQUESTED_EMOJI_RE.findall(raw_text)]
-    clean_text = _REQUESTED_EMOJI_RE.sub("", raw_text).strip()
-    data = {"text": clean_text or raw_text}
-    if callback_data is not None:
-        data["callback_data"] = callback_data
-    if url is not None:
-        data["url"] = url
-
-    # Default: primary. Add/enable => success. Delete/disable/ban/remove => danger.
-    action_key = f"{key} {callback_data or ''} {raw_text}".lower()
-    # A configured global style is a real runtime override for every button
-    # created through this helper. Per-button styles are used only when no
-    # global style is configured.
-    global_style = str(db.get("settings", {}).get("button_styles", {}).get("__all__", "") or "").lower().strip()
-    if global_style in {"primary", "success", "danger"}:
-        chosen = global_style
-    elif style is not None:
-        chosen = style
-    elif any(x in action_key for x in ("enable", "activate", "add_", "add ", "تفعيل", "إضافة", "مفعّل", "مفعلة", "مفعّلة")):
-        chosen = "success"
-    elif any(x in action_key for x in ("disable", "delete", "remove", "ban", "clear", "حذف", "تعطيل", "حظر", "إزالة", "غير مفعل")):
-        chosen = "danger"
-    else:
-        chosen = _button_style(key, "primary") if key else "primary"
-    if chosen != "default":
-        data["style"] = chosen
-
-    eid = emoji_id or (button_emoji(key, "") if key else "")
-    if not eid and plain_emoji_ids:
-        eid = plain_emoji_ids[0]
-    if eid:
-        data["icon_custom_emoji_id"] = eid
-    try:
-        return InlineKeyboardButton(**data)
-    except TypeError:
-        data.pop("style", None)
-        try:
-            return InlineKeyboardButton(**data)
-        except TypeError:
-            data.pop("icon_custom_emoji_id", None)
-            return InlineKeyboardButton(**data)
-
-# -------------------- Referrals --------------------
-
-def _referral_stats(user_id):
-    r = db.get("users", {}).get(str(user_id), {})
-    try:
-        referrals = max(0, int(r.get("referrals", 0)))
-    except Exception:
-        referrals = 0
-    try:
-        points = max(0, int(r.get("referral_points", referrals)))
-    except Exception:
-        points = referrals
-    return referrals, points
-
-def _referral_link(username, user_id):
-    return f"https://t.me/{username}?start=ref_{user_id}" if username else ""
-
-def _register_referral(new_user_id, payload):
-    s = db["settings"]
-    if not s.get("referrals_enabled", True):
-        return None
-    payload = str(payload or "")
-    if payload.startswith("ref_"):
-        payload = payload[4:]
-    if not payload.isdigit():
-        return None
-    referrer_id = int(payload)
-    new_id = int(new_user_id)
-    if referrer_id == new_id:
-        return "self"
-    if str(referrer_id) not in db["users"]:
-        return "invalid"
-    claimed = s.setdefault("referral_claimed_users", {})
-    if str(new_id) in claimed:
-        return "duplicate"
-    referrer = db["users"].get(str(referrer_id))
-    if not isinstance(referrer, dict):
-        return "invalid"
-    referrer["referrals"] = int(referrer.get("referrals", 0) or 0) + 1
-    referrer["referral_points"] = int(referrer.get("referral_points", 0) or 0) + int(s.get("referral_points", 1) or 1)
-    claimed[str(new_id)] = referrer_id
-    db["users"][str(new_id)]["referred_by"] = referrer_id
-    save_db(db)
-    return referrer_id
-
-def _leaderboard_lines(limit=10):
-    rows = []
-    for uid, r in db.get("users", {}).items():
-        if not isinstance(r, dict):
-            continue
-        referrals, points = _referral_stats(uid)
-        if referrals or points:
-            name = str(r.get("first_name") or r.get("username") or uid)
-            rows.append((points, referrals, name))
-    rows.sort(key=lambda x: (x[0], x[1]), reverse=True)
-    result = []
-    for i, (points, referrals, name) in enumerate(rows[:int(limit)], 1):
-        result.append(f"<b>{i}.</b> {html.escape(name[:40])} — إحالات: <b>{referrals}</b> | نقاط: <b>{points}</b>")
-    return "\n".join(result) if result else "لا توجد إحالات حتى الآن."
-
-def referral_keyboard():
-    return InlineKeyboardMarkup([
-        [_make_button("🎁 إحالاتي", "referral_stats", key="referral_stats")],
-        [_make_button("🏆 المتصدرون", "referral_leaders", key="referral_leaders")],
-        [_make_button("🔙 الرئيسية", "back_home", key="back_home")],
-    ])
-
-async def referrals_command(update, context):
-    user = update.effective_user
-    if not user:
-        return
-    if is_banned(user.id):
-        await update.effective_message.reply_text(_enhanced_message("banned"), parse_mode="HTML")
-        return
-    if not db["settings"].get("referrals_enabled", True):
-        await update.effective_message.reply_text("نظام الإحالات غير متاح حالياً.")
-        return
-    add_user(user)
-    me = await context.bot.get_me()
-    referrals, points = _referral_stats(user.id)
-    await update.effective_message.reply_text(
-        _enhanced_message("referral_stats", referrals=referrals, points=points,
-                           link=html.escape(_referral_link(me.username, user.id))),
-        parse_mode="HTML", reply_markup=referral_keyboard()
-    )
-
-async def top_command(update, context):
-    user = update.effective_user
-    if not user:
-        return
-    await update.effective_message.reply_text(
-        _enhanced_message("leaderboard", leaders=_leaderboard_lines(
-            int(db["settings"].get("referral_leaders_limit", 10) or 10)
-        )),
-        parse_mode="HTML", reply_markup=referral_keyboard()
-    )
-
-# -------------------- Maintenance --------------------
-
-def _maintenance_enabled():
-    return bool(db["settings"].get("maintenance_enabled", False))
-
-def _maintenance_text():
-    return _enhanced_message("maintenance", db["settings"].get("maintenance_text", ""))
-
-def maintenance_keyboard():
-    return InlineKeyboardMarkup([
-        [_make_button("🟢 تفعيل" if not _maintenance_enabled() else "🔴 تعطيل",
-                      "maintenance_toggle", key="admin_maintenance")],
-        [_make_button("✏️ تخصيص رسالة الصيانة", "maintenance_message", key="admin_welcome_text")],
-        [_make_button("🔙 رجوع", "admin_panel", key="back_home")],
-    ])
-
-def reset_referral_leaderboard():
-    """تصفير أرقام الإحالات والمتصدرين مع الإبقاء على جميع المستخدمين."""
-    users = db.setdefault("users", {})
-    for uid, info in users.items():
-        if not isinstance(info, dict):
-            continue
-        info["referrals"] = 0
-        info["referral_points"] = 0
-        info.pop("referred_by", None)
-
-    settings = db.setdefault("settings", {})
-    settings["referral_claimed_users"] = {}
-    settings["referral_reset_at"] = time.time()
-    save_db(db)
-
-
-def referrals_admin_keyboard():
-    enabled = bool(db["settings"].get("referrals_enabled", True))
-    return InlineKeyboardMarkup([
-        [_make_button("🟢 تفعيل" if not enabled else "🔴 تعطيل", "referrals_toggle", key="admin_referrals")],
-        [_make_button("🔢 نقاط الإحالة", "referral_points_set", key="admin_referrals")],
-        [_make_button("🏆 عدد المتصدرين", "referral_limit_set", key="admin_referrals")],
-        [_make_button("🧹 تصفير المتصدرين", "referral_reset_leaderboard", key="admin_referrals", style="danger", emoji_id="")],
-        [_make_button("🔙 رجوع", "admin_panel", key="back_home")],
-    ])
-
-# -------------------- User start/home --------------------
-
-async def start(update, context):
-    user = update.effective_user
-    if not user:
-        return
-    uid = str(user.id)
-    is_new = uid not in db.get("users", {})
-    payload = context.args[0].strip() if context.args else ""
-    add_user(user)
-
-    referral_result = _register_referral(user.id, payload) if is_new else None
-    if is_banned(user.id):
-        await update.effective_message.reply_text(_enhanced_message("banned"), parse_mode="HTML")
-        return
-    if _maintenance_enabled() and not is_admin(user.id):
-        await update.effective_message.reply_text(_maintenance_text(), parse_mode="HTML")
-        return
-
-    if isinstance(referral_result, int):
-        try:
-            refs, points = _referral_stats(referral_result)
-            await context.bot.send_message(
-                referral_result,
-                _enhanced_message("referral_new", referrals=refs, points=points),
-                parse_mode="HTML"
+        or (
+            row["audio"]
+            and ct in (
+                "audio",
+                "voice",
+                "video_note"
             )
+        )
+
+        or (
+            row["animations"]
+            and ct == "animation"
+        )
+    ):
+
+        delete_message_safe(
+            message
+        )
+
+
+# =========================================================
+# التشغيل
+# =========================================================
+def setup_default_force_channel():
+    # القناة التي طلبها المطور: تضاف افتراضيًا عند أول تشغيل فقط إذا لم توجد أي قناة.
+    try:
+        cursor.execute("SELECT COUNT(*) AS c FROM force_sub_channels")
+        if cursor.fetchone()["c"] == 0:
+            ok, result = add_force_channel("@LeaDeR_E")
+            print("[Force Sub Default]", result if ok else result)
+    except Exception as e:
+        print("[Force Sub Default Error]", e)
+
+def run_bot_forever():
+
+    print(
+        "==================================="
+    )
+
+    print(
+        " Protection Bot Started"
+    )
+
+    print(
+        " Bot: @" + BOT_USERNAME
+    )
+
+    print(
+        " Database:",
+        DB_NAME
+    )
+
+    print(
+        " Rank System: ON"
+    )
+
+    print(
+        " Custom Emoji: ON"
+    )
+
+    print(
+        " Auto-Reconnect: ON"
+    )
+
+    print(
+        "==================================="
+    )
+
+    setup_default_force_channel()
+
+    # حذف الـWebhook تلقائيًا قبل بدء Long Polling
+    # حتى لا يحدث تعارض 409 بين getUpdates وWebhook.
+    try:
+        bot.remove_webhook()
+        print("[Webhook] Removed successfully")
+    except Exception as e:
+        print("[Webhook Cleanup Error]", e)
+
+    time.sleep(1)
+
+    while True:
+
+        try:
+
+            bot.infinity_polling(
+                skip_pending=True,
+                timeout=30,
+                long_polling_timeout=30
+            )
+
+            time.sleep(5)
+
+        except KeyboardInterrupt:
+
+            print(
+                "Bot stopped."
+            )
+
+            break
+
         except Exception as e:
-            logger.warning("Referral notification failed: %s", e)
 
-    if not await check_force_subscription(update, context):
-        return
-
-    context.user_data.pop("selected_platform", None)
-    if is_new:
-        welcome = _enhanced_message("new_user_welcome", "").strip()
-        if welcome:
-            welcome = format_welcome_text(welcome, user.first_name or "عضو جديد",
-                                           "@" + user.username if user.username else "لا يوجد", user.id)
-            try:
-                await update.effective_message.reply_text(welcome, parse_mode="HTML")
-            except Exception:
-                pass
-    await send_home(update, context)
-
-def get_platform_keyboard():
-    return InlineKeyboardMarkup([
-        [
-            _make_button(button_text("platform_tiktok", "TikTok"), "platform_tiktok",
-                         key="platform_tiktok", emoji_id=button_emoji("platform_tiktok", "")),
-            _make_button(button_text("platform_facebook", "Facebook"), "platform_facebook",
-                         key="platform_facebook", emoji_id=button_emoji("platform_facebook", "5269427536453984598")),
-        ],
-        [_make_button("🎁 نظام الإحالات", "referrals", key="referrals")],
-    ])
-
-def get_back_keyboard():
-    return InlineKeyboardMarkup([[
-        _make_button(button_text("back_home", "🔙 رجوع"), "back_home",
-                     key="back_home", emoji_id=button_emoji("back_home", ""))
-    ]])
-
-# -------------------- All-message editor --------------------
-
-MESSAGE_LABELS = {
-    "home": "🏠 الرئيسية",
-    "new_user_welcome": "👋 ترحيب العضو الجديد",
-    "platform_tiktok": "🎵 اختيار TikTok",
-    "platform_facebook": "📘 اختيار Facebook",
-    "download_status": "⏳ بدء التحميل",
-    "sending_status": "📤 إرسال الفيديو",
-    "success": "✅ نجاح التحميل",
-    "download_error": "❌ خطأ التحميل",
-    "help": "❓ المساعدة",
-    "force_sub": "🔐 الاشتراك الإجباري",
-    "force_sub_done": "✔️ بعد الاشتراك",
-    "maintenance": "🛠 الصيانة",
-    "referral_stats": "🎁 إحالاتي",
-    "leaderboard": "🏆 المتصدرون",
-    "referral_new": "🎉 إحالة جديدة",
-    "no_platform": "📱 لم يتم اختيار منصة",
-    "banned": "🚫 المحظور",
-}
-
-def message_editor_text():
-    return _replace_plain_emojis((
-        f"{EMOJI_5} <b>تخصيص كل رسائل البوت</b> {EMOJI_5}\n\n"
-        "اختر أي رسالة ثم أرسل الكليشة الجديدة.\n"
-        "يمكنك استخدام HTML والمتغيرات المتاحة.\n\n"
-        "<code>{first_name}</code> <code>{username}</code> <code>{user_id}</code>\n"
-        "<code>{platform}</code> <code>{error}</code> <code>{referrals}</code>\n"
-        "<code>{points}</code> <code>{link}</code> <code>{leaders}</code>"
-    ))
-
-def message_editor_keyboard():
-    # لا نضع Premium Emoji موحّداً على كل أزرار محرر الرسائل.
-    rows = []
-    for key, label in MESSAGE_LABELS.items():
-        rows.append([_make_button(label, f"message_edit_{key}", style="primary", emoji_id="")])
-    rows.append([_make_button("🔙 رجوع للوحة الأدمن", "admin_panel", key="back_home")])
-    return InlineKeyboardMarkup(rows)
-
-# -------------------- Button styles --------------------
-
-def set_button_style(key, style):
-    if key not in BUTTON_DEFAULTS and key not in {"__all__", "referrals", "referral_stats", "referral_leaders", "admin_maintenance", "admin_referrals", "admin_copy_source"}:
-        return False
-    if style not in {"default", "primary", "success", "danger"}:
-        return False
-    db["settings"].setdefault("button_styles", {})[key] = style
-    save_db(db)
-    return True
-
-def button_style_keyboard(key):
-    current = _button_style(key, "primary")
-    rows = []
-    for value, label in [
-        ("primary", "🔵 أساسي"),
-        ("success", "🟢 نجاح"),
-        ("danger", "🔴 تحذير"),
-    ]:
-        mark = " ✓" if current == value else ""
-        rows.append([_make_button(label + mark, f"button_style_{key}_{value}", style=value)])
-    rows.append([_make_button("🔙 رجوع", "admin_buttons", key="back_home")])
-    return InlineKeyboardMarkup(rows)
-
-def button_editor_text():
-    return _replace_plain_emojis((
-        f"{EMOJI_5} <b>تخصيص الأزرار والألوان</b> {EMOJI_5}\n\n"
-        "غيّر اسم الزر والإيموجي المميز من الأزرار الحالية، "
-        "وغيّر اللون من 🎨.\n"
-        "يوجد أيضاً لون عام يطبّق على جميع الأزرار التي لا تملك لوناً خاصاً.\n\n"
-        "الأنماط المتاحة: أساسي / نجاح / تحذير."
-    ))
-
-def button_editor_keyboard():
-    rows = []
-    rows.append([
-        _make_button("🎨 اللون العام لكل الأزرار", "button_style_menu___all__", key="admin_buttons"),
-        _make_button("⚙️ إعادة اللون العام", "button_style_reset___all__", key="admin_buttons"),
-    ])
-    for key, (default_text, default_emoji) in BUTTON_DEFAULTS.items():
-        current = get_button_setting(key)
-        rows.append([
-            _make_button(current["text"], f"button_edit_{key}", key=key,
-                         emoji_id=current["emoji_id"] or ""),
-            _make_button("🎨", f"button_style_menu_{key}", key="admin_buttons")
-        ])
-    for key, label in [
-        ("referrals", "🎁 الإحالات"),
-        ("referral_stats", "📊 إحالاتي"),
-        ("referral_leaders", "🏆 المتصدرون"),
-    ]:
-        rows.append([_make_button(label, f"button_style_menu_{key}", key="admin_buttons", emoji_id="")])
-    rows.append([_make_button("🧹 إزالة Premium Emoji من كل الأزرار", "button_reset_all_emojis", style="danger", emoji_id="")])
-    rows.append([_make_button("🔙 رجوع للوحة الأدمن", "admin_panel", key="back_home")])
-    return InlineKeyboardMarkup(rows)
-
-# -------------------- Admin panel --------------------
-
-def admin_panel_text():
-    return (
-        f"{EMOJI_5} <b>لوحة تحكم الأدمن</b> {EMOJI_5}\n\n"
-        f"{EMOJI_4} المستخدمون: <b>{get_user_count()}</b>\n"
-        f"{EMOJI_2} التحميلات: <b>{get_download_count()}</b>\n"
-        f"{EMOJI_9} الاشتراك الإجباري: <b>{'🟢 مفعّل' if db['settings'].get('force_sub_enabled') else '🔴 متوقف'}</b>\n"
-        f"🛠 وضع الصيانة: <b>{'🟢 مفعّل' if _maintenance_enabled() else '🔴 متوقف'}</b>\n"
-        f"🎁 الإحالات: <b>{'🟢 مفعّلة' if db['settings'].get('referrals_enabled', True) else '🔴 متوقفة'}</b>\n"
-        f"👑 المشرفون الإضافيون: <b>{len(get_admins())}</b>\n\n"
-        "اختر العملية المطلوبة:"
-    )
-
-def admin_keyboard():
-    return InlineKeyboardMarkup([
-        [
-            _make_button(button_text("admin_stats", "📊 الإحصائيات"), "admin_stats", key="admin_stats"),
-            _make_button(button_text("admin_broadcast", "📢 إذاعة"), "admin_broadcast", key="admin_broadcast"),
-        ],
-        [
-            _make_button(button_text("admin_welcome_photo", "📸 ترحيب صورة"), "admin_welcome_photo", key="admin_welcome_photo"),
-            _make_button(button_text("admin_welcome_video", "🎬 ترحيب فيديو"), "admin_welcome_video", key="admin_welcome_video"),
-        ],
-        [
-            _make_button(button_text("admin_welcome_text", "✏️ نص الترحيب"), "admin_welcome_text", key="admin_welcome_text"),
-            _make_button(button_text("admin_delete_media", "🗑 حذف ميديا الترحيب"), "admin_delete_media", key="admin_delete_media"),
-        ],
-        [
-            _make_button(button_text("admin_force_sub", "🔐 الاشتراك الإجباري"), "admin_force_sub", key="admin_force_sub"),
-            _make_button("🛠 وضع الصيانة", "admin_maintenance", key="admin_maintenance"),
-        ],
-        [
-            _make_button("🎁 نظام الإحالات", "admin_referrals", key="admin_referrals"),
-            _make_button("💬 تخصيص كل الرسائل", "admin_messages", key="admin_welcome_text"),
-        ],
-        [
-            _make_button("🎨 الأزرار والألوان", "admin_buttons", key="admin_buttons"),
-            _make_button(button_text("admin_download_text", "📝 رسالة التحميل"), "admin_download_text", key="admin_download_text"),
-        ],
-        [
-            _make_button(button_text("admin_ban", "🚫 حظر مستخدم"), "admin_ban", key="admin_ban"),
-            _make_button(button_text("admin_unban", "♻️ فك حظر"), "admin_unban", key="admin_unban"),
-        ],
-        [
-            _make_button(button_text("admin_admins", "👑 المشرفون"), "admin_admins", key="admin_admins"),
-            _make_button(button_text("admin_users", "👥 المستخدمون"), "admin_users", key="admin_users"),
-        ],
-        [
-            _make_button("📤 تصدير الأعضاء", "admin_export_users", key="admin_users"),
-            _make_button("📥 استرجاع الأعضاء", "admin_import_users", key="admin_users"),
-        ],
-        [_make_button("📄 نسخ النسخة الحالية", "admin_copy_source", key="admin_copy_source")],
-        [_make_button("🔄 تحديث اللوحة", "admin_panel", key="admin_panel")],
-    ])
-
-# -------------------- Admin callback extension --------------------
-
-async def admin_callback(update, context, data):
-    query = update.callback_query
-    if not query:
-        return
-
-    if data == "admin_copy_source":
-        source_path = os.path.abspath(__file__)
-        if not os.path.isfile(source_path):
-            await query.answer("ملف النسخة الحالية غير موجود.", show_alert=True)
-            return
-        try:
-            await query.message.reply_document(
-                document=source_path,
-                caption=_replace_plain_emojis("<b>📄 هذه هي النسخة الحالية من ملف البوت.</b>"),
-                parse_mode="HTML"
+            print(
+                "[Polling Error]",
+                e
             )
-            await query.answer("تم إرسال النسخة الحالية من البوت.")
-        except Exception as exc:
-            logger.exception("Source copy failed: %s", exc)
-            await query.answer("تعذر إرسال النسخة الحالية.", show_alert=True)
-        return
 
-    if data == "admin_maintenance":
-        await query.edit_message_text(
-            f"🛠 <b>وضع الصيانة</b>\n\nالحالة: <b>{'مفعّل' if _maintenance_enabled() else 'متوقف'}</b>\n\n"
-            "عند التفعيل يتوقف التحميل للمستخدمين العاديين، والأدمن يستمر بالعمل.",
-            parse_mode="HTML", reply_markup=maintenance_keyboard()
-        )
-        return
-
-    if data == "maintenance_toggle":
-        db["settings"]["maintenance_enabled"] = not _maintenance_enabled()
-        save_db(db)
-        await query.answer("تم تحديث وضع الصيانة.")
-        await query.edit_message_text(
-            f"🛠 <b>وضع الصيانة</b>\n\nالحالة: <b>{'مفعّل' if _maintenance_enabled() else 'متوقف'}</b>",
-            parse_mode="HTML", reply_markup=maintenance_keyboard()
-        )
-        return
-
-    if data == "maintenance_message":
-        context.user_data["admin_action"] = "maintenance_message"
-        await query.edit_message_text(
-            "🛠 <b>رسالة الصيانة</b>\n\nأرسل الكليشة الجديدة الآن.\n\n/cancel",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[_make_button("🔙 رجوع", "admin_maintenance", key="back_home")]])
-        )
-        return
-
-    if data == "admin_referrals":
-        await query.edit_message_text(
-            "🎁 <b>نظام الإحالات</b>\n\n"
-            f"الحالة: <b>{'مفعّل' if db['settings'].get('referrals_enabled', True) else 'متوقف'}</b>\n"
-            f"النقاط لكل إحالة: <b>{int(db['settings'].get('referral_points', 1) or 1)}</b>\n"
-            f"المتصدرون: <b>{int(db['settings'].get('referral_leaders_limit', 10) or 10)}</b>\n\n"
-            "منع التعدد هنا يمنع احتساب نفس حساب Telegram أكثر من مرة. Telegram Bot API لا يوفر IP/device للشخص.",
-            parse_mode="HTML", reply_markup=referrals_admin_keyboard()
-        )
-        return
-
-    if data == "referrals_toggle":
-        db["settings"]["referrals_enabled"] = not bool(db["settings"].get("referrals_enabled", True))
-        save_db(db)
-        await query.answer("تم تحديث نظام الإحالات.")
-        await query.edit_message_text(
-            "🎁 <b>نظام الإحالات</b>\n\n"
-            f"الحالة: <b>{'مفعّل' if db['settings']['referrals_enabled'] else 'متوقف'}</b>",
-            parse_mode="HTML", reply_markup=referrals_admin_keyboard()
-        )
-        return
-
-    if data == "referral_reset_leaderboard":
-        if not is_admin(user.id):
-            await query.answer("🚫 هذه اللوحة خاصة بالأدمن.", show_alert=True)
-            return
-
-        reset_referral_leaderboard()
-
-        await query.answer("✅ تم تصفير المتصدرين والإحالات.", show_alert=True)
-        await query.edit_message_text(
-            "🎁 <b>نظام الإحالات</b>\n\n"
-            f"الحالة: <b>{'مفعّل' if db['settings'].get('referrals_enabled', True) else 'متوقف'}</b>\n"
-            f"النقاط لكل إحالة: <b>{int(db['settings'].get('referral_points', 1) or 1)}</b>\n"
-            f"المتصدرون: <b>{int(db['settings'].get('referral_leaders_limit', 10) or 10)}</b>\n\n"
-            "🧹 تم تصفير جميع نقاط وإحالات المتصدرين مع الإبقاء على المستخدمين.",
-            parse_mode="HTML",
-            reply_markup=referrals_admin_keyboard()
-        )
-        return
-
-    if data == "referral_points_set":
-        context.user_data["admin_action"] = "referral_points_set"
-        await query.edit_message_text("🔢 أرسل نقاط الإحالة من 1 إلى 100000.\n\n/cancel", parse_mode="HTML",
-                                       reply_markup=InlineKeyboardMarkup([[_make_button("🔙 رجوع", "admin_referrals", key="back_home")]]))
-        return
-
-    if data == "referral_limit_set":
-        context.user_data["admin_action"] = "referral_limit_set"
-        await query.edit_message_text("🏆 أرسل عدد المتصدرين من 3 إلى 50.\n\n/cancel", parse_mode="HTML",
-                                       reply_markup=InlineKeyboardMarkup([[_make_button("🔙 رجوع", "admin_referrals", key="back_home")]]))
-        return
-
-    # Broadcast menu with optional transparent button.
-    if data == "admin_broadcast":
-        context.user_data.pop("admin_action", None)
-        await query.edit_message_text(
-            "📢 <b>إذاعة</b>\n\nاختر النوع:",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([
-                [_make_button("📢 إذاعة عادية", "broadcast_plain", key="admin_broadcast")],
-                [_make_button("🔗 إذاعة + زر شفاف", "broadcast_with_button", key="admin_broadcast")],
-                [_make_button("🔙 رجوع", "admin_panel", key="back_home")],
-            ])
-        )
-        return
-
-    if data == "broadcast_plain":
-        context.user_data["admin_action"] = "broadcast"
-        await query.edit_message_text("📢 أرسل الآن الرسالة أو الصورة أو الفيديو أو الملف.\n\n/cancel", parse_mode="HTML",
-                                       reply_markup=InlineKeyboardMarkup([[_make_button("🔙 إلغاء", "admin_panel", key="back_home")]]))
-        return
-
-    if data == "broadcast_with_button":
-        context.user_data["admin_action"] = "broadcast_button_message"
-        await query.edit_message_text(
-            "🔗 <b>إذاعة + زر شفاف</b>\n\nأرسل المحتوى أولاً، وبعدها أرسل:\n"
-            "<code>اسم الزر|https://example.com</code>\n\n"
-            "الزر سيكون ملوّناً ويستخدم Premium Emoji.\n\n/cancel",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[_make_button("🔙 إلغاء", "admin_panel", key="back_home")]])
-        )
-        return
-
-    if data == "button_reset_all_emojis":
-        settings = db.setdefault("settings", {})
-        button_settings = settings.setdefault("button_settings", {})
-        for key, (default_text, _default_emoji) in BUTTON_DEFAULTS.items():
-            item = button_settings.get(key, {})
-            if not isinstance(item, dict):
-                item = {}
-            button_settings[key] = {
-                "text": str(item.get("text", default_text) or default_text),
-                "emoji_id": "",
-            }
-        save_db(db)
-        await query.answer("تمت إزالة Premium Emoji من جميع الأزرار.", show_alert=True)
-        await query.edit_message_text(
-            button_editor_text(),
-            parse_mode="HTML",
-            reply_markup=button_editor_keyboard()
-        )
-        return
-
-    if data == "button_style_reset___all__":
-        db.setdefault("settings", {}).setdefault("button_styles", {}).pop("__all__", None)
-        save_db(db)
-        await query.answer("✅ تمت إعادة اللون العام.", show_alert=True)
-        await query.edit_message_text(
-            button_editor_text(), parse_mode="HTML", reply_markup=button_editor_keyboard()
-        )
-        return
-
-    if data.startswith("button_style_menu_"):
-        key = data.replace("button_style_menu_", "", 1)
-        await query.edit_message_text(
-            f"🎨 <b>تغيير لون/نمط الزر</b>\n\nالحالي: <code>{html.escape(_button_style(key, 'primary'))}</code>",
-            parse_mode="HTML", reply_markup=button_style_keyboard(key)
-        )
-        return
-
-    if data.startswith("button_style_"):
-        raw = data.replace("button_style_", "", 1)
-        try:
-            key, style = raw.rsplit("_", 1)
-        except ValueError:
-            await query.answer("بيانات غير صالحة.", show_alert=True)
-            return
-        if set_button_style(key, style):
-            await query.answer("تم حفظ النمط.")
-            await query.edit_message_text(button_editor_text(), parse_mode="HTML",
-                                           reply_markup=button_editor_keyboard())
-        else:
-            await query.answer("النمط غير صالح.", show_alert=True)
-        return
-
-    if data.startswith("message_edit_"):
-        key = data.replace("message_edit_", "", 1)
-        if key not in MESSAGE_DEFAULTS:
-            await query.answer("الرسالة غير موجودة.", show_alert=True)
-            return
-        context.user_data["admin_action"] = f"message_edit:{key}"
-        current = get_message_setting(key, MESSAGE_DEFAULTS[key])
-        await query.edit_message_text(
-            f"✏️ <b>تعديل الرسالة</b>\n\nأرسل الكليشة الجديدة الآن.\n\n"
-            f"<b>الحالية:</b>\n<code>{html.escape(current)}</code>\n\n"
-            "المتغيرات: <code>{first_name}</code> <code>{username}</code> <code>{user_id}</code> "
-            "<code>{platform}</code> <code>{error}</code> <code>{referrals}</code> "
-            "<code>{points}</code> <code>{link}</code> <code>{leaders}</code>\n\n"
-            "🎨 لإضافة Premium Emoji داخل الكليشة استخدم: "
-            "<code>[emoji:5462943653116792628]</code> أو <code>{emoji:5462943653116792628}</code>\n"
-            "يمكنك استبدال الـ ID بأي ID رقمي صالح.\n\n/cancel",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[_make_button("🔙 رجوع", "admin_messages", key="back_home")]])
-        )
-        return
-
-    await _ORIGINAL_ADMIN_CALLBACK(update, context, data)
-
-# -------------------- Admin message extension --------------------
-
-async def handle_admin_message(update, context):
-    message = update.effective_message
-    user = update.effective_user
-    if not message or not user or not is_admin(user.id):
-        return await _ORIGINAL_HANDLE_ADMIN_MESSAGE(update, context)
-
-    action = context.user_data.get("admin_action")
-
-    if action == "maintenance_message":
-        if not message.text:
-            await message.reply_text("❌ أرسل نصاً فقط.")
-            return True
-        db["settings"]["maintenance_text"] = message.text
-        db["settings"].setdefault("message_settings", {})["maintenance"] = message.text
-        save_db(db)
-        context.user_data.pop("admin_action", None)
-        await message.reply_text("✅ تم حفظ رسالة الصيانة.", reply_markup=maintenance_keyboard())
-        return True
-
-    if action == "referral_points_set":
-        try:
-            value = int((message.text or "").strip())
-            if not 1 <= value <= 100000:
-                raise ValueError
-        except ValueError:
-            await message.reply_text("❌ أرسل رقماً من 1 إلى 100000.")
-            return True
-        db["settings"]["referral_points"] = value
-        save_db(db)
-        context.user_data.pop("admin_action", None)
-        await message.reply_text("✅ تم حفظ نقاط الإحالة.", reply_markup=referrals_admin_keyboard())
-        return True
-
-    if action == "referral_limit_set":
-        try:
-            value = int((message.text or "").strip())
-            if not 3 <= value <= 50:
-                raise ValueError
-        except ValueError:
-            await message.reply_text("❌ أرسل رقماً من 3 إلى 50.")
-            return True
-        db["settings"]["referral_leaders_limit"] = value
-        save_db(db)
-        context.user_data.pop("admin_action", None)
-        await message.reply_text("✅ تم حفظ عدد المتصدرين.", reply_markup=referrals_admin_keyboard())
-        return True
-
-    if action == "broadcast_button_message":
-        context.user_data["broadcast_source_message_id"] = message.message_id
-        context.user_data["broadcast_source_chat_id"] = message.chat_id
-        context.user_data["admin_action"] = "broadcast_button_config"
-        await message.reply_text(
-            "🔗 أرسل الآن:\n<code>اسم الزر|https://example.com</code>\n\n"
-            "سيكون الزر ملوّناً ويستخدم Premium Emoji.",
-            parse_mode="HTML"
-        )
-        return True
-
-    if action == "broadcast_button_config":
-        if not message.text or "|" not in message.text:
-            await message.reply_text("❌ الصيغة: اسم الزر|https://example.com")
-            return True
-        label, url = [x.strip() for x in message.text.split("|", 1)]
-        if not label or not re.match(r"^https?://", url, re.IGNORECASE):
-            await message.reply_text("❌ الرابط يجب أن يبدأ بـ http:// أو https://")
-            return True
-        source_id = context.user_data.get("broadcast_source_message_id")
-        source_chat = context.user_data.get("broadcast_source_chat_id")
-        if not source_id or not source_chat:
-            context.user_data.pop("admin_action", None)
-            await message.reply_text("❌ انتهت جلسة الإذاعة. ابدأ من جديد.")
-            return True
-
-        markup = InlineKeyboardMarkup([[_make_button(label, url=url, style="primary")]])
-        sent = failed = 0
-        await message.reply_text("📢 جاري إرسال الإذاعة...")
-        for uid in list(db.get("users", {}).keys()):
             try:
-                await context.bot.copy_message(
-                    chat_id=int(uid), from_chat_id=int(source_chat),
-                    message_id=int(source_id), reply_markup=markup
-                )
-                sent += 1
-                await asyncio.sleep(0.05)
-            except Exception as e:
-                failed += 1
-                logger.warning("Broadcast with button failed for %s: %s", uid, e)
-
-        context.user_data.pop("admin_action", None)
-        context.user_data.pop("broadcast_source_message_id", None)
-        context.user_data.pop("broadcast_source_chat_id", None)
-        await message.reply_text(
-            f"✅ <b>انتهت الإذاعة</b>\n\nتم الإرسال: <b>{sent}</b>\nفشل: <b>{failed}</b>",
-            parse_mode="HTML", reply_markup=admin_keyboard()
-        )
-        return True
-
-    return await _ORIGINAL_HANDLE_ADMIN_MESSAGE(update, context)
-
-# -------------------- User callback extension --------------------
-
-async def button_callback(update, context):
-    """Unified callback router for all user/admin inline buttons."""
-    query = update.callback_query
-    user = update.effective_user
-    if not query or not user:
-        return
-
-    data = query.data or ""
-
-    # Acknowledge immediately so Telegram does not keep the loading spinner.
-    try:
-        await query.answer()
-    except Exception:
-        pass
-
-    if is_banned(user.id):
-        try:
-            await query.answer("🚫 أنت محظور من استخدام البوت.", show_alert=True)
-        except Exception:
-            pass
-        return
-
-    # Admin and V3 callbacks go directly to the enhanced admin handler.
-    admin_prefixes = (
-        "admin_", "admin_copy_source", "force_", "button_choose_emoji_",
-        "button_emoji_", "button_style_", "button_reset_all_emojis", "message_edit_", "maintenance_", "referral_",
-        "referrals_", "broadcast_"
-    )
-
-    if data == "referrals":
-        me = await context.bot.get_me()
-        refs, points = _referral_stats(user.id)
-        await query.edit_message_text(
-            _enhanced_message(
-                "referral_stats",
-                referrals=refs,
-                points=points,
-                link=html.escape(_referral_link(me.username, user.id)),
-            ),
-            parse_mode="HTML",
-            reply_markup=referral_keyboard(),
-        )
-        return
-
-    if data == "referral_stats":
-        me = await context.bot.get_me()
-        refs, points = _referral_stats(user.id)
-        await query.edit_message_text(
-            _enhanced_message(
-                "referral_stats",
-                referrals=refs,
-                points=points,
-                link=html.escape(_referral_link(me.username, user.id)),
-            ),
-            parse_mode="HTML",
-            reply_markup=referral_keyboard(),
-        )
-        return
-
-    if data == "referral_leaders":
-        await query.edit_message_text(
-            _enhanced_message(
-                "leaderboard",
-                leaders=_leaderboard_lines(
-                    int(db["settings"].get("referral_leaders_limit", 10) or 10)
-                ),
-            ),
-            parse_mode="HTML",
-            reply_markup=referral_keyboard(),
-        )
-        return
-
-    if data == "referrals_toggle":
-        if not is_admin(user.id):
-            await query.answer("🚫 هذه اللوحة خاصة بالأدمن.", show_alert=True)
-            return
-        await admin_callback(update, context, data)
-        return
-
-    if data.startswith(admin_prefixes):
-        if not is_admin(user.id):
-            try:
-                await query.answer(
-                    "🚫 هذه اللوحة خاصة بالأدمن.",
-                    show_alert=True
-                )
-            except Exception:
-                pass
-            return
-        try:
-            await admin_callback(update, context, data)
-        except Exception as exc:
-            logger.exception("Admin callback failed: %s", exc)
-            try:
-                await query.answer(
-                    "❌ حدث خطأ أثناء تنفيذ الأمر.",
-                    show_alert=True
-                )
-            except Exception:
-                pass
-        return
-
-    # Original callbacks: TikTok, back, subscription, etc.
-    try:
-        await _ORIGINAL_BUTTON_CALLBACK(update, context)
-    except Exception as exc:
-        logger.exception("User callback failed: %s", exc)
-        try:
-            await query.answer(
-                "❌ تعذر تنفيذ الأمر، حاول مرة أخرى.",
-                show_alert=True
-            )
-        except Exception:
-            pass
-
-# -------------------- Help / URL --------------------
-
-async def help_command(update, context):
-    user = update.effective_user
-    if user and _maintenance_enabled() and not is_admin(user.id):
-        await update.effective_message.reply_text(_maintenance_text(), parse_mode="HTML")
-        return
-    await update.effective_message.reply_text(_enhanced_message("help"), parse_mode="HTML")
-
-async def handle_url(update, context):
-    user = update.effective_user
-    if user and _maintenance_enabled() and not is_admin(user.id):
-        await update.effective_message.reply_text(_maintenance_text(), parse_mode="HTML")
-        return
-
-    return await _ORIGINAL_HANDLE_URL(update, context)
-
-# -------------------- Telegram command menu --------------------
-
-async def _post_init(application):
-    try:
-        from telegram import BotCommand, BotCommandScopeChat
-        common = [
-            BotCommand("start", "فتح البوت"),
-            BotCommand("referrals", "نظام الإحالات"),
-            BotCommand("top", "المتصدرون"),
-            BotCommand("help", "المساعدة"),
-        ]
-        await application.bot.set_my_commands(common)
-        admin_commands = common + [
-            BotCommand("admin", "لوحة الأدمن"),
-            BotCommand("cancel", "إلغاء العملية"),
-        ]
-        ids = {int(ADMIN_ID), *get_admins()}
-        for aid in ids:
-            try:
-                await application.bot.set_my_commands(
-                    admin_commands, scope=BotCommandScopeChat(chat_id=aid)
-                )
-            except Exception as e:
-                logger.warning("Admin command menu failed for %s: %s", aid, e)
-    except Exception as e:
-        logger.warning("Command menu setup failed: %s", e)
-
-# -------------------- Patched main --------------------
-
-def main():
-    update_yt_dlp()
-    if not BOT_TOKEN:
-        print("❌ لم يتم العثور على BOT_TOKEN. أضفه في Railway Variables.")
-        return
-    print("======================================")
-    print("🤖 Social Downloader Bot V3")
-    print("======================================")
-    print(f"👑 Admin ID: {ADMIN_ID}")
-    print(f"👥 Users: {get_user_count()}")
-    print(f"💾 Database: {DB_FILE}")
-    print(f"📢 Force Sub Channels: {len(get_force_channels())}")
-    print(f"🛠 Maintenance: {_maintenance_enabled()}")
-    print(f"🎁 Referrals: {db['settings'].get('referrals_enabled', True)}")
-    print("🚀 Starting bot...")
-
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .concurrent_updates(32)
-        .connection_pool_size(64)
-        .pool_timeout(10.0)
-        .post_init(_post_init)
-        .build()
-    )
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("cancel", cancel_command))
-    app.add_handler(CommandHandler("referrals", referrals_command))
-    app.add_handler(CommandHandler("top", top_command))
-    app.add_handler(CommandHandler("emoji", premium_emoji_command))
-    app.add_handler(CallbackQueryHandler(button_callback))
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, handle_url))
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.PHOTO | filters.VIDEO), handle_url))
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.Document.ALL, handle_url))
-    app.add_error_handler(error_handler)
-    print("======================================")
-    print("✅ البوت يعمل الآن.")
-    print("======================================")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-
-
-# ============================================================
-# PREMIUM EMOJI PRO PATCH V4
-# ============================================================
-# هذا القسم يضيف: التقاط Premium Emoji من الرسالة نفسها بدون ID،
-# تحويل الإيموجي العادي في الأزرار إلى أيقونات Premium، ومركز إدارة
-# للإيموجيات مع توزيع تلقائي على الأزرار. لا يحذف أي وظيفة سابقة.
-
-_ORIGINAL_TELEGRAM_INLINE_KEYBOARD_BUTTON = InlineKeyboardButton
-
-_PREMIUM_BUTTON_EMOJI_FALLBACKS = [
-    str(x) for x in (AVAILABLE_CUSTOM_EMOJI_IDS or BOT_CUSTOM_EMOJI_IDS or CUSTOM_EMOJI_IDS)
-    if str(x).isdigit()
-]
-if not _PREMIUM_BUTTON_EMOJI_FALLBACKS:
-    _PREMIUM_BUTTON_EMOJI_FALLBACKS = [
-        "5890978075201509010", "5891033729387731017",
-        "5890946721940248671", "5888585967396198556"
-    ]
-
-# Emoji ranges used only for button labels. Text messages keep their normal
-# Unicode characters unless they are explicitly rendered as Premium Emoji.
-_PLAIN_BUTTON_EMOJI_RE = re.compile(
-    r"[\U0001F1E6-\U0001F1FF\U0001F300-\U0001FAFF\u2600-\u27BF\u2300-\u23FF]",
-    re.UNICODE
-)
-
-def _premium_library_ids():
-    settings = db.setdefault("settings", {})
-    library = settings.setdefault("custom_emoji_library", [])
-    if not isinstance(library, list):
-        library = []
-        settings["custom_emoji_library"] = library
-    result = []
-    for eid in list(AVAILABLE_CUSTOM_EMOJI_IDS) + list(BOT_CUSTOM_EMOJI_IDS) + list(library):
-        eid = str(eid).strip()
-        if eid.isdigit() and eid not in result:
-            result.append(eid)
-    for eid in result:
-        if eid not in library:
-            library.append(eid)
-    return result
-
-def _remember_custom_emoji_ids(ids):
-    settings = db.setdefault("settings", {})
-    library = settings.setdefault("custom_emoji_library", [])
-    if not isinstance(library, list):
-        library = []
-        settings["custom_emoji_library"] = library
-    changed = False
-    for eid in ids or []:
-        eid = str(eid).strip()
-        if eid.isdigit() and eid not in library:
-            library.append(eid)
-            changed = True
-    if changed:
-        try:
-            save_db(db)
-        except Exception:
-            logger.exception("Could not save custom emoji library")
-    return changed
-
-def _utf16_to_py_index(text, offset):
-    raw = str(text or "")
-    units = 0
-    for index, char in enumerate(raw):
-        if units >= int(offset):
-            return index
-        units += 2 if ord(char) > 0xFFFF else 1
-    return len(raw)
-
-def _message_with_auto_premium_markup(message):
-    """Convert Premium Emoji entities in an incoming admin message automatically.
-
-    The admin can simply send a Premium Emoji while editing a message. Telegram
-    sends its real custom_emoji_id in the entity, so no manual ID is required.
-    """
-    if not message:
-        return "", []
-    text = message.text or message.caption or ""
-    if not text:
-        return "", []
-
-    entities = message.entities if message.text is not None else message.caption_entities
-    entities = entities or []
-    custom_entities = []
-    for entity in entities:
-        etype = str(getattr(entity, "type", "")).lower()
-        eid = getattr(entity, "custom_emoji_id", None)
-        if (etype == "custom_emoji" or etype.endswith("custom_emoji")) and eid:
-            custom_entities.append(entity)
-
-    if not custom_entities:
-        # Also make mapped ordinary emoji work without requiring an ID.
-        return _render_custom_emoji_markup(_replace_plain_emojis(text)), []
-
-    custom_entities.sort(key=lambda e: (int(getattr(e, "offset", 0)), -int(getattr(e, "length", 0))))
-    pieces = []
-    cursor_units = 0
-    remembered = []
-    for entity in custom_entities:
-        start_units = int(getattr(entity, "offset", 0))
-        end_units = start_units + int(getattr(entity, "length", 0))
-        start = _utf16_to_py_index(text, start_units)
-        end = _utf16_to_py_index(text, end_units)
-        cursor = _utf16_to_py_index(text, cursor_units)
-        if start < cursor:
-            continue
-        pieces.append(text[cursor:start])
-        eid = str(getattr(entity, "custom_emoji_id", "")).strip()
-        glyph = text[start:end] or "⭐"
-        pieces.append(f'<tg-emoji emoji-id="{html.escape(eid, quote=True)}">{html.escape(glyph)}</tg-emoji>')
-        remembered.append(eid)
-        cursor_units = end_units
-    pieces.append(text[_utf16_to_py_index(text, cursor_units):])
-    _remember_custom_emoji_ids(remembered)
-    return _render_custom_emoji_markup("".join(pieces)), remembered
-
-def _sanitize_button_label(raw_text):
-    """Remove ordinary emoji glyphs from button labels and return a Premium icon."""
-    value = str(raw_text or "")
-    found = _REQUESTED_EMOJI_RE.findall(value) if "_REQUESTED_EMOJI_RE" in globals() else []
-    icon = None
-    if found:
-        icon = REQUESTED_CUSTOM_EMOJI_MAP.get(found[0])
-        value = _REQUESTED_EMOJI_RE.sub("", value)
-    # Remove every remaining common Unicode emoji from button text.
-    value = _PLAIN_BUTTON_EMOJI_RE.sub("", value)
-    value = re.sub(r"[ \t]{2,}", " ", value).strip()
-    if not icon:
-        library = _premium_library_ids()
-        if library:
-            # Stable per-label selection; avoids making every button identical.
-            icon = library[abs(hash(value)) % len(library)]
-    return value or "زر", icon
-
-def _premium_button_wrapper(*args, **kwargs):
-    # Keep compatibility with all python-telegram-bot constructor forms used
-    # by the original file.
-    data = dict(kwargs)
-    if args:
-        if "text" not in data:
-            data["text"] = args[0]
-        if len(args) > 1 and "url" not in data and "callback_data" not in data:
-            data["url"] = args[1]
-    raw_text = data.get("text", "")
-    clean_text, auto_icon = _sanitize_button_label(raw_text)
-    data["text"] = clean_text
-    supplied_icon = str(data.get("icon_custom_emoji_id") or "").strip()
-    if not supplied_icon:
-        data["icon_custom_emoji_id"] = auto_icon or _PREMIUM_BUTTON_EMOJI_FALLBACKS[0]
-    try:
-        return _ORIGINAL_TELEGRAM_INLINE_KEYBOARD_BUTTON(**data)
-    except TypeError:
-        data.pop("style", None)
-        try:
-            return _ORIGINAL_TELEGRAM_INLINE_KEYBOARD_BUTTON(**data)
-        except TypeError:
-            data.pop("icon_custom_emoji_id", None)
-            return _ORIGINAL_TELEGRAM_INLINE_KEYBOARD_BUTTON(**data)
-
-# All buttons created by the original code after this point pass through this
-# compatibility wrapper, including buttons not using _make_button().
-InlineKeyboardButton = _premium_button_wrapper
-
-def _auto_fill_missing_button_emojis(unique=True, library_override=None):
-    library = list(library_override) if library_override is not None else _premium_library_ids()
-    if not library:
-        return 0
-    settings = db.setdefault("settings", {})
-    buttons = settings.setdefault("button_settings", {})
-    used = set()
-    if unique:
-        for item in buttons.values():
-            if isinstance(item, dict) and str(item.get("emoji_id", "")).isdigit():
-                used.add(str(item.get("emoji_id")))
-    changed = 0
-    pos = 0
-    for key, (default_text, default_emoji) in BUTTON_DEFAULTS.items():
-        item = buttons.setdefault(key, {"text": default_text, "emoji_id": default_emoji})
-        if not isinstance(item, dict):
-            item = {"text": default_text, "emoji_id": default_emoji}
-            buttons[key] = item
-        eid = str(item.get("emoji_id", "") or "").strip()
-        if eid.isdigit():
-            continue
-        candidates = [x for x in library if x not in used] if unique else library
-        if not candidates:
-            candidates = library
-        eid = candidates[pos % len(candidates)]
-        pos += 1
-        item["emoji_id"] = eid
-        used.add(eid)
-        changed += 1
-    if changed:
-        save_db(db)
-    return changed
-
-def _premium_assign_keyboard():
-    rows = []
-    for key, (label, _eid) in BUTTON_DEFAULTS.items():
-        rows.append([_make_button(
-            button_text(key, label),
-            f"premium_assign_{key}",
-            key=key,
-            emoji_id=button_emoji(key, "")
-        )])
-    rows.append([_make_button("🔙 رجوع", "admin_emoji_center", key="back_home")])
-    return InlineKeyboardMarkup(rows)
-
-
-def _captured_premium_library_ids():
-    """Only IDs actually captured from Telegram custom_emoji entities."""
-    raw = db.setdefault("settings", {}).setdefault("custom_emoji_library", [])
-    if not isinstance(raw, list):
-        raw = []
-        db["settings"]["custom_emoji_library"] = raw
-    result = []
-    for eid in raw:
-        eid = str(eid).strip()
-        if eid.isdigit() and eid not in result:
-            result.append(eid)
-    return result
-
-
-def _premium_emoji_center_text():
-    library = _captured_premium_library_ids()
-    assigned = 0
-    for key in BUTTON_DEFAULTS:
-        if button_emoji(key, ""):
-            assigned += 1
-    return _replace_plain_emojis(
-        f"{EMOJI_5} <b>مركز Premium Emoji PRO</b> {EMOJI_5}\n\n"
-        f"{EMOJI_4} المكتبة: <b>{len(library)}</b> إيموجي\n"
-        f"{EMOJI_2} الأزرار التي لها Premium Emoji: <b>{assigned}</b> / <b>{len(BUTTON_DEFAULTS)}</b>\n\n"
-        "✨ أرسل أي Premium Emoji أثناء تعديل رسالة، وسيتم التقاط الـ ID تلقائياً.\n"
-        "🎨 يمكنك أيضاً تعبئة الأزرار الناقصة تلقائياً بإيموجيات مختلفة.\n"
-        "🧹 إزالة الإيموجي من الأزرار أصبحت تمنع الإيموجي العادي من الظهور."
-    )
-
-def _premium_emoji_center_keyboard():
-    return InlineKeyboardMarkup([
-        [_make_button("📥 إضافة Premium Emoji فعلي", "premium_capture", key="admin_buttons")],
-        [_make_button("🎯 تعيين Premium Emoji لزر", "premium_assign_menu", key="admin_buttons")],
-        [_make_button("📚 عرض مكتبة الإيموجيات", "premium_show_library", key="admin_buttons")],
-        [_make_button("✨ تعبئة الأزرار من المكتبة", "premium_fill_buttons", key="admin_buttons")],
-        [_make_button("🎲 إعادة توزيع Premium Emoji", "premium_reassign_buttons", key="admin_buttons")],
-        [_make_button("🔙 رجوع للوحة الأدمن", "admin_panel", key="back_home")],
-    ])
-
-# Extend the admin callback without replacing any existing callback behavior.
-_ORIGINAL_ADMIN_CALLBACK_PRO = admin_callback
-async def admin_callback(update, context, data):
-    query = update.callback_query
-    if data == "admin_emoji_center":
-        context.user_data.pop("admin_action", None)
-        await query.edit_message_text(_premium_emoji_center_text(), parse_mode="HTML", reply_markup=_premium_emoji_center_keyboard())
-        return
-
-    if data == "premium_capture":
-        context.user_data["admin_action"] = "premium_capture_global"
-        await query.edit_message_text(
-            "📥 <b>إضافة Premium Emoji حقيقي</b>\n\n"
-            "أرسل الآن Premium Emoji من لوحة الإيموجي في Telegram.\n"
-            "سيتم التقاط <code>custom_emoji_id</code> الحقيقي تلقائياً وحفظه في مكتبة البوت.\n\n"
-            "يمكنك إرسال أكثر من إيموجي في رسالة واحدة.\n"
-            "للإلغاء: /cancel",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[_make_button("🔙 رجوع", "admin_emoji_center", key="back_home")]])
-        )
-        return
-
-    if data == "premium_assign_menu":
-        context.user_data.pop("admin_action", None)
-        await query.edit_message_text(
-            "🎯 <b>اختر الزر الذي تريد تغيير Premium Emoji الخاص به</b>",
-            parse_mode="HTML",
-            reply_markup=_premium_assign_keyboard()
-        )
-        return
-
-    if data.startswith("premium_assign_"):
-        key = data.replace("premium_assign_", "", 1)
-        if key not in BUTTON_DEFAULTS:
-            await query.answer("الزر غير موجود.", show_alert=True)
-            return
-        context.user_data["admin_action"] = f"premium_assign_emoji:{key}"
-        await query.edit_message_text(
-            f"🎯 <b>تعيين Premium Emoji</b>\n\n"
-            f"الزر: <b>{html.escape(button_text(key, BUTTON_DEFAULTS[key][0]))}</b>\n\n"
-            "أرسل الآن Premium Emoji الحقيقي من Telegram، وسيتم حفظه للزر مباشرة بدون كتابة ID.",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[_make_button("🔙 رجوع", "premium_assign_menu", key="back_home")]])
-        )
-        return
-    if data == "premium_fill_buttons":
-        library = _captured_premium_library_ids()
-        if not library:
-            await query.answer("❌ لا توجد Premium Emoji ملتقطة بعد. استخدم إضافة Premium Emoji فعلي أولاً.", show_alert=True)
-            return
-        changed = _auto_fill_missing_button_emojis(unique=True, library_override=library)
-        await query.answer(f"تمت إضافة Premium Emoji إلى {changed} زر.", show_alert=True)
-        await query.edit_message_text(_premium_emoji_center_text(), parse_mode="HTML", reply_markup=_premium_emoji_center_keyboard())
-        return
-    if data == "premium_reassign_buttons":
-        settings = db.setdefault("settings", {})
-        buttons = settings.setdefault("button_settings", {})
-        library = _captured_premium_library_ids()
-        if library:
-            for index, key in enumerate(BUTTON_DEFAULTS):
-                item = buttons.setdefault(key, {})
-                item["emoji_id"] = library[index % len(library)]
-            save_db(db)
-        await query.answer("تمت إعادة توزيع Premium Emoji.", show_alert=True)
-        await query.edit_message_text(_premium_emoji_center_text(), parse_mode="HTML", reply_markup=_premium_emoji_center_keyboard())
-        return
-    if data == "premium_show_library":
-        library = _captured_premium_library_ids()
-        rows = []
-        for i in range(0, len(library), 2):
-            row = []
-            for eid in library[i:i+2]:
-                row.append(_make_button("⭐", callback_data="premium_noop", key="admin_buttons", emoji_id=eid))
-            rows.append(row)
-        rows.append([_make_button("🔙 رجوع", "admin_emoji_center", key="back_home")])
-        await query.edit_message_text(
-            _replace_plain_emojis(f"{EMOJI_5} <b>مكتبة Premium Emoji</b> {EMOJI_5}\n\nالإجمالي: <b>{len(library)}</b>\nاضغط أي إيموجي لعرضه/استخدامه لاحقاً."),
-            parse_mode="HTML", reply_markup=InlineKeyboardMarkup(rows)
-        )
-        return
-    if data == "premium_noop":
-        await query.answer("Premium Emoji محفوظ في المكتبة.", show_alert=False)
-        return
-    await _ORIGINAL_ADMIN_CALLBACK_PRO(update, context, data)
-
-# Add the Premium Emoji center to the existing admin keyboard without removing
-# any existing button.
-_ORIGINAL_ADMIN_KEYBOARD_PRO = admin_keyboard
-def admin_keyboard():
-    markup = _ORIGINAL_ADMIN_KEYBOARD_PRO()
-    rows = list(markup.inline_keyboard)
-    rows.insert(-1 if rows else 0, [_make_button("🎨 مركز Premium Emoji PRO", "admin_emoji_center", key="admin_buttons")])
-    return InlineKeyboardMarkup(rows)
-
-# Automatic capture of Telegram custom-emoji entities for editable messages/buttons.
-_ORIGINAL_HANDLE_ADMIN_MESSAGE_PRO = handle_admin_message
-
-def _extract_message_custom_emoji_ids(message):
-    """Return real Telegram Premium/custom emoji IDs from a text/caption entity list."""
-    if not message:
-        return []
-    entities = message.entities if message.text is not None else message.caption_entities
-    result = []
-    for entity in (entities or []):
-        etype = str(getattr(entity, "type", "")).lower()
-        eid = str(getattr(entity, "custom_emoji_id", "") or "").strip()
-        if eid and (etype == "custom_emoji" or etype.endswith("custom_emoji")):
-            result.append(eid)
-    if result:
-        _remember_custom_emoji_ids(result)
-        try:
-            save_db(db)
-        except Exception:
-            pass
-    return result
-
-def _remove_custom_emoji_entities_from_text(message, text):
-    """Remove Premium emoji glyphs from a button label using Telegram UTF-16 offsets."""
-    if not message or not text:
-        return str(text or "")
-    entities = message.entities if message.text is not None else message.caption_entities
-    spans = []
-    for entity in (entities or []):
-        etype = str(getattr(entity, "type", "")).lower()
-        if etype != "custom_emoji" and not etype.endswith("custom_emoji"):
-            continue
-        start = _utf16_to_py_index(text, int(getattr(entity, "offset", 0) or 0))
-        end = _utf16_to_py_index(text, int(getattr(entity, "offset", 0) or 0) + int(getattr(entity, "length", 0) or 0))
-        spans.append((start, end))
-    for start, end in reversed(sorted(spans)):
-        text = text[:start] + text[end:]
-    return text.strip()
-
-async def handle_admin_message(update, context):
-    message = update.effective_message
-    user = update.effective_user
-    action = context.user_data.get("admin_action") if user else None
-
-    # ============================================================
-    # PREMIUM CENTER — capture real Telegram custom emoji IDs
-    # ============================================================
-    if (message and user and is_admin(user.id) and isinstance(action, str)):
-        if action == "premium_capture_global":
-            captured_ids = _extract_message_custom_emoji_ids(message)
-            if captured_ids:
-                context.user_data.pop("admin_action", None)
-                await message.reply_text(
-                    "✅ <b>تم حفظ Premium Emoji الحقيقي.</b>\n\n"
-                    f"تم التقاط: <b>{len(captured_ids)}</b> إيموجي\n"
-                    + "\n".join(f"• <code>{html.escape(eid)}</code>" for eid in captured_ids),
-                    parse_mode="HTML",
-                    reply_markup=_premium_emoji_center_keyboard()
-                )
-                return True
-            await message.reply_text(
-                "❌ لم أجد Premium Emoji في الرسالة. أرسل الإيموجي من قسم Premium Emoji في Telegram، وليس Emoji عادي.",
-                parse_mode="HTML"
-            )
-            return True
-
-        if action.startswith("premium_assign_emoji:"):
-            key = action.split(":", 1)[1]
-            if key in BUTTON_DEFAULTS:
-                captured_ids = _extract_message_custom_emoji_ids(message)
-                if captured_ids:
-                    eid = captured_ids[0]
-                    current = get_button_setting(key)
-                    if set_button_setting(key, current["text"], eid):
-                        context.user_data.pop("admin_action", None)
-                        await message.reply_text(
-                            f"✅ <b>تم تعيين Premium Emoji الحقيقي للزر.</b>\n\n"
-                            f"الزر: <b>{html.escape(current['text'])}</b>\n"
-                            f"ID: <code>{html.escape(eid)}</code>",
-                            parse_mode="HTML",
-                            reply_markup=button_editor_keyboard()
-                        )
-                        return True
-                await message.reply_text(
-                    "❌ لم أجد Premium Emoji حقيقي في الرسالة. أرسل Premium Emoji من Telegram.",
-                    parse_mode="HTML"
-                )
-                return True
-
-    # ============================================================
-    # BUTTON EDIT — automatic Premium Emoji capture
-    # ============================================================
-    # The old handler required: Button Name|CUSTOM_EMOJI_ID.
-    # Now the admin can simply send the actual Premium Emoji from
-    # Telegram's emoji picker. Telegram supplies custom_emoji_id
-    # in message.entities, so no manual ID is needed.
-    if (message and user and is_admin(user.id) and isinstance(action, str)
-            and action.startswith("button_edit:") and message.text is not None):
-        key = action.split(":", 1)[1]
-        if key in BUTTON_DEFAULTS:
-            captured_ids = _extract_message_custom_emoji_ids(message)
-            value = message.text.strip()
-
-            if captured_ids:
-                # Remove the Premium Emoji itself from the visible button label.
-                new_text = _remove_custom_emoji_entities_from_text(message, value).strip()
-                # If the admin sent only the Premium Emoji, keep the current button name.
-                if not new_text:
-                    try:
-                        new_text = str(get_button_setting(key).get("text") or BUTTON_DEFAULTS[key][0]).strip()
-                    except Exception:
-                        new_text = str(BUTTON_DEFAULTS[key][0]).strip()
-
-                new_emoji = captured_ids[0]
-                if set_button_setting(key, new_text, new_emoji):
-                    context.user_data.pop("admin_action", None)
-                    await message.reply_text(
-                        _replace_plain_emojis(
-                            f"{EMOJI_6} <b>تم تحديث الزر تلقائياً.</b>\n\n"
-                            f"{EMOJI_4} الاسم: <b>{html.escape(new_text)}</b>\n"
-                            f"{EMOJI_7} Premium Emoji: تم التقاطه تلقائياً بدون كتابة ID.\n\n"
-                            f"<b>Emoji ID:</b> <code>{html.escape(new_emoji)}</code>"
-                        ),
-                        parse_mode="HTML",
-                        reply_markup=button_editor_keyboard()
-                    )
-                    return True
-
-    # ============================================================
-    # MESSAGE EDIT — automatic Premium Emoji capture
-    # ============================================================
-    if message and user and is_admin(user.id) and isinstance(action, str) and action.startswith("message_edit:"):
-        key = action.split(":", 1)[1]
-        if key in MESSAGE_DEFAULTS and (message.text is not None or message.caption is not None):
-            raw_text, captured = _message_with_auto_premium_markup(message)
-            if raw_text:
-                if set_message_setting(key, raw_text):
-                    context.user_data.pop("admin_action", None)
-                    await message.reply_text(
-                        _replace_plain_emojis(
-                            f"{EMOJI_6} <b>تم حفظ الرسالة تلقائياً.</b>\n\n"
-                            f"{EMOJI_4} تم التقاط <b>{len(captured)}</b> Premium Emoji من رسالتك بدون ID.\n\n"
-                            f"<b>المعاينة:</b>\n{raw_text}"
-                        ),
-                        parse_mode="HTML", reply_markup=message_editor_keyboard()
-                    )
-                    return True
-
-    return await _ORIGINAL_HANDLE_ADMIN_MESSAGE_PRO(update, context)
-
-# Ensure the new router accepts the added callbacks.
-_ORIGINAL_BUTTON_CALLBACK_PRO = button_callback
-async def button_callback(update, context):
-    query = update.callback_query
-    if query and (
-        query.data in {"admin_emoji_center", "premium_capture", "premium_assign_menu",
-                       "premium_fill_buttons", "premium_reassign_buttons", "premium_show_library", "premium_noop"}
-        or str(query.data or "").startswith("premium_assign_")
-    ):
-        user = update.effective_user
-        if not user or not is_admin(user.id):
-            await query.answer("🚫 هذه اللوحة خاصة بالأدمن.", show_alert=True)
-            return
-        await admin_callback(update, context, query.data)
-        return
-    return await _ORIGINAL_BUTTON_CALLBACK_PRO(update, context)
-
-# New admin command for the Premium Emoji center.
-_ORIGINAL_POST_INIT_PRO = _post_init
-async def _post_init(application):
-    await _ORIGINAL_POST_INIT_PRO(application)
-    try:
-        from telegram import BotCommand, BotCommandScopeChat
-        ids = {int(ADMIN_ID), *get_admins()}
-        for aid in ids:
-            await application.bot.set_my_commands(
-                [BotCommand("start", "فتح البوت"), BotCommand("referrals", "نظام الإحالات"),
-                 BotCommand("top", "المتصدرون"), BotCommand("help", "المساعدة"),
-                 BotCommand("admin", "لوحة الأدمن"), BotCommand("emoji", "مركز Premium Emoji"),
-                 BotCommand("cancel", "إلغاء العملية")],
-                scope=BotCommandScopeChat(chat_id=aid)
-            )
-    except Exception as e:
-        logger.warning("Premium emoji command setup failed: %s", e)
-
-async def premium_emoji_command(update, context):
-    user = update.effective_user
-    if not user or not is_admin(user.id):
-        return
-    await update.effective_message.reply_text(_premium_emoji_center_text(), parse_mode="HTML", reply_markup=_premium_emoji_center_keyboard())
-
-
-
-# ============================================================
-# REAL FIX PATCH V5
-# 1) button_edit_* must be routed to admin_callback; otherwise Telegram
-#    falls through to the old callback handler and shows:
-#    "تعذر تنفيذ الأمر، حاول مرة أخرى."
-# ============================================================
-
-# Keep the previous callback implementation intact and only add the missing
-# admin route. This does not remove or replace any existing feature.
-_PREVIOUS_FINAL_BUTTON_CALLBACK_V5 = button_callback
-
-async def button_callback(update, context):
-    query = update.callback_query
-    user = update.effective_user
-    if not query or not user:
-        return
-
-    data = str(query.data or "")
-
-    # The button editor uses button_edit_<key>. The older router did not list
-    # this prefix, so it incorrectly fell through to the user callback.
-    if data.startswith("button_edit_"):
-        try:
-            await query.answer()
-        except Exception:
-            pass
-        if not is_admin(user.id):
-            try:
-                await query.answer("🚫 هذه اللوحة خاصة بالأدمن.", show_alert=True)
-            except Exception:
-                pass
-            return
-        try:
-            await admin_callback(update, context, data)
-        except Exception as exc:
-            logger.exception("Button editor callback failed: %s", exc)
-            try:
-                await query.answer("❌ تعذر فتح تعديل الزر.", show_alert=True)
-            except Exception:
-                pass
-        return
-
-    return await _PREVIOUS_FINAL_BUTTON_CALLBACK_V5(update, context)
-
-
-
-# ============================================================
-# REAL FIX PATCH V6
-# Button editor: safe callback screen + plain-name editing.
-# ============================================================
-
-# Keep the existing button editor callback implementation. The block above
-# now uses _make_button() and therefore does not depend on a hard-coded icon
-# custom-emoji being accepted by Telegram when the edit screen is opened.
-
-# Ensure the admin callback router also accepts all button editor operations.
-_PREVIOUS_FINAL_BUTTON_CALLBACK_V6 = button_callback
-async def button_callback(update, context):
-    query = update.callback_query
-    user = update.effective_user
-    if query and user:
-        data = str(query.data or "")
-        if data.startswith((
-            "button_edit_",
-            "button_choose_emoji_",
-            "button_emoji_",
-            "button_style_",
-            "button_reset_all_emojis",
-        )):
-            if not is_admin(user.id):
-                await query.answer("🚫 هذه اللوحة خاصة بالأدمن.", show_alert=True)
-                return
-            try:
-                await query.answer()
-            except Exception:
-                pass
-            try:
-                await admin_callback(update, context, data)
-            except Exception as exc:
-                logger.exception("Button editor V6 callback failed: %s", exc)
-                try:
-                    await query.answer("❌ تعذر تنفيذ تعديل الزر. راجع سجل البوت للخطأ.", show_alert=True)
-                except Exception:
-                    pass
-            return
-    return await _PREVIOUS_FINAL_BUTTON_CALLBACK_V6(update, context)
-
-
-# ============================================================
-# FINAL REAL FIX V2
-# - Force-remove Instagram from the runtime UI/settings.
-# - Open button editor through a completely plain Telegram keyboard so a
-#   broken/unsupported Premium Emoji can never prevent the editor from opening.
-# - Keep the existing name/emoji saving handler intact.
-# ============================================================
-try:
-    # The previous generated build could retain an old Instagram setting in
-    # an existing JSON database. Remove that runtime entry as well.
-    if isinstance(globals().get("BUTTON_DEFAULTS"), dict):
-        BUTTON_DEFAULTS.pop("platform_instagram", None)
-    if isinstance(globals().get("db"), dict):
-        _bs = db.setdefault("settings", {}).setdefault("button_settings", {})
-        if isinstance(_bs, dict):
-            _bs.pop("platform_instagram", None)
-        save_db(db)
-except Exception as _instagram_cleanup_error:
-    logger.warning("Instagram runtime cleanup failed: %s", _instagram_cleanup_error)
-
-
-def _plain_button_editor_keyboard():
-    """Editor navigation that never uses custom emoji/style fields."""
-    rows = []
-    rows.append([
-        _ORIGINAL_TELEGRAM_INLINE_KEYBOARD_BUTTON(text="🎨 اختر Premium Emoji", callback_data="button_choose_emoji___editor")
-    ])
-    rows.append([
-        _ORIGINAL_TELEGRAM_INLINE_KEYBOARD_BUTTON(text="🗑 إزالة الإيموجي", callback_data="button_emoji_clear___editor")
-    ])
-    rows.append([
-        _ORIGINAL_TELEGRAM_INLINE_KEYBOARD_BUTTON(text="🔙 رجوع", callback_data="admin_buttons")
-    ])
-    return InlineKeyboardMarkup(rows)
-
-
-# Save the currently effective callback and add a final, isolated route.
-_PREVIOUS_BUTTON_CALLBACK_FINAL_V2 = button_callback
-
-async def button_callback(update, context):
-    query = update.callback_query
-    user = update.effective_user
-    if query and user:
-        data = str(query.data or "")
-
-        if data.startswith("button_edit_"):
-            if not is_admin(user.id):
-                await query.answer("🚫 هذه اللوحة خاصة بالأدمن.", show_alert=True)
-                return
-
-            key = data[len("button_edit_"):]
-            if key not in BUTTON_DEFAULTS:
-                await query.answer("❌ هذا الزر غير موجود في النسخة الحالية.", show_alert=True)
-                return
-
-            current = get_button_setting(key)
-            context.user_data["admin_action"] = f"button_edit:{key}"
-
-            # IMPORTANT: do not call button_editor_keyboard() here. The full
-            # editor contains many dynamic/custom-emoji buttons; this screen
-            # must remain usable even if one Premium Emoji ID is rejected by
-            # Telegram.
-            try:
-                await query.answer()
+                bot.stop_polling()
             except Exception:
                 pass
 
+            # التأكد من حذف الـWebhook أيضًا بعد أي خطأ في Polling.
             try:
-                await query.edit_message_text(
-                    "✏️ <b>تعديل الزر</b>\n\n"
-                    f"الاسم الحالي: <b>{html.escape(str(current.get('text') or 'زر'))}</b>\n"
-                    f"Premium Emoji الحالي: <code>{html.escape(str(current.get('emoji_id') or 'لا يوجد'))}</code>\n\n"
-                    "أرسل الاسم الجديد فقط.\n"
-                    "ويمكنك أيضاً إرسال: <code>الاسم|emoji_id</code>\n\n"
-                    "أو اضغط على اختيار Premium Emoji ثم أرسل Premium Emoji الحقيقي من Telegram.",
-                    parse_mode="HTML",
-                    reply_markup=_plain_button_editor_keyboard(),
-                )
-            except Exception as exc:
-                logger.exception("FINAL button editor open failed for %s: %s", key, exc)
-                # If editing the old admin message itself fails, send a fresh
-                # message instead of showing the generic callback error.
-                try:
-                    await query.message.reply_text(
-                        "✏️ <b>تعديل الزر</b>\n\n"
-                        f"الاسم الحالي: <b>{html.escape(str(current.get('text') or 'زر'))}</b>\n\n"
-                        "أرسل الاسم الجديد الآن.",
-                        parse_mode="HTML",
-                        reply_markup=_plain_button_editor_keyboard(),
-                    )
-                    return
-                except Exception:
-                    await query.answer("❌ تعذر فتح محرر الزر. راجع سجل البوت.", show_alert=True)
-            return
+                bot.remove_webhook()
+            except Exception:
+                pass
 
-    return await _PREVIOUS_BUTTON_CALLBACK_FINAL_V2(update, context)
+            time.sleep(5)
 
 
-# The two special editor buttons above use a harmless sentinel key. Handle
-# them here so they cannot fall through to an older callback implementation.
-_PREVIOUS_ADMIN_CALLBACK_FINAL_V2 = admin_callback
-
-async def admin_callback(update, context, data):
-    if data == "button_choose_emoji___editor":
-        query = update.callback_query
-        user = update.effective_user
-        if not user or not is_admin(user.id):
-            await query.answer("🚫 هذه اللوحة خاصة بالأدمن.", show_alert=True)
-            return
-        action = str(context.user_data.get("admin_action") or "")
-        if not action.startswith("button_edit:"):
-            await query.answer("❌ اختر الزر أولاً.", show_alert=True)
-            return
-        key = action.split(":", 1)[1]
-        if key not in BUTTON_DEFAULTS:
-            await query.answer("❌ الزر غير موجود.", show_alert=True)
-            return
-        await query.answer()
-        await query.edit_message_text(
-            "🎨 <b>Premium Emoji للزر</b>\n\n"
-            f"الزر: <b>{html.escape(get_button_setting(key).get('text', 'زر'))}</b>\n\n"
-            "أرسل الآن Premium Emoji الحقيقي من Telegram، وسيتم التقاط الـID تلقائياً.",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([
-                [_ORIGINAL_TELEGRAM_INLINE_KEYBOARD_BUTTON(text="🔙 رجوع", callback_data=f"button_edit_{key}")]
-            ])
-        )
-        context.user_data["admin_action"] = f"premium_assign_emoji:{key}"
-        return
-
-    if data == "button_emoji_clear___editor":
-        query = update.callback_query
-        user = update.effective_user
-        if not user or not is_admin(user.id):
-            await query.answer("🚫 هذه اللوحة خاصة بالأدمن.", show_alert=True)
-            return
-        action = str(context.user_data.get("admin_action") or "")
-        if not action.startswith("button_edit:"):
-            await query.answer("❌ اختر الزر أولاً.", show_alert=True)
-            return
-        key = action.split(":", 1)[1]
-        if key in BUTTON_DEFAULTS:
-            current = get_button_setting(key)
-            set_button_setting(key, current.get("text", BUTTON_DEFAULTS[key][0]), "")
-            context.user_data["admin_action"] = f"button_edit:{key}"
-            await query.answer("✅ تمت إزالة Premium Emoji من الزر.", show_alert=True)
-            await query.edit_message_text(
-                "✏️ <b>تعديل الزر</b>\n\n"
-                f"الاسم الحالي: <b>{html.escape(str(current.get('text') or 'زر'))}</b>\n"
-                "Premium Emoji الحالي: <code>لا يوجد</code>\n\n"
-                "أرسل الاسم الجديد أو اختر Premium Emoji.",
-                parse_mode="HTML",
-                reply_markup=_plain_button_editor_keyboard(),
-            )
-            return
-
-    return await _PREVIOUS_ADMIN_CALLBACK_FINAL_V2(update, context, data)
-
-
-# ============================================================
-# Entry Point
-# ============================================================
-
-
-if __name__ == "__main__":
-    main()
+run_bot_forever()
