@@ -3951,7 +3951,34 @@ def start_private(message):
             )
         )
 
-    bot.send_message(message.chat.id, text, reply_markup=markup)
+    # إرسال رسالة البداية مع بدائل آمنة؛ أي Custom Emoji أو زر غير صالح
+    # لا يجب أن يمنع البوت من الرد على /start.
+    try:
+        bot.send_message(message.chat.id, text, reply_markup=markup)
+        return
+    except Exception as first_error:
+        print("[START SEND ERROR]", repr(first_error))
+        traceback.print_exc()
+
+    # محاولة ثانية بدون الأزرار، في حال كان رابط/زر غير صالح.
+    try:
+        bot.send_message(message.chat.id, text)
+        return
+    except Exception as second_error:
+        print("[START PLAIN SEND ERROR]", repr(second_error))
+        traceback.print_exc()
+
+    # محاولة أخيرة بنص بسيط بدون Custom Emoji أو HTML.
+    try:
+        plain_text = (
+            f"مرحبًا يا {full_name(user)}\n\n"
+            "هذا البوت مخصص لإدارة وحماية المجموعات بالكامل.\n"
+            "أضف البوت إلى مجموعتك وارفعه مشرفًا مع الصلاحيات المطلوبة."
+        )
+        bot.send_message(message.chat.id, plain_text)
+    except Exception as final_error:
+        print("[START FINAL SEND ERROR]", repr(final_error))
+        traceback.print_exc()
 
 
 # =========================================================
