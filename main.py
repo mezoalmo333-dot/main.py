@@ -16,10 +16,10 @@ from threading import Thread, Lock
 # =========================================================
 # الإعدادات
 # =========================================================
-BOT_TOKEN = "8682892405:AAGp7zV4d2gades5_X4piF-1UQMZgOw1AAI"
+BOT_TOKEN = "8878742478:AAF-h5bIAg_OwXQQXc89ipw37Z4yRKKvxV4"
 
 DEVELOPER_ID = 8037399518
-BOT_USERNAME = "LeaAeDr_Bot"
+BOT_USERNAME = "v_u_kbot"
 DB_NAME = "protection_bot.db"
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
