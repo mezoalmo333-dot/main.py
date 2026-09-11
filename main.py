@@ -12,6 +12,7 @@ import os
 import logging
 import traceback
 import urllib.request
+import urllib.parse
 from collections import defaultdict, deque
 from threading import Thread, Lock
 
@@ -65,6 +66,13 @@ CE_BOT_REPLY = "5201842613983917014"
 CE_TON_PRICE = "5260450573768990626"
 CE_TON_ANALYSIS = "5357069174512303778"
 CE_FORCE_SUB = "5271801931814165886"
+CE_UPDATE_MAX_REQUESTED = "5258093637450866522"
+CE_FORCE_VERIFY = "5258093637450866522"
+CE_TON_WALLET = "5258204546391351475"
+CE_TON_BALANCE = "5258368777350816286"
+CE_TON_USERS = "5260399854500191689"
+CE_TON_NFT = "5301296193790308732"
+CE_TON_DEV_BUTTON = "5253959125838090076"
 
 # الإيموجيات المميزة المطلوبة للترحيب والأزرار
 CE_WELCOME_HELLO = "5258501105293205250"
@@ -320,28 +328,35 @@ _original_send_voice = bot.send_voice
 _original_edit_message_text = bot.edit_message_text
 
 
+def _plain_fallback_text(text):
+    """إزالة وسوم HTML والإيموجي المميز عند فشل Telegram في تحليل الرسالة."""
+    if text is None:
+        return ""
+    value = str(text)
+    value = re.sub(r"<tg-emoji\b[^>]*>(.*?)</tg-emoji>", r"\1", value, flags=re.DOTALL | re.IGNORECASE)
+    value = re.sub(r"</?(?:b|strong|i|em|u|s|code|pre|blockquote|a)\b[^>]*>", "", value, flags=re.IGNORECASE)
+    value = html.unescape(value)
+    return strip_non_custom_emoji(value).strip()
+
+
 def _send_message_decorated(chat_id, text, *args, **kwargs):
-    # المحاولة الأولى: الرسالة بالتنسيق والإيموجي المخصص.
+    decorated = decorate_text(text)
     try:
-        return _original_send_message(chat_id, decorate_text(text), *args, **kwargs)
+        return _original_send_message(chat_id, decorated, *args, **kwargs)
     except Exception as first_error:
-        # Telegram يرفض الرسالة بالكامل إذا كان HTML أو Custom Emoji غير صالح.
-        # نعيد إرسال النص الأصلي بدون HTML حتى لا يتوقف /start أو أي أمر آخر.
-        print("[SEND DECORATED ERROR]", repr(first_error))
-        safe_kwargs = dict(kwargs)
-        safe_kwargs.pop("parse_mode", None)
-        safe_kwargs.pop("entities", None)
-        try:
-            return _original_send_message(
-                chat_id,
-                str(text),
-                *args,
-                parse_mode=None,
-                **safe_kwargs,
-            )
-        except Exception as second_error:
-            print("[SEND PLAIN ERROR]", repr(second_error))
+        error_text = str(first_error).upper()
+        if "ENTITY" not in error_text and "BAD REQUEST" not in error_text:
             raise
+        fallback_kwargs = dict(kwargs)
+        fallback_kwargs["parse_mode"] = None
+        fallback = _plain_fallback_text(text)
+        logging.exception("[SEND MESSAGE HTML ERROR] Retrying plain text")
+        previous_parse_mode = getattr(bot, "parse_mode", None)
+        try:
+            bot.parse_mode = None
+            return _original_send_message(chat_id, fallback, *args, **fallback_kwargs)
+        finally:
+            bot.parse_mode = previous_parse_mode
 
 
 def _decorate_caption_kwargs(kwargs):
@@ -351,33 +366,23 @@ def _decorate_caption_kwargs(kwargs):
 
 
 def _send_photo_decorated(chat_id, photo, *args, **kwargs):
-    return _original_send_photo(
-        chat_id, photo, *args, **_decorate_caption_kwargs(kwargs)
-    )
+    return _safe_media_call(_original_send_photo, chat_id, photo, *args, **kwargs)
 
 
 def _send_video_decorated(chat_id, video, *args, **kwargs):
-    return _original_send_video(
-        chat_id, video, *args, **_decorate_caption_kwargs(kwargs)
-    )
+    return _safe_media_call(_original_send_video, chat_id, video, *args, **kwargs)
 
 
 def _send_document_decorated(chat_id, document, *args, **kwargs):
-    return _original_send_document(
-        chat_id, document, *args, **_decorate_caption_kwargs(kwargs)
-    )
+    return _safe_media_call(_original_send_document, chat_id, document, *args, **kwargs)
 
 
 def _send_audio_decorated(chat_id, audio, *args, **kwargs):
-    return _original_send_audio(
-        chat_id, audio, *args, **_decorate_caption_kwargs(kwargs)
-    )
+    return _safe_media_call(_original_send_audio, chat_id, audio, *args, **kwargs)
 
 
 def _send_voice_decorated(chat_id, voice, *args, **kwargs):
-    return _original_send_voice(
-        chat_id, voice, *args, **_decorate_caption_kwargs(kwargs)
-    )
+    return _safe_media_call(_original_send_voice, chat_id, voice, *args, **kwargs)
 
 
 def _edit_message_text_decorated(text, chat_id=None, message_id=None, *args, **kwargs):
@@ -388,6 +393,20 @@ def _edit_message_text_decorated(text, chat_id=None, message_id=None, *args, **k
         *args,
         **kwargs
     )
+
+
+def _safe_media_call(original, chat_id, media, *args, **kwargs):
+    try:
+        return original(chat_id, media, *args, **_decorate_caption_kwargs(dict(kwargs)))
+    except Exception as first_error:
+        if "ENTITY" not in str(first_error).upper() and "BAD REQUEST" not in str(first_error).upper():
+            raise
+        fallback_kwargs = _decorate_caption_kwargs(dict(kwargs))
+        if fallback_kwargs.get("caption"):
+            fallback_kwargs["caption"] = _plain_fallback_text(kwargs.get("caption", ""))
+        fallback_kwargs["parse_mode"] = None
+        logging.exception("[MEDIA HTML ERROR] Retrying plain caption")
+        return original(chat_id, media, *args, **fallback_kwargs)
 
 
 bot.send_message = _send_message_decorated
@@ -836,7 +855,7 @@ def button(
     text = strip_non_custom_emoji(str(text or "")).strip()
     kwargs = {
         "text": text,
-        "style": "danger"
+        "style": style or "danger"
     }
 
     if callback_data is not None:
@@ -898,7 +917,7 @@ def transparent_url_button(text, url, emoji_id=None):
     kwargs = {
         "text": text,
         "url": url,
-        "style": "danger"
+        "style": "primary"
     }
 
     if emoji_id:
@@ -3817,7 +3836,7 @@ def force_sub_markup(user_id, channels=None):
         channel_title = row["title"] or row["username"] or "الاشتراك"
         if channel_url:
             subscribe_btn = transparent_url_button(
-                "اشتراك " + channel_title[:18],
+                "اشتراك قناة البوت ياروحي",
                 channel_url,
                 emoji_id=row["emoji_id"] or CE_FORCE_SUB
             )
@@ -3825,9 +3844,10 @@ def force_sub_markup(user_id, channels=None):
                 markup.row(
                     subscribe_btn,
                     button(
-                        "تم التحقق" if subscribed else "تحقق",
+                        "تم التحقق" if subscribed else "تحقق من الاشتراك",
                         callback_data=f"force_sub_check:{row['id']}",
-                        icon_custom_emoji_id=CE_FORCE_SUB
+                        style="success" if subscribed else "primary",
+                        icon_custom_emoji_id=CE_FORCE_VERIFY
                     )
                 )
         else:
@@ -3837,9 +3857,6 @@ def force_sub_markup(user_id, channels=None):
                 icon_custom_emoji_id=CE_FORCE_SUB
             ))
 
-    update_btn = transparent_url_button("Update Max", UPDATE_MAX_URL, emoji_id=CE_REPLY_BUTTON)
-    if update_btn:
-        markup.add(update_btn)
     return markup
 
 
@@ -3853,8 +3870,8 @@ def send_force_sub_prompt(message, missing=None):
     text = (
         "<b>الاشتراك الإجباري</b>\n"
         "┈┅⊷━⊷┅┅┈\n"
-        "يجب الاشتراك في القنوات المطلوبة قبل الكتابة في المجموعة.\n"
-        "اضغط على الزر للاشتراك، ثم اضغط عليه مرة أخرى للتحقق."
+        "لازم تشترك في قناة البوت ياروحي قبل التحدث.\n"
+        "اضغط على زر الاشتراك، ثم اضغط على زر التحقق بعد الاشتراك."
     )
     try:
         sent = bot.send_message(message.chat.id, text, reply_markup=markup)
@@ -3930,13 +3947,80 @@ def force_remove_admin_markup():
 
 
 # =========================================================
+# كشف محافظ TON Keeper / TON
+# =========================================================
+TON_ADDRESS_RE = re.compile(r"\b(?:EQ|UQ|kQ|0Q)[A-Za-z0-9_\-]{40,70}\b")
+
+def _tonapi_get(path):
+    url = "https://tonapi.io/v2" + path
+    req = urllib.request.Request(url, headers={"User-Agent": "MaxBot/1.0"})
+    with urllib.request.urlopen(req, timeout=15) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+def _ton_format(value):
+    try:
+        return f"{float(value):,.3f}"
+    except Exception:
+        return "0.000"
+
+def send_ton_wallet_info(message, address):
+    try:
+        account = _tonapi_get("/accounts/" + urllib.parse.quote(address, safe=""))
+        balance_ton = float(account.get("balance", 0)) / 1_000_000_000
+        usd_rate = None
+        try:
+            market = get_ton_market_data()
+            usd_rate = market[0]
+        except Exception:
+            pass
+        usd_text = "غير متاح"
+        if usd_rate:
+            usd_text = f"{balance_ton * float(usd_rate):,.2f} USD"
+        lines = [
+            f"{tg_emoji(CE_TON_WALLET, '💼')} <b>Wallet :</b> <code>{html.escape(address)}</code>",
+            "—————«•»—————",
+            f"{tg_emoji(CE_TON_BALANCE, '💎')} <b>Balance :</b> {_ton_format(balance_ton)} TON ≈ {usd_text}",
+            "—————«•»—————"
+        ]
+        jettons = []
+        try:
+            jettons = _tonapi_get("/accounts/" + urllib.parse.quote(address, safe="") + "/jettons") .get("balances", [])
+        except Exception:
+            jettons = []
+        users = []
+        try:
+            nft_items = _tonapi_get("/accounts/" + urllib.parse.quote(address, safe="") + "/nfts?limit=100").get("nft_items", [])
+        except Exception:
+            nft_items = []
+        lines.append(f"{tg_emoji(CE_TON_USERS, '👤')} <b>Users (0) :</b>\nلا توجد حسابات مرتبطة ظاهرة في البيانات العامة.")
+        lines.append("—————«•»—————")
+        lines.append(f"{tg_emoji(CE_TON_NFT, '🎁')} <b>NFT :</b>")
+        if nft_items:
+            for item in nft_items[:30]:
+                meta = item.get("metadata", {}) or {}
+                name = meta.get("name") or item.get("address") or "NFT"
+                lines.append("- " + html.escape(str(name)))
+        else:
+            lines.append("لا توجد هدايا أو NFT ظاهرة.")
+        markup = types.InlineKeyboardMarkup()
+        btn = transparent_url_button("MaX", UPDATE_MAX_URL, emoji_id=CE_TON_DEV_BUTTON)
+        if btn:
+            markup.add(btn)
+        bot.reply_to(message, "\n".join(lines), reply_markup=markup)
+        return True
+    except Exception as exc:
+        print("[TON Wallet Error]", repr(exc))
+        bot.reply_to(message, "تعذر قراءة محفظة TON حاليًا. تأكد أن العنوان صحيح وحاول مرة أخرى.")
+        return True
+
+# =========================================================
 # START الخاص
 # =========================================================
 def start_private(message):
     user = message.from_user
     safe_name = html.escape(full_name(user))
 
-    # يتم تسجيل المستخدم من الراوتر؛ لا نكرر التسجيل هنا حتى لا يمنع خطأ قاعدة البيانات الرد.
+    track_private_user(message, notify=True)
 
     text = (
         f"{tg_emoji(CE_WELCOME_HELLO, '•')} مرحبًـا يـ {safe_name}\n"
@@ -3971,34 +4055,7 @@ def start_private(message):
             )
         )
 
-    # إرسال رسالة البداية مع بدائل آمنة؛ أي Custom Emoji أو زر غير صالح
-    # لا يجب أن يمنع البوت من الرد على /start.
-    try:
-        bot.send_message(message.chat.id, text, reply_markup=markup)
-        return
-    except Exception as first_error:
-        print("[START SEND ERROR]", repr(first_error))
-        traceback.print_exc()
-
-    # محاولة ثانية بدون الأزرار، في حال كان رابط/زر غير صالح.
-    try:
-        bot.send_message(message.chat.id, text)
-        return
-    except Exception as second_error:
-        print("[START PLAIN SEND ERROR]", repr(second_error))
-        traceback.print_exc()
-
-    # محاولة أخيرة بنص بسيط بدون Custom Emoji أو HTML.
-    try:
-        plain_text = (
-            f"مرحبًا يا {full_name(user)}\n\n"
-            "هذا البوت مخصص لإدارة وحماية المجموعات بالكامل.\n"
-            "أضف البوت إلى مجموعتك وارفعه مشرفًا مع الصلاحيات المطلوبة."
-        )
-        bot.send_message(message.chat.id, plain_text)
-    except Exception as final_error:
-        print("[START FINAL SEND ERROR]", repr(final_error))
-        traceback.print_exc()
+    bot.send_message(message.chat.id, text, reply_markup=markup)
 
 
 # =========================================================
@@ -4454,18 +4511,6 @@ def start_global_reply(message):
 # =========================================================
 # الراوتر
 # =========================================================
-def normalize_fragment_username(text):
-    """Normalize Fragment/Telegram username input; accepts @username or username."""
-    value = (text or "").strip()
-    if value.startswith("@"):
-        value = value[1:]
-    return value if re.fullmatch(r"[A-Za-z0-9_]{5,32}", value) else None
-
-
-def fragment_username_link(username):
-    return f"https://fragment.com/username/{username}"
-
-
 @bot.message_handler(
     content_types=[
         "text",
@@ -4512,6 +4557,12 @@ def main_handler(message):
                         traceback.print_exc()
                 return
 
+        if message.chat and message.chat.type == "private" and message.text and message.from_user:
+            wallet_match = TON_ADDRESS_RE.search(message.text.strip())
+            if wallet_match:
+                if send_ton_wallet_info(message, wallet_match.group(0)):
+                    return
+
         if (
             message.from_user
             and not message.from_user.is_bot
@@ -4527,23 +4578,14 @@ def main_handler(message):
 
         if message.chat.type == "private":
 
-            # قبول اليوزر بصيغة @username كما طلب المستخدم.
-            # يتم التطبيع بدون @ داخليًا مع الحفاظ على الرابط بصيغة Telegram الصحيحة.
-            _fragment_username = normalize_fragment_username(getattr(message, "text", ""))
-            if _fragment_username and getattr(message, "text", "").lstrip().startswith("@"):
-                try:
-                    bot.send_message(
-                        message.chat.id,
-                        f"<b>Username:</b> @{_fragment_username}\n\n"
-                        f"<b>Fragment:</b> <a href=\"{fragment_username_link(_fragment_username)}\">فتح صفحة اليوزر على Fragment</a>",
-                        disable_web_page_preview=True
-                    )
-                except Exception as _fragment_error:
-                    print("[Fragment Username Error]", repr(_fragment_error))
-                return
-
             if message.from_user:
                 track_private_user(message, notify=True)
+
+            if message.from_user and message.from_user.id != DEVELOPER_ID and get_force_channels():
+                _missing_private = force_sub_missing(message.from_user.id)
+                if _missing_private:
+                    send_force_sub_prompt(message, _missing_private)
+                    return
 
             if message.from_user and message.from_user.id == DEVELOPER_ID and admin_pending.get(message.from_user.id) == "broadcast_message":
                 admin_pending.pop(message.from_user.id, None)
