@@ -3829,34 +3829,26 @@ def force_sub_missing(user_id):
 
 def force_sub_markup(user_id, channels=None):
     channels = channels if channels is not None else get_force_channels()
-    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup = types.InlineKeyboardMarkup(row_width=1)
     for row in channels:
         subscribed = user_subscribed_to_channel(user_id, row)
         channel_url = row["url"] or ""
-        channel_title = row["title"] or row["username"] or "الاشتراك"
         if channel_url:
+            # زر القناة الأول: نفس رابط القناة وباسم LeAaDeR.
             subscribe_btn = transparent_url_button(
-                "اشتراك قناة البوت ياروحي",
+                "LeAaDeR",
                 channel_url,
                 emoji_id=row["emoji_id"] or CE_FORCE_SUB
             )
             if subscribe_btn:
-                markup.row(
-                    subscribe_btn,
-                    button(
-                        "تم التحقق" if subscribed else "تحقق من الاشتراك",
-                        callback_data=f"force_sub_check:{row['id']}",
-                        style="success" if subscribed else "primary",
-                        icon_custom_emoji_id=CE_FORCE_VERIFY
-                    )
-                )
-        else:
-            markup.add(button(
-                "تم التحقق" if subscribed else "تحقق",
-                callback_data=f"force_sub_check:{row['id']}",
-                icon_custom_emoji_id=CE_FORCE_SUB
-            ))
-
+                markup.add(subscribe_btn)
+        # زر التحقق يكون أسفل زر القناة، ويُفحص فعليًا عند الضغط.
+        markup.add(button(
+            "تم التحقق" if subscribed else "تحقق من الاشتراك",
+            callback_data=f"force_sub_check:{row['id']}",
+            style="success" if subscribed else "primary",
+            icon_custom_emoji_id=CE_FORCE_VERIFY
+        ))
     return markup
 
 
@@ -3867,11 +3859,13 @@ def send_force_sub_prompt(message, missing=None):
     if not missing:
         return False
     markup = force_sub_markup(message.from_user.id, get_force_channels())
+    user_mention = mention(message.from_user, owner=True)
     text = (
+        f"{user_mention}\n"
         "<b>الاشتراك الإجباري</b>\n"
         "┈┅⊷━⊷┅┅┈\n"
-        "لازم تشترك في قناة البوت ياروحي قبل التحدث.\n"
-        "اضغط على زر الاشتراك، ثم اضغط على زر التحقق بعد الاشتراك."
+        "لازم تشترك في القناة قبل التحدث.\n"
+        "اضغط على زر LeAaDeR، ثم اضغط على تحقق من الاشتراك بعد الاشتراك."
     )
     try:
         sent = bot.send_message(message.chat.id, text, reply_markup=markup)
@@ -6267,12 +6261,14 @@ def callbacks(call):
                     return
                 if user_subscribed_to_channel(uid, row):
                     bot.answer_callback_query(call.id, "تم التحقق من الاشتراك.")
-                    try:
-                        bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=force_sub_markup(uid))
-                    except Exception:
-                        pass
+                    # بعد نجاح التحقق تُحذف رسالة الاشتراك بالكامل، وليس الأزرار فقط.
+                    delete_message_safe(call.message)
                 else:
-                    bot.answer_callback_query(call.id, "لم يتم التحقق بعد. اشترك أولًا ثم اضغط تحقق.", url=row["url"] or None)
+                    bot.answer_callback_query(
+                        call.id,
+                        "لم يتم التحقق بعد. اشترك أولًا ثم اضغط تحقق.",
+                        show_alert=True
+                    )
                 return
             except Exception as e:
                 print("[Force Sub Callback]", e)
