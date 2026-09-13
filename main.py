@@ -16,12 +16,7 @@ import urllib.parse
 import subprocess
 import tempfile
 import random
-import sys
 from datetime import datetime, timezone, timedelta
-try:
-    from zoneinfo import ZoneInfo
-except Exception:
-    ZoneInfo = None
 from collections import defaultdict, deque
 from threading import Thread, Lock
 
@@ -45,7 +40,6 @@ telebot.logger.setLevel(logging.INFO)
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
-BOT_NAME = "MaXeCo"
 BOT_SHORT_DESCRIPTION = "بوت متخصص حماية وتنزيل أغاني"
 BOT_DESCRIPTION = (
     "بوت متخصص حماية وتنزيل أغاني\n"
@@ -54,12 +48,25 @@ BOT_DESCRIPTION = (
 )
 
 def configure_bot_profile():
-    # تغيير اسم البوت فقط.
+    """تحديث وصف البوت وقائمة الأوامر في تيليجرام بدون تعطيل التشغيل إذا فشل API."""
     try:
-        if hasattr(bot, "set_my_name"):
-            bot.set_my_name(BOT_NAME, language_code="ar")
+        if hasattr(bot, "set_my_short_description"):
+            bot.set_my_short_description(BOT_SHORT_DESCRIPTION, language_code="ar")
     except Exception as e:
-        print("[Bot Name Error]", repr(e))
+        print("[Bot Short Description Error]", repr(e))
+    try:
+        if hasattr(bot, "set_my_description"):
+            bot.set_my_description(BOT_DESCRIPTION, language_code="ar")
+    except Exception as e:
+        print("[Bot Description Error]", repr(e))
+    try:
+        commands = [
+            types.BotCommand("start", "تشغيل البوت"),
+            types.BotCommand("help", "طريقة استعمال البوت"),
+        ]
+        bot.set_my_commands(commands)
+    except Exception as e:
+        print("[Bot Commands Error]", repr(e))
 
 ADD_TO_GROUP_URL = (
     f"https://t.me/{BOT_USERNAME}?startgroup"
@@ -93,8 +100,6 @@ CE_REPLY_BUTTON = "5274008024585871702"
 CE_WELCOME_LINE = "5256143829672672750"
 CE_DEV_BUTTON = "5260233433107407649"
 CE_BOT_REPLY = "5201842613983917014"
-# Premium Emoji المطلوب لأزرار قناة السورس ومطور السورس
-CE_SOURCE_BUTTON = "5852886383915442268"
 CE_TON_PRICE = "5260450573768990626"
 CE_TON_ANALYSIS = "5357069174512303778"
 CE_FORCE_SUB = "5271801931814165886"
@@ -515,19 +520,6 @@ for c, d in {
     add_column_if_missing("groups", c, d)
 
 
-# الجهات التي أُضيف إليها البوت (مجموعات + قنوات) لإرسال تنبيهات الأذان
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS notification_chats (
-    chat_id INTEGER PRIMARY KEY,
-    title TEXT DEFAULT '',
-    chat_type TEXT DEFAULT '',
-    enabled INTEGER DEFAULT 1,
-    added_at INTEGER DEFAULT 0
-)
-""")
-db.commit()
-
-
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS group_users (
     chat_id INTEGER,
@@ -850,34 +842,6 @@ def ensure_group(chat):
     db.commit()
 
 
-def register_notification_chat(chat, enabled=1):
-    if not chat or chat.type not in ("group", "supergroup", "channel"):
-        return
-    try:
-        cursor.execute(
-            "INSERT OR REPLACE INTO notification_chats(chat_id,title,chat_type,enabled,added_at) VALUES(?,?,?,?,COALESCE((SELECT added_at FROM notification_chats WHERE chat_id=?),?))",
-            (chat.id, chat.title or "", chat.type, 1 if enabled else 0, chat.id, now())
-        )
-        db.commit()
-    except Exception as e:
-        print("[Notification Chat Register Error]", repr(e))
-
-def unregister_notification_chat(chat_id):
-    try:
-        cursor.execute("DELETE FROM notification_chats WHERE chat_id=?", (chat_id,))
-        db.commit()
-    except Exception as e:
-        print("[Notification Chat Remove Error]", repr(e))
-
-def get_notification_chats():
-    try:
-        cursor.execute("SELECT chat_id,title,chat_type FROM notification_chats WHERE enabled=1 ORDER BY added_at")
-        return [dict(row) for row in cursor.fetchall()]
-    except Exception as e:
-        print("[Notification Chat List Error]", repr(e))
-        return []
-
-
 def get_group(chat_id):
     cursor.execute(
         "SELECT * FROM groups WHERE chat_id=?",
@@ -994,7 +958,7 @@ def button(
 # =========================================================
 CURRENCY_CACHE_SECONDS = 60
 CURRENCY_HTTP_TIMEOUT = 7
-LOVELY_UPDATES_URL = "https://t.me/Ssource_MaX"
+LOVELY_UPDATES_URL = SOURCE_CHANNEL_URL
 
 _currency_cache = {
     "usd_egp": None,
@@ -3150,8 +3114,6 @@ admin_pending = {}
 broadcast_pending = {}
 image_add_counts = defaultdict(int)
 image_add_timers = {}
-# صور الإضافة الجماعية: يتم تجميع أي عدد من الصور ثم وضع وصف واحد عليها كلها.
-pending_image_batches = defaultdict(list)
 
 
 def get_auto_reply(chat_id, text):
@@ -4397,9 +4359,6 @@ def bot_images_markup():
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.row(
         button("إضافة صور", callback_data="admin:images_add", style="primary", icon_custom_emoji_id=CE_MEMBER),
-        button("إضافة عدة صور", callback_data="admin:images_add_many", style="primary", icon_custom_emoji_id=CE_MEMBER)
-    )
-    markup.row(
         button("حذف الكل", callback_data="admin:images_clear", style="danger", icon_custom_emoji_id=CE_ERROR)
     )
     markup.row(button("رجوع", callback_data="admin:open", style="primary", icon_custom_emoji_id=CE_COMMANDS))
@@ -4418,29 +4377,6 @@ def add_bot_image(message):
     )
     db.commit()
     return True
-
-
-def add_pending_image(message):
-    """يجمع الصورة داخل قائمة الإضافة الجماعية، بدون حد 50 صورة."""
-    if not message.photo:
-        return False
-    photo = message.photo[-1]
-    pending_image_batches[message.from_user.id].append(photo.file_id)
-    return True
-
-
-def save_pending_image_batch(user_id, description=""):
-    """يحفظ كل الصور المجمعة دفعة واحدة ويضع نفس الوصف على كل الصور."""
-    images = pending_image_batches.pop(user_id, [])
-    if not images:
-        return 0
-    added_at = now()
-    cursor.executemany(
-        "INSERT INTO bot_images(file_id,caption,added_at) VALUES(?,?,?)",
-        [(file_id, description, added_at) for file_id in images]
-    )
-    db.commit()
-    return len(images)
 
 
 def _finish_image_album_notice(chat_id, user_id):
@@ -4541,9 +4477,7 @@ def send_song_card(message, title, source_url=""):
     """بطاقة الأغنية مع صورة من صور البوت وروابط السورس والمطور."""
     caption = (
         f"<b>MaX Music</b>\n\n"
-        f"🎵 <b>{html.escape(title)}</b>\n\n"
-        f"المصدر: <a href=\"{SOURCE_CHANNEL_URL}\">قناة السورس</a>\n"
-        f"المطور: <a href=\"{SOURCE_DEVELOPER_URL}\">MaX Developer</a>"
+        f"🎵 <b>{html.escape(title)}</b>"
     )
     try:
         cursor.execute("SELECT file_id FROM bot_images ORDER BY RANDOM() LIMIT 1")
@@ -4602,9 +4536,7 @@ def send_youtube_song(message, query, processing_message=None):
         # الكابشن والأزرار يكونان أسفل ملف الأغنية مباشرة.
         caption = (
             f"<b>MaX Music</b>\n\n"
-            f"🎵 <b>{html.escape(title)}</b>\n\n"
-            f"المصدر: قناة السورس\n"
-            f"المطور: MaX Developer"
+            f"🎵 <b>{html.escape(title)}</b>"
         )
         markup = music_source_markup()
 
@@ -4681,11 +4613,181 @@ def handle_music_command(message, query):
 # سؤال كات
 # =========================================================
 CAT_QUESTIONS = [
-    "ما هو أول شيء تفعله عندما تستيقظ؟",
-    "ما هي أغنيتك المفضلة؟",
-    "لو تقدر تسافر الآن، تختار أي بلد؟",
-    "ما أكثر شيء يضحكك؟",
-    "ما هو أفضل وقت في اليوم بالنسبة لك؟"
+    'ما هو أول شيء تفعله عندما تستيقظ؟',
+    'ما هي أغنيتك المفضلة؟',
+    'لو تقدر تسافر الآن، تختار أي بلد؟',
+    'ما أكثر شيء يضحكك؟',
+    'ما هو أفضل وقت في اليوم بالنسبة لك؟',
+    'مين أقرب شخص ليك؟',
+    'ما أكثر صفة تحبها في نفسك؟',
+    'ما أكثر صفة تتمنى تغيرها في نفسك؟',
+    'ما هو حلمك الأكبر؟',
+    'ما هو أكثر موقف محرج حصل لك؟',
+    'ما هو أكثر شيء تخاف منه؟',
+    'ما هو الشيء الذي لا تستطيع الاستغناء عنه؟',
+    'لو ربحت مليون، ماذا ستفعل؟',
+    'ما هي أكتر أكلة بتحبها؟',
+    'ما هي أكتر أكلة لا تحبها؟',
+    'مين المطرب المفضل عندك؟',
+    'ما الفيلم الذي تستطيع مشاهدته أكثر من مرة؟',
+    'ما المسلسل المفضل عندك؟',
+    'ما اللعبة التي تحبها أكثر؟',
+    'هل تحب السهر أم النوم مبكرًا؟',
+    'ما أجمل ذكرى عندك؟',
+    'ما أسوأ عادة عندك؟',
+    'ما أجمل صفة في صديقك المفضل؟',
+    'هل تسامح بسهولة؟',
+    'هل تثق بالناس بسرعة؟',
+    'ما أكثر شيء يعصبك؟',
+    'ما أكثر شيء يفرحك؟',
+    'ما أكثر كلمة تقولها؟',
+    'لو تقدر تغير اسمك، هتختار إيه؟',
+    'ما اللون المفضل عندك؟',
+    'ما رقمك المفضل؟',
+    'ما الشهر المفضل عندك؟',
+    'ما الفصل المفضل عندك؟',
+    'البحر أم الجبل؟',
+    'الليل أم النهار؟',
+    'القهوة أم الشاي؟',
+    'البيت أم الخروج؟',
+    'الهدوء أم الزحمة؟',
+    'الفلوس أم الشهرة؟',
+    'الحب أم الصداقة؟',
+    'لو عندك آلة زمن، هتروح للماضي ولا المستقبل؟',
+    'مين الشخص اللي نفسك تقابله؟',
+    'ما البلد التي تتمنى زيارتها؟',
+    'ما أكثر مكان ترتاح فيه؟',
+    'ما الشيء الذي يجعلك تبتسم فورًا؟',
+    'ما أكثر موقف لن تنساه؟',
+    'ما النصيحة التي لن تنساها؟',
+    'هل أنت شخص غيور؟',
+    'هل أنت شخص عصبي؟',
+    'هل أنت اجتماعي؟',
+    'ما أكثر شيء تندم عليه؟',
+    'ما القرار الذي غير حياتك؟',
+    'ما الشيء الذي تتمنى حدوثه قريبًا؟',
+    'ما أكثر شيء يشغلك هذه الأيام؟',
+    'ما الشيء الذي يجعلك تشعر بالأمان؟',
+    'ما أكثر شيء يزعجك في الناس؟',
+    'ما أكثر شيء تحترمه في الناس؟',
+    'هل تفضل العمل وحدك أم مع فريق؟',
+    'هل تحب المفاجآت؟',
+    'هل تحب الهدايا؟',
+    'ما أفضل هدية حصلت عليها؟',
+    'ما الهدية التي تتمنى الحصول عليها؟',
+    'ما أكثر تطبيق تستخدمه؟',
+    'ما أكثر موقع تزوره؟',
+    'ما أكثر لعبة لعبتها في طفولتك؟',
+    'ما الكرتون المفضل عندك زمان؟',
+    'ما أول هاتف امتلكته؟',
+    'ما أول حساب سوشيال عملته؟',
+    'ما أول أغنية حفظتها؟',
+    'ما أول مكان سافرت إليه؟',
+    'هل تحب التصوير؟',
+    'هل تحب الرسم؟',
+    'هل تحب الرياضة؟',
+    'ما رياضتك المفضلة؟',
+    'ما فريقك المفضل؟',
+    'ما اللاعب الذي تفضله؟',
+    'هل تحب الأفلام أم المسلسلات؟',
+    'رعب أم كوميدي؟',
+    'أكشن أم رومانسي؟',
+    'فيلم قديم أم جديد؟',
+    'ما أكثر شيء تتمنى تعلمه؟',
+    'ما المهارة التي تتقنها؟',
+    'هل تحب البرمجة؟',
+    'هل تحب الموسيقى؟',
+    'ما الآلة الموسيقية التي تحبها؟',
+    'ما أكثر صوت تحبه؟',
+    'ما أكثر رائحة تحبها؟',
+    'ما أكثر شيء يذكرك بالطفولة؟',
+    'من كان قدوتك وأنت صغير؟',
+    'ما الوظيفة التي كنت تحلم بها؟',
+    'ما الوظيفة التي تتمنى العمل بها الآن؟',
+    'هل تفضل المال أم وقت الفراغ؟',
+    'هل تحب المغامرة؟',
+    'هل تفضل التخطيط أم العفوية؟',
+    'هل أنت من محبي الروتين؟',
+    'ما أكثر عادة يومية تحبها؟',
+    'ما الشيء الذي تبدأ به يومك؟',
+    'ما الشيء الذي تنهي به يومك؟',
+    'كم ساعة تنام عادة؟',
+    'هل تحب النوم؟',
+    'ما أكثر شيء يجعلك تفقد تركيزك؟',
+    'ما أكثر شيء يساعدك على التركيز؟',
+    'هل تحب الدراسة؟',
+    'ما المادة التي كنت تحبها؟',
+    'ما المادة التي كنت تكرهها؟',
+    'ما أجمل مكان رأيته؟',
+    'ما أجمل منظر تحبه؟',
+    'هل تحب المطر؟',
+    'هل تحب الشتاء؟',
+    'هل تحب الصيف؟',
+    'ما أفضل وقت للخروج؟',
+    'هل تحب السفر وحدك؟',
+    'من تختار ليكون معك في رحلة؟',
+    'ما السيارة التي تحلم بها؟',
+    'ما المكان الذي تتمنى أن تعيش فيه؟',
+    'لو تستطيع امتلاك أي موهبة، ماذا تختار؟',
+    'لو تستطيع حذف شيء من العالم، ماذا تحذف؟',
+    'لو تستطيع إضافة شيء للعالم، ماذا تضيف؟',
+    'لو أصبحت مشهورًا، في ماذا تريد أن تشتهر؟',
+    'لو رجع بك الزمن سنة، ماذا ستغير؟',
+    'لو تستطيع مقابلة نفسك بعد عشر سنوات، ماذا ستسألها؟',
+    'ما الشيء الذي تتمنى أن يعرفه الناس عنك؟',
+    'ما الشيء الذي لا يعرفه عنك معظم الناس؟',
+    'ما أكثر شيء تفتخر به؟',
+    'ما الإنجاز الذي تريد تحقيقه؟',
+    'ما أكبر درس تعلمته من الحياة؟',
+    'من أكثر شخص أثر في حياتك؟',
+    'ما أكثر موقف جعلك أقوى؟',
+    'ما الشيء الذي لا يمكن أن تسامح عليه؟',
+    'ما أهم شيء عندك في الصداقة؟',
+    'ما أهم شيء عندك في الحب؟',
+    'هل تؤمن بالحب من أول نظرة؟',
+    'هل تؤمن بالحظ؟',
+    'هل تؤمن أن كل شيء يحدث لسبب؟',
+    'ما أكثر شيء يجعلك تثق في شخص؟',
+    'ما أكثر شيء يجعلك تنهي علاقتك بشخص؟',
+    'هل تفضل الصراحة حتى لو كانت مؤلمة؟',
+    'هل تكتم زعلك أم تتكلم؟',
+    'عندما تحزن، ماذا تفعل؟',
+    'عندما تفرح، من أول شخص تخبره؟',
+    'ما أكثر شيء يغير مزاجك؟',
+    'ما أكثر شيء يحسن مزاجك؟',
+    'ما الأغنية التي تصف حالتك الآن؟',
+    'ما الكلمة التي تحب سماعها؟',
+    'ما الكلمة التي تكره سماعها؟',
+    'لو معك يوم كامل بدون إنترنت، ماذا ستفعل؟',
+    'لو معك أسبوع إجازة، أين ستذهب؟',
+    'لو خيروك بين الشهرة والراحة، ماذا تختار؟',
+    'لو خيروك بين مدينة كبيرة وقرية هادئة، ماذا تختار؟',
+    'لو خيروك بين المال والحب، ماذا تختار؟',
+    'ما أكثر شيء تتمنى شراءه؟',
+    'ما أول شيء ستشتريه لو معك فلوس كثيرة؟',
+    'هل تحب التسوق؟',
+    'هل تحب الطبخ؟',
+    'ما أكتر أكلة تعرف تعملها؟',
+    'ما المشروب المفضل عندك؟',
+    'ما الحلوى المفضلة عندك؟',
+    'هل تحب الأكل الحار؟',
+    'ما الوجبة التي لا تمل منها؟',
+    'ما المطعم الذي تحب زيارته؟',
+    'هل تحب القطط؟',
+    'هل تحب الكلاب؟',
+    'ما الحيوان المفضل عندك؟',
+    'لو امتلكت حيوانًا، ماذا تختار؟',
+    'ما أكثر شيء يجعلك تشعر بالراحة؟',
+    'ما أكثر شيء يجعلك تشعر بالتوتر؟',
+    'ما الشيء الذي تتمنى أن تتوقف عن فعله؟',
+    'ما الشيء الذي تتمنى أن تبدأه؟',
+    'ما الشيء الذي تريد إنجازه هذا الشهر؟',
+    'ما هدفك لهذه السنة؟',
+    'ما الشيء الذي تتمنى أن يسمعه قلبك الآن؟',
+    'ما الرسالة التي توجهها لنفسك؟',
+    'ما الرسالة التي توجهها لأصحابك؟',
+    'ما الشيء الذي تتمنى أن يحدث غدًا؟',
+    'ما السؤال الذي تتمنى أن يسألك إياه أحد؟',
 ]
 
 def send_cat_question(message):
@@ -4845,21 +4947,12 @@ def bot_chat_membership_handler(message):
         if message.chat.type in ("group", "supergroup"):
             if new_status in ("member", "administrator") and old_status in ("left", "kicked", ""):
                 ensure_group(message.chat)
-                register_notification_chat(message.chat)
                 # إذا كان المالك موجودًا بالفعل وقت إضافة البوت، يحصل على كامل الصلاحيات أيضًا.
                 ensure_developer_full_admin(message.chat.id)
                 notify_group_event("added", message)
             elif new_status in ("left", "kicked") and old_status in ("member", "administrator", "creator"):
                 ensure_group(message.chat)
-                unregister_notification_chat(message.chat.id)
                 notify_group_event("removed", message)
-        elif message.chat.type == "channel":
-            if new_status in ("member", "administrator") and old_status in ("left", "kicked", ""):
-                register_notification_chat(message.chat)
-                print(f"[Channel Tracking] added {message.chat.id} {message.chat.title}")
-            elif new_status in ("left", "kicked") and old_status in ("member", "administrator", "creator"):
-                unregister_notification_chat(message.chat.id)
-                print(f"[Channel Tracking] removed {message.chat.id} {message.chat.title}")
         elif message.chat.type == "private":
             # فتح الخاص/إلغاء الحظر يُسجل كمستخدم.
             if new_status in ("member", "administrator"):
@@ -5348,7 +5441,6 @@ def start_global_reply(message):
 @bot.channel_post_handler(content_types=["text"])
 def channel_post_handler(message):
     try:
-        register_notification_chat(message.chat)
         command, argument = command_parts(message)
         if command in ("يوت", "يوتيوب"):
             if not argument:
@@ -5406,24 +5498,6 @@ def main_handler(message):
                     except Exception as _send_error:
                         print("[START FALLBACK SEND ERROR]", repr(_send_error))
                         traceback.print_exc()
-                return
-
-        # كلمات اسم البوت تعمل في الخاص والمجموعات والقنوات قبل أي اشتراك أو حماية.
-        # نقبل المسافات وعلامات الترقيم والـ @username أيضًا حتى لا تفشل المطابقة.
-        if message.text:
-            _name_text = message.text.strip()
-            _name_text = _name_text.replace("@v_u_kbot", "").replace("@v_u_kbotbot", "")
-            _name_text = _name_text.strip(" \t\r\n.,!?؟،:;؛-_ـ")
-            if clean_text(_name_text) in ("مكس", "ماكس", "مكسيكو"):
-                _max_markup = types.InlineKeyboardMarkup(row_width=1)
-                _max_source_btn = transparent_url_button("قناة السورس", SOURCE_CHANNEL_URL, CE_SOURCE_BUTTON)
-                if _max_source_btn:
-                    _max_markup.row(_max_source_btn)
-                bot.reply_to(
-                    message,
-                    "عيوني كيفك✨",
-                    reply_markup=_max_markup
-                )
                 return
 
         if message.chat and message.chat.type == "private" and message.text and message.from_user:
@@ -5557,7 +5631,7 @@ def main_handler(message):
             markup = types.InlineKeyboardMarkup()
             btn = transparent_url_button(
                 "صلي علي النبي",
-                "https://t.me/Ssource_MaX"
+                "https://t.me/LeaDeR_E"
             )
             if btn:
                 markup.add(btn)
@@ -5569,7 +5643,7 @@ def main_handler(message):
             return
 
         if message.text and clean_text(message.text) == "بوت":
-            # رد البوت عند كتابة «بوت» مع Premium Emoji الخاص بماكس.
+            # تفاعل قلب مباشر على رسالة المستخدم بدل إرسال رسالة إضافية.
             try:
                 if hasattr(bot, "set_message_reaction") and hasattr(types, "ReactionTypeEmoji"):
                     bot.set_message_reaction(
@@ -5578,6 +5652,7 @@ def main_handler(message):
                         reaction=[types.ReactionTypeEmoji(emoji="❤")]
                     )
                 else:
+                    # توافق مع الإصدارات الأقدم من pyTelegramBotAPI عبر Bot API مباشرة.
                     bot._make_request(
                         "setMessageReaction",
                         params={
@@ -5588,10 +5663,6 @@ def main_handler(message):
                     )
             except Exception as e:
                 print("[Bot Reaction Error]", repr(e))
-            bot.reply_to(
-                message,
-                "مش شايف اسمي ولا اي ياعما؟ اسمي ماكس " + tg_emoji(5776187888735623263, "👑")
-            )
             return
 
         if continue_reply_setup(message):
@@ -5673,65 +5744,31 @@ def handle_private(message):
         send_admin_panel(message.chat.id)
         return
 
-    # الرد العام الذي بدأه المطور من لوحة الأدمن يجب أن يستقبل خطواته في الخاص.
-    # كان هذا الاستدعاء موجودًا لمسار المجموعات فقط، لذلك زر "إضافة رد عام"
-    # كان يبدأ العملية لكنه لا يستقبل الكلمة/الرد من المطور.
-    if message.from_user and message.from_user.id == DEVELOPER_ID:
-        if continue_reply_setup(message):
-            return
-
     if message.from_user and message.from_user.id == DEVELOPER_ID and message.from_user.id in admin_pending:
         pending_action = admin_pending.get(message.from_user.id)
-        uid = message.from_user.id
-
-        if pending_action in ("image_add", "image_add_many"):
-            # وضع الإضافة الجماعية: يقبل أي عدد من الصور، وليس 50 فقط.
+        if pending_action == "image_add":
+            if message.text and clean_text(message.text) == "تم":
+                uid = message.from_user.id
+                pending_count = image_add_counts.pop(uid, 0)
+                timer = image_add_timers.pop(uid, None)
+                if timer:
+                    try:
+                        timer.cancel()
+                    except Exception:
+                        pass
+                admin_pending.pop(uid, None)
+                if pending_count:
+                    bot.send_message(message.chat.id, f"تم حفظ <b>{pending_count}</b> صورة.")
+                bot.send_message(message.chat.id, bot_images_text(), reply_markup=bot_images_markup())
+                return
             if message.photo:
-                # الحفظ الفوري يمنع فقد صور الألبومات، ويقبل أي عدد من الصور.
-                if add_pending_image(message):
-                    image_add_counts[uid] = len(pending_image_batches.get(uid, []))
-                    total = image_add_counts[uid]
-                    if total == 1 or total % 10 == 0:
-                        bot.send_message(
-                            message.chat.id,
-                            f"تم حفظ <b>{total}</b> صورة. أرسل المزيد بدون حد، وبعد الانتهاء اكتب: <code>تم</code>."
-                        )
+                if add_bot_image(message):
+                    # يدعم إرسال عدة صور دفعة واحدة كألبوم Telegram.
+                    queue_image_added_notice(message)
                 else:
                     bot.send_message(message.chat.id, "تعذر حفظ الصورة.")
                 return
-
-            if message.text and clean_text(message.text) == "تم":
-                total = len(pending_image_batches.get(uid, []))
-                image_add_counts.pop(uid, None)
-                if not total:
-                    admin_pending.pop(uid, None)
-                    bot.send_message(message.chat.id, "لم يتم استلام أي صورة بعد. أرسل الصور أولًا.")
-                    return
-                # نحتفظ بالصور حتى يرسل المطور الوصف، ثم تُحفظ كلها مرة واحدة.
-                admin_pending[uid] = "image_description"
-                bot.send_message(
-                    message.chat.id,
-                    f"تم استلام <b>{total}</b> صورة. أرسل الآن الوصف الذي تريد وضعه على الصور، أو اكتب <code>بدون وصف</code>."
-                )
-                return
-
-            bot.send_message(message.chat.id, "أرسل الصور واحدة تلو الأخرى أو كألبومات، ويمكنك إرسال أكثر من 50 صورة. بعد الانتهاء اكتب: <code>تم</code>")
-            return
-
-        if pending_action == "image_description":
-            if not message.text:
-                bot.send_message(message.chat.id, "أرسل الوصف كنص، أو اكتب <code>بدون وصف</code>.")
-                return
-            description = message.text.strip()
-            if clean_text(description) in ("بدون وصف", "بدون"):
-                description = ""
-            count = save_pending_image_batch(uid, description)
-            admin_pending.pop(uid, None)
-            bot.send_message(
-                message.chat.id,
-                f"تم حفظ <b>{count}</b> صورة بنجاح" + (" مع الوصف." if description else " بدون وصف."),
-                reply_markup=bot_images_markup()
-            )
+            bot.send_message(message.chat.id, "أرسل صورة واحدة أو ألبوم صور كامل، أو اكتب تم لإنهاء الإضافة.")
             return
 
         if pending_action == "force_add" and message.text:
@@ -7243,19 +7280,8 @@ def callbacks(call):
 
             if action == "images_add":
                 admin_pending[uid] = "image_add"
-                pending_image_batches.pop(uid, None)
                 bot.answer_callback_query(call.id)
-                bot.send_message(chat_id, "أرسل صورة واحدة أو عدة صور دفعة واحدة. عند الانتهاء اكتب: <code>تم</code> ثم سيطلب منك البوت الوصف.")
-                return
-
-            if action == "images_add_many":
-                admin_pending[uid] = "image_add_many"
-                pending_image_batches.pop(uid, None)
-                bot.answer_callback_query(call.id)
-                bot.send_message(
-                    chat_id,
-                    "<b>إضافة عدة صور</b>\n\nأرسل أي عدد من الصور، ويمكنك إرسال أكثر من <b>50 صورة</b> على دفعات أو ألبومات.\n\nبعد الانتهاء اكتب: <code>تم</code>، وبعدها أرسل الوصف الذي تريد وضعه على كل الصور."
-                )
+                bot.send_message(chat_id, "أرسل صورة واحدة أو عدة صور دفعة واحدة كألبوم. يمكن وضع وصف مع الصورة. عند الانتهاء اكتب: تم")
                 return
 
             if action == "images_clear":
@@ -7969,211 +7995,7 @@ def protection_engine(message):
 # =========================================================
 # التشغيل
 # =========================================================
-# =========================================================
-# تنبيهات الأذان لكل الجروبات والقنوات التي أُضيف إليها البوت
-# =========================================================
-ADHAN_CITY = "Cairo"
-ADHAN_COUNTRY = "Egypt"
-ADHAN_METHOD = 5
-ADHAN_CHECK_SECONDS = 20
-ADHAN_API_CACHE_SECONDS = 6 * 60 * 60
-_adhan_cache = {"date": "", "timings": {}, "fetched_at": 0}
-_adhan_thread_started = False
-_adhan_lock = Lock()
-
-
-def _cairo_now():
-    try:
-        if ZoneInfo is not None:
-            return datetime.now(ZoneInfo("Africa/Cairo"))
-    except Exception:
-        pass
-    return datetime.now(timezone(timedelta(hours=2)))
-
-
-def fetch_adhan_timings():
-    today = _cairo_now().strftime("%d-%m-%Y")
-    with _adhan_lock:
-        if (_adhan_cache["date"] == today and _adhan_cache["timings"]
-                and now() - _adhan_cache["fetched_at"] < ADHAN_API_CACHE_SECONDS):
-            return dict(_adhan_cache["timings"])
-    try:
-        params = urllib.parse.urlencode({
-            "city": ADHAN_CITY,
-            "country": ADHAN_COUNTRY,
-            "method": ADHAN_METHOD,
-        })
-        url = "https://api.aladhan.com/v1/timingsByCity?" + params
-        with urllib.request.urlopen(url, timeout=15) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        timings = payload.get("data", {}).get("timings", {})
-        wanted = {
-            "Fajr": "الفجر",
-            "Dhuhr": "الظهر",
-            "Asr": "العصر",
-            "Maghrib": "المغرب",
-            "Isha": "العشاء",
-        }
-        cleaned = {}
-        for key, arabic_name in wanted.items():
-            value = str(timings.get(key, ""))[:5]
-            if re.match(r"^\d{2}:\d{2}$", value):
-                cleaned[value] = arabic_name
-        with _adhan_lock:
-            _adhan_cache.update({"date": today, "timings": cleaned, "fetched_at": now()})
-        return dict(cleaned)
-    except Exception as e:
-        print("[Adhan API Error]", repr(e))
-        return {}
-
-
-def send_adhan_notification(prayer_name, prayer_time):
-    text = (
-        "<b>حان الآن وقت صلاة " + html.escape(prayer_name) + "</b>\n\n"
-        "الوقت: <code>" + html.escape(prayer_time) + "</code>\n"
-        "تقبل الله منا ومنكم صالح الأعمال."
-    )
-    success = 0
-    failed = 0
-    for row in get_notification_chats():
-        chat_id = row["chat_id"]
-        try:
-            bot.send_message(chat_id, text, disable_web_page_preview=True)
-            success += 1
-        except Exception as e:
-            failed += 1
-            print(f"[Adhan Send Error] {chat_id}: {e}")
-    print(f"[Adhan] {prayer_name} {prayer_time} -> success={success}, failed={failed}")
-
-
-def periodic_adhan_notifier():
-    last_sent = set()
-    last_date = ""
-    while True:
-        try:
-            current = _cairo_now()
-            date_key = current.strftime("%Y-%m-%d")
-            if date_key != last_date:
-                last_date = date_key
-                last_sent.clear()
-                with _adhan_lock:
-                    _adhan_cache["date"] = ""
-                    _adhan_cache["timings"] = {}
-                    _adhan_cache["fetched_at"] = 0
-            timings = fetch_adhan_timings()
-            current_hm = current.strftime("%H:%M")
-            for prayer_time, prayer_name in timings.items():
-                key = f"{date_key}|{prayer_time}|{prayer_name}"
-                if current_hm == prayer_time and key not in last_sent:
-                    send_adhan_notification(prayer_name, prayer_time)
-                    last_sent.add(key)
-            time.sleep(ADHAN_CHECK_SECONDS)
-        except Exception as e:
-            print("[Adhan Thread Error]", repr(e))
-            time.sleep(ADHAN_CHECK_SECONDS)
-
-
-def start_periodic_adhan_notifier():
-    global _adhan_thread_started
-    if _adhan_thread_started:
-        return
-    _adhan_thread_started = True
-    Thread(target=periodic_adhan_notifier, daemon=True).start()
-
-
-
-# =========================================================
-# الأذكار والآيات القرآنية تلقائيًا كل نصف ساعة
-# تُرسل لكل الجروبات والقنوات المسجلة التي أُضيف إليها البوت
-# =========================================================
-QURAN_DHIKR_INTERVAL = 30 * 60
-_quran_dhikr_thread_started = False
-_quran_dhikr_lock = Lock()
-_quran_dhikr_index = 0
-
-QURAN_DHIKR_MESSAGES = [
-    "سُبْحَانَ اللَّهِ وَبِحَمْدِهِ، سُبْحَانَ اللَّهِ الْعَظِيمِ.",
-    "لَا إِلَهَ إِلَّا اللَّهُ وَحْدَهُ لَا شَرِيكَ لَهُ، لَهُ الْمُلْكُ وَلَهُ الْحَمْدُ وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ.",
-    "أَسْتَغْفِرُ اللَّهَ وَأَتُوبُ إِلَيْهِ.",
-    "اللَّهُمَّ صَلِّ وَسَلِّمْ وَبَارِكْ عَلَى نَبِيِّنَا مُحَمَّدٍ.",
-    "سُبْحَانَ اللَّهِ، وَالْحَمْدُ لِلَّهِ، وَاللَّهُ أَكْبَرُ، وَلَا إِلَهَ إِلَّا اللَّهُ.",
-    "قال الله تعالى: ﴿فَاذْكُرُونِي أَذْكُرْكُمْ وَاشْكُرُوا لِي وَلَا تَكْفُرُونِ﴾ [البقرة: 152].",
-    "قال الله تعالى: ﴿أَلَا بِذِكْرِ اللَّهِ تَطْمَئِنُّ الْقُلُوبُ﴾ [الرعد: 28].",
-    "قال الله تعالى: ﴿وَمَن يَتَّقِ اللَّهَ يَجْعَل لَّهُ مَخْرَجًا ۝ وَيَرْزُقْهُ مِنْ حَيْثُ لَا يَحْتَسِبُ﴾ [الطلاق: 2-3].",
-    "قال الله تعالى: ﴿إِنَّ مَعَ الْعُسْرِ يُسْرًا ۝ إِنَّ مَعَ الْعُسْرِ يُسْرًا﴾ [الشرح: 5-6].",
-    "قال الله تعالى: ﴿وَقُل رَّبِّ زِدْنِي عِلْمًا﴾ [طه: 114].",
-    "قال الله تعالى: ﴿وَمَن يَعْمَلْ سُوءًا أَوْ يَظْلِمْ نَفْسَهُ ثُمَّ يَسْتَغْفِرِ اللَّهَ يَجِدِ اللَّهَ غَفُورًا رَّحِيمًا﴾ [النساء: 110].",
-    "رَضِيتُ بِاللَّهِ رَبًّا، وَبِالإِسْلَامِ دِينًا، وَبِمُحَمَّدٍ ﷺ نَبِيًّا.",
-    "اللَّهُمَّ اغْفِرْ لَنَا وَارْحَمْنَا وَاهْدِنَا وَعَافِنَا وَارْزُقْنَا.",
-    "اللَّهُمَّ إِنَّكَ عَفُوٌّ تُحِبُّ الْعَفْوَ فَاعْفُ عَنَّا.",
-    "لَا حَوْلَ وَلَا قُوَّةَ إِلَّا بِاللَّهِ.",
-    "حَسْبُنَا اللَّهُ وَنِعْمَ الْوَكِيلُ.",
-    "رَبِّ اغْفِرْ لِي وَلِوَالِدَيَّ وَلِلْمُؤْمِنِينَ يَوْمَ يَقُومُ الْحِسَابُ.",
-    "قال الله تعالى: ﴿إِنَّ اللَّهَ مَعَ الصَّابِرِينَ﴾ [البقرة: 153].",
-    "قال الله تعالى: ﴿وَاذْكُر رَّبَّكَ إِذَا نَسِيتَ﴾ [الكهف: 24].",
-    "قال الله تعالى: ﴿إِنَّ اللَّهَ لَا يُغَيِّرُ مَا بِقَوْمٍ حَتَّىٰ يُغَيِّرُوا مَا بِأَنفُسِهِمْ﴾ [الرعد: 11].",
-]
-
-def send_quran_dhikr_notification():
-    global _quran_dhikr_index
-    with _quran_dhikr_lock:
-        message_text = QURAN_DHIKR_MESSAGES[_quran_dhikr_index]
-        _quran_dhikr_index = (_quran_dhikr_index + 1) % len(QURAN_DHIKR_MESSAGES)
-
-    text = (
-        "<b>ذكر وآية</b>\n\n"
-        + message_text
-        + "\n\n"
-        "اللهم اجعلها تذكرةً لنا ولكم."
-    )
-
-    success = 0
-    failed = 0
-    for row in get_notification_chats():
-        chat_id = row["chat_id"]
-        try:
-            bot.send_message(chat_id, text, disable_web_page_preview=True)
-            success += 1
-        except Exception as e:
-            failed += 1
-            print(f"[Quran/Dhikr Send Error] {chat_id}: {e}")
-
-    print(f"[Quran/Dhikr] sent -> success={success}, failed={failed}")
-
-def periodic_quran_dhikr():
-    while True:
-        try:
-            # الانتظار حتى موعد نصف الساعة التالي (:00 أو :30)
-            current = _cairo_now()
-            seconds_into_hour = current.minute * 60 + current.second
-            wait_seconds = (30 * 60 - (seconds_into_hour % (30 * 60)))
-            if wait_seconds <= 0:
-                wait_seconds = 30 * 60
-            time.sleep(wait_seconds)
-
-            send_quran_dhikr_notification()
-        except Exception as e:
-            print("[Quran/Dhikr Thread Error]", repr(e))
-            time.sleep(30)
-
-def start_periodic_quran_dhikr():
-    global _quran_dhikr_thread_started
-    if _quran_dhikr_thread_started:
-        return
-    _quran_dhikr_thread_started = True
-    Thread(target=periodic_quran_dhikr, daemon=True).start()
-
 def setup_default_force_channel():
-    # تسجيل كل الجروبات الموجودة مسبقًا لتنبيهات الأذان.
-    try:
-        cursor.execute("""
-            INSERT OR IGNORE INTO notification_chats(chat_id,title,chat_type,enabled,added_at)
-            SELECT chat_id,title,'group',1,? FROM groups WHERE chat_id < 0
-        """, (now(),))
-        db.commit()
-    except Exception as e:
-        print("[Notification Seed Error]", repr(e))
-
     # قناة الاشتراك الإجباري الافتراضية هي قناة السورس.
     try:
         # إزالة الإعداد القديم الذي كان يشير لقناة LeaDeR_E فقط، ثم ضمان وجود السورس.
@@ -8199,14 +8021,9 @@ def run_bot_forever():
     print("===================================")
 
     try:
-        start_periodic_adhan_notifier()
+        configure_bot_profile()
     except Exception as e:
-        print("[Adhan Startup Error]", repr(e))
-
-    try:
-        start_periodic_quran_dhikr()
-    except Exception as e:
-        print("[Quran/Dhikr Startup Error]", repr(e))
+        print("[Bot Profile Setup Error]", repr(e))
 
     try:
         setup_default_force_channel()
@@ -8292,7 +8109,5 @@ def run_bot_forever():
             except Exception:
                 pass
 
-
-configure_bot_profile()
 
 run_bot_forever()
