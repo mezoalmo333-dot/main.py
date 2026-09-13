@@ -920,7 +920,7 @@ def button(
 # =========================================================
 # التحويل التلقائي للعملات ($ -> EGP + TON)
 # =========================================================
-CURRENCY_CACHE_SECONDS = 600
+CURRENCY_CACHE_SECONDS = 60
 CURRENCY_HTTP_TIMEOUT = 7
 LOVELY_UPDATES_URL = "https://t.me/LeaDeR_E"
 
@@ -1170,6 +1170,10 @@ def extract_ton_amount(text):
         if amount is not None:
             return amount
 
+    # كتابة TON أو تون وحدها = سعر 1 TON.
+    if re.fullmatch(r"(?:TON|تون|طن)", normalized.strip(), re.IGNORECASE):
+        return 1.0
+
     return None
 
 
@@ -1193,8 +1197,9 @@ def send_ton_conversion(message, ton_amount):
 
     text = (
         "<b>ToN</b>\n"
-        f"{price_emoji} <b>{format_money(egp_amount, 2)} EGP</b>\n"
-        f"{price_emoji} <b>{format_money(usd_amount, 4)} USD</b>"
+        f"{price_emoji} <b>{format_money(ton_amount, 4)} TON</b>\n"
+        f"{price_emoji} <b>{format_money(usd_amount, 4)} USD</b>\n"
+        f"{price_emoji} <b>{format_money(egp_amount, 2)} EGP</b>"
     )
 
     markup = types.InlineKeyboardMarkup()
@@ -1347,6 +1352,10 @@ def extract_usd_amount(text):
         if amount is not None:
             return amount
 
+    # كتابة دولار / USD / USDT وحدها = قيمة 1 دولار.
+    if re.fullmatch(r"(?:USD|USDT|دولار|الدولار)", normalized.strip(), re.IGNORECASE):
+        return 1.0
+
     return None
 
 
@@ -1377,8 +1386,9 @@ def send_currency_conversion(message, usd_amount):
 
     text = (
         "<b>DoLLar</b>\n"
+        f"{price_emoji} <b>{format_money(usd_amount, 4)} USD</b>\n"
         f"{price_emoji} <b>{format_money(egp_amount, 2)} EGP</b>\n"
-        f"{price_emoji} <b>{format_money(usd_amount, 4)} USD</b>"
+        f"{price_emoji} <b>{format_money(usd_amount / ton_usd, 4)} TON</b>"
     )
 
     markup = types.InlineKeyboardMarkup()
@@ -1465,6 +1475,7 @@ def send_dollar_analysis(message):
         "\n"
         f"{price_emoji} <b>{format_money(usd_egp, 2)} EGP</b>\n"
         f"{price_emoji} <b>1.0000 USD</b>\n"
+        f"{price_emoji} <b>{format_money(1.0 / ton_usd, 4)} TON</b>\n"
         "\n"
         f"{price_emoji} <b>1 USD = {format_money(usd_egp, 2)} EGP</b>\n"
         f"{change_line}\n"
@@ -3033,6 +3044,8 @@ def moderator_panel(call, token):
 reply_pending = {}
 admin_pending = {}
 broadcast_pending = {}
+image_add_counts = defaultdict(int)
+image_add_timers = {}
 
 
 def get_auto_reply(chat_id, text):
@@ -4284,6 +4297,8 @@ def bot_images_markup():
     return markup
 
 def add_bot_image(message):
+    """حفظ صورة واحدة؛ ويمكن استدعاؤها لكل عنصر في ألبوم Telegram،
+    لذلك يستطيع المطور إرسال عدة صور دفعة واحدة في Media Group."""
     if not message.photo:
         return False
     photo = message.photo[-1]
@@ -4294,6 +4309,40 @@ def add_bot_image(message):
     )
     db.commit()
     return True
+
+
+def _finish_image_album_notice(chat_id, user_id):
+    try:
+        count = image_add_counts.pop(user_id, 0)
+        image_add_timers.pop(user_id, None)
+        if count:
+            bot.send_message(
+                chat_id,
+                f"تمت إضافة <b>{count}</b> صورة بنجاح. أرسل صورًا أخرى أو اكتب <code>تم</code>."
+            )
+    except Exception as e:
+        print("[Image Album Notice]", e)
+
+
+def queue_image_added_notice(message):
+    """يجمع صور الألبوم في رسالة تأكيد واحدة بدل إرسال رسالة لكل صورة."""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    image_add_counts[user_id] += 1
+
+    old_timer = image_add_timers.get(user_id)
+    if old_timer:
+        try:
+            old_timer.cancel()
+        except Exception:
+            pass
+
+    timer = Thread(
+        target=lambda: (time.sleep(1.2), _finish_image_album_notice(chat_id, user_id)),
+        daemon=True
+    )
+    image_add_timers[user_id] = timer
+    timer.start()
 
 def clear_bot_images():
     cursor.execute("DELETE FROM bot_images")
@@ -4379,25 +4428,103 @@ def send_song_card(message, title, source_url=""):
             pass
 
 
-def send_youtube_song(message, query):
+def music_source_markup():
+    """أزرار السورس والمطور التي تظهر أسفل ملف الأغنية."""
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    source_btn = transparent_url_button("قناة السورس", SOURCE_CHANNEL_URL, CE_BOT_REPLY)
+    developer_btn = transparent_url_button("مطور السورس", SOURCE_DEVELOPER_URL, CE_MEMBER)
+    if source_btn and developer_btn:
+        markup.row(source_btn, developer_btn)
+    elif source_btn:
+        markup.row(source_btn)
+    elif developer_btn:
+        markup.row(developer_btn)
+    return markup
+
+
+def get_song_bot_image_id():
+    """يرجع صورة عشوائية محفوظة لاستخدامها مع الأغنية."""
+    try:
+        cursor.execute("SELECT file_id FROM bot_images ORDER BY RANDOM() LIMIT 1")
+        row = cursor.fetchone()
+        return row["file_id"] if row else None
+    except Exception as e:
+        print("[Song Image Error]", repr(e))
+        return None
+
+
+def send_youtube_song(message, query, processing_message=None):
     result, error = download_youtube_song(query)
     if error:
+        if processing_message:
+            try:
+                bot.delete_message(message.chat.id, processing_message.message_id)
+            except Exception:
+                pass
         bot.reply_to(message, error)
         return True
+
     path, title, temp_dir = result
     try:
-        # عرض بطاقة الأغنية أولًا، مع صورة محفوظة في البوت إن وجدت.
-        send_song_card(message, title)
-        with open(path, "rb") as audio:
-            bot.send_audio(
-                message.chat.id,
-                audio,
-                title=title,
-                performer="YouTube",
-                reply_to_message_id=message.message_id,
-            )
+        # لا نرسل بطاقة منفصلة قبل الصوت.
+        # الكابشن والأزرار يكونان أسفل ملف الأغنية مباشرة.
+        caption = (
+            f"<b>MaX Music</b>\n\n"
+            f"🎵 <b>{html.escape(title)}</b>\n\n"
+            f"المصدر: قناة السورس\n"
+            f"المطور: MaX Developer"
+        )
+        markup = music_source_markup()
+
+        # نحاول استخدام صورة البوت كصورة مصغرة للملف الصوتي إن كانت Telegram تقبلها.
+        # إذا لم تقبلها Telegram، نرسل الصوت بدون thumbnail بدل تعطيل الإرسال.
+        image_id = get_song_bot_image_id()
+        sent = False
+        if image_id:
+            try:
+                with open(path, "rb") as audio:
+                    bot.send_audio(
+                        message.chat.id,
+                        audio,
+                        title=title,
+                        performer="YouTube",
+                        caption=caption,
+                        parse_mode="HTML",
+                        reply_markup=markup,
+                        reply_to_message_id=message.message_id,
+                        thumb=image_id,
+                    )
+                sent = True
+            except Exception as thumb_error:
+                print("[Song Thumbnail Fallback]", repr(thumb_error))
+
+        if not sent:
+            with open(path, "rb") as audio:
+                bot.send_audio(
+                    message.chat.id,
+                    audio,
+                    title=title,
+                    performer="YouTube",
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=markup,
+                    reply_to_message_id=message.message_id,
+                )
+
+        # الرسالة المؤقتة "جاري البحث..." تختفي بمجرد إرسال الأغنية.
+        if processing_message:
+            try:
+                bot.delete_message(message.chat.id, processing_message.message_id)
+            except Exception as e:
+                print("[Processing Message Delete]", repr(e))
+
     except Exception as e:
         print("[YouTube Send Error]", repr(e))
+        if processing_message:
+            try:
+                bot.delete_message(message.chat.id, processing_message.message_id)
+            except Exception:
+                pass
         bot.reply_to(message, "تعذر إرسال الأغنية. قد يكون حجم الملف أكبر من الحد المسموح به في Telegram.")
     finally:
         try:
@@ -4408,15 +4535,15 @@ def send_youtube_song(message, query):
 
 
 def handle_music_command(message, query):
-    """تشغيل الأمر شغل/تشغيل كتحميل وإرسال للأغنية فقط، بدون دخول أي مكالمة صوتية."""
+    """أمر شغل/تشغيل: يبحث في YouTube ويرسل الأغنية في الشات فقط."""
     if message.chat.type not in ("group", "supergroup", "private"):
         bot.reply_to(message, "هذا الأمر متاح في المجموعات والخاص فقط.")
         return True
     if not query:
         bot.reply_to(message, 'استخدم الأمر: <code>شغل {اسم الأغنية}</code>')
         return True
-    bot.reply_to(message, "جاري البحث عن الأغنية وتجهيزها...")
-    return send_youtube_song(message, query)
+    processing = bot.reply_to(message, "جاري البحث عن الأغنية وتجهيزها...")
+    return send_youtube_song(message, query, processing_message=processing)
 
 # =========================================================
 # سؤال كات
@@ -4873,6 +5000,9 @@ def new_members_handler(message):
                 print("[Global Ban New Member]", e)
             continue
 
+        # الترحيب يعمل افتراضيًا لكل عضو جديد. إذا كان الإعداد مغلقًا من لوحة
+        # الإعدادات يتم احترامه، لكن نضمن وجود سجل المجموعة قبل القراءة.
+        ensure_group(message.chat)
         if not group_setting(message.chat.id, "welcome"):
             continue
 
@@ -4901,9 +5031,11 @@ def new_members_handler(message):
         if update_btn:
             markup.add(update_btn)
 
+        sent = None
         try:
+            # نرسل صورة العضو إن أمكن، وإذا فشل جلب الصورة نرسل الترحيب كنص.
             photos = bot.get_user_profile_photos(u.id, limit=1)
-            if photos.total_count:
+            if photos.total_count and photos.photos and photos.photos[0]:
                 sent = bot.send_photo(
                     message.chat.id,
                     photos.photos[0][-1].file_id,
@@ -4911,21 +5043,42 @@ def new_members_handler(message):
                     reply_markup=markup
                 )
             else:
-                sent = bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
+                sent = bot.send_message(
+                    message.chat.id,
+                    welcome_text,
+                    reply_markup=markup
+                )
+        except Exception as e:
+            print("[Welcome Photo/Markup Error]", repr(e))
+            # fallback حقيقي: لو Telegram رفض الصورة أو كيان Premium Emoji،
+            # نرسل نسخة نصية نظيفة حتى لا يختفي الترحيب بالكامل.
+            try:
+                plain_welcome = re.sub(
+                    r'<tg-emoji\b[^>]*>.*?</tg-emoji>',
+                    '',
+                    welcome_text,
+                    flags=re.DOTALL | re.IGNORECASE
+                )
+                sent = bot.send_message(
+                    message.chat.id,
+                    plain_welcome,
+                    reply_markup=markup
+                )
+            except Exception as e2:
+                print("[Welcome Text Error]", repr(e2))
+                try:
+                    sent = bot.send_message(
+                        message.chat.id,
+                        f"مرحبًا {safe_name}\nنورت الجروب.",
+                    )
+                except Exception as e3:
+                    print("[Welcome Final Fallback Error]", repr(e3))
+
+        if sent is not None:
             Thread(
                 target=lambda m=sent: (time.sleep(60), delete_message_safe(m)),
                 daemon=True
             ).start()
-        except Exception as e:
-            print("[Welcome Error]", e)
-            try:
-                sent = bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
-                Thread(
-                    target=lambda m=sent: (time.sleep(60), delete_message_safe(m)),
-                    daemon=True
-                ).start()
-            except Exception:
-                pass
 
 
 # =========================================================
@@ -4999,10 +5152,20 @@ def get_group_open_link(chat):
         invite_link = getattr(fresh, "invite_link", None)
         if invite_link:
             return invite_link
+
+        # لو كانت المجموعة خاصة ولا يوجد رابط ظاهر، نحاول إنشاء رابط دعوة
+        # من خلال صلاحية البوت، حتى يصل للمالك رابط يمكنه فتح المجموعة.
+        try:
+            created = bot.create_chat_invite_link(chat.id)
+            created_link = getattr(created, "invite_link", None)
+            if created_link:
+                return created_link
+        except Exception as invite_error:
+            print("[Create Group Invite Link Error]", invite_error)
     except Exception as e:
         print("[Group Link Error]", e)
 
-    # للمجموعات الخاصة التي لا يملك البوت رابط دعوة لها، نضع رابط فتح المحادثة.
+    # آخر حل للمجموعات الخاصة التي لا يملك البوت صلاحية إنشاء رابط لها.
     return f"tg://openmessage?chat_id={chat.id}"
 
 
@@ -5013,15 +5176,21 @@ def notify_group_event(kind, message):
     actor = message.from_user
     label = "تمت إضافة البوت إلى مجموعة" if kind == "added" else "تمت إزالة البوت من مجموعة"
     try:
+        group_link = get_group_open_link(chat)
         text = (
             f"{tg_emoji(CE_ADMIN, '•')} {label}\n"
             "\n"
             f"{tg_emoji(CE_MEMBER, '•')} المجموعة: <b>{html.escape(chat.title or 'بدون اسم')}</b>\n"
-            f"{tg_emoji(CE_MEMBER, '•')} الرابط: <a href=\"{html.escape(get_group_open_link(chat), quote=True)}\">فتح المجموعة</a>\n"
+            f"{tg_emoji(CE_MEMBER, '•')} الرابط: <a href=\"{html.escape(group_link, quote=True)}\">فتح المجموعة</a>\n"
             f"{tg_emoji(CE_PERSON, '•')} بواسطة: <a href=\"tg://user?id={actor.id}\">{html.escape(full_name(actor))}</a>\n"
             f"{tg_emoji(CE_USERNAME, '•')} اليوزر: {html.escape(username_text(actor))}"
         )
-        bot.send_message(DEVELOPER_ID, text)
+        markup = types.InlineKeyboardMarkup()
+        try:
+            markup.add(types.InlineKeyboardButton("فتح المجموعة", url=group_link))
+        except Exception:
+            markup = None
+        bot.send_message(DEVELOPER_ID, text, reply_markup=markup)
     except Exception as e:
         print("[Developer Group Notification]", e)
 
@@ -5499,16 +5668,27 @@ def handle_private(message):
         pending_action = admin_pending.get(message.from_user.id)
         if pending_action == "image_add":
             if message.text and clean_text(message.text) == "تم":
-                admin_pending.pop(message.from_user.id, None)
+                uid = message.from_user.id
+                pending_count = image_add_counts.pop(uid, 0)
+                timer = image_add_timers.pop(uid, None)
+                if timer:
+                    try:
+                        timer.cancel()
+                    except Exception:
+                        pass
+                admin_pending.pop(uid, None)
+                if pending_count:
+                    bot.send_message(message.chat.id, f"تم حفظ <b>{pending_count}</b> صورة.")
                 bot.send_message(message.chat.id, bot_images_text(), reply_markup=bot_images_markup())
                 return
             if message.photo:
                 if add_bot_image(message):
-                    bot.send_message(message.chat.id, "تمت إضافة الصورة. أرسل صورة أخرى أو اكتب تم.")
+                    # يدعم إرسال عدة صور دفعة واحدة كألبوم Telegram.
+                    queue_image_added_notice(message)
                 else:
                     bot.send_message(message.chat.id, "تعذر حفظ الصورة.")
                 return
-            bot.send_message(message.chat.id, "أرسل صورة، أو اكتب تم لإنهاء الإضافة.")
+            bot.send_message(message.chat.id, "أرسل صورة واحدة أو ألبوم صور كامل، أو اكتب تم لإنهاء الإضافة.")
             return
 
         if pending_action == "force_add" and message.text:
@@ -7004,7 +7184,7 @@ def callbacks(call):
             if action == "images_add":
                 admin_pending[uid] = "image_add"
                 bot.answer_callback_query(call.id)
-                bot.send_message(chat_id, "أرسل الصور التي تريد إضافتها واحدة تلو الأخرى. يمكنك وضع وصف مع الصورة. عند الانتهاء اكتب: تم")
+                bot.send_message(chat_id, "أرسل صورة واحدة أو عدة صور دفعة واحدة كألبوم. يمكن وضع وصف مع الصورة. عند الانتهاء اكتب: تم")
                 return
 
             if action == "images_clear":
