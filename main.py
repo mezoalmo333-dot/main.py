@@ -5643,7 +5643,7 @@ def main_handler(message):
             return
 
         if message.text and clean_text(message.text) == "بوت":
-            # تفاعل قلب مباشر على رسالة المستخدم بدل إرسال رسالة إضافية.
+            # رد البوت عند كتابة «بوت» مع Premium Emoji الخاص بماكس.
             try:
                 if hasattr(bot, "set_message_reaction") and hasattr(types, "ReactionTypeEmoji"):
                     bot.set_message_reaction(
@@ -5652,7 +5652,6 @@ def main_handler(message):
                         reaction=[types.ReactionTypeEmoji(emoji="❤")]
                     )
                 else:
-                    # توافق مع الإصدارات الأقدم من pyTelegramBotAPI عبر Bot API مباشرة.
                     bot._make_request(
                         "setMessageReaction",
                         params={
@@ -5663,6 +5662,10 @@ def main_handler(message):
                     )
             except Exception as e:
                 print("[Bot Reaction Error]", repr(e))
+            bot.reply_to(
+                message,
+                "مش شايف اسمي ولا اي ياعما؟ اسمي ماكس " + tg_emoji(5776187888735623263, "👑")
+            )
             return
 
         if continue_reply_setup(message):
