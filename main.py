@@ -44,7 +44,8 @@ telebot.logger.setLevel(logging.INFO)
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
-BOT_SHORT_DESCRIPTION = "بوت متخصص حماية وتنزيل أغاني"
+BOT_NAME = "حمايه اذكار الساعة ماكسيكو"
+BOT_SHORT_DESCRIPTION = "بوت حماية وأذكار الساعة وتنزيل أغاني"
 BOT_DESCRIPTION = (
     "بوت متخصص حماية وتنزيل أغاني\n"
     "قناة السورس: https://t.me/Ssource_MaX\n"
@@ -53,6 +54,11 @@ BOT_DESCRIPTION = (
 
 def configure_bot_profile():
     """تحديث وصف البوت وقائمة الأوامر في تيليجرام بدون تعطيل التشغيل إذا فشل API."""
+    try:
+        if hasattr(bot, "set_my_name"):
+            bot.set_my_name(BOT_NAME, language_code="ar")
+    except Exception as e:
+        print("[Bot Name Error]", repr(e))
     try:
         if hasattr(bot, "set_my_short_description"):
             bot.set_my_short_description(BOT_SHORT_DESCRIPTION, language_code="ar")
@@ -4568,17 +4574,23 @@ def send_song_card(message, title, source_url=""):
 
 
 def music_source_markup():
-    """أزرار السورس والمطور التي تظهر أسفل ملف الأغنية."""
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    source_btn = transparent_url_button("قناة السورس", SOURCE_CHANNEL_URL, CE_BOT_REPLY)
-    developer_btn = transparent_url_button("مطور السورس", SOURCE_DEVELOPER_URL, CE_MEMBER)
-    if source_btn and developer_btn:
-        markup.row(source_btn, developer_btn)
-    elif source_btn:
-        markup.row(source_btn)
-    elif developer_btn:
-        markup.row(developer_btn)
-    return markup
+    """أزرار السورس والمطور أسفل الأغنية مع Premium Emoji مباشرة عبر Bot API."""
+    # نرسل الـ markup كـ JSON مباشرة حتى لا تقوم نسخة قديمة من pyTelegramBotAPI
+    # بإسقاط icon_custom_emoji_id من الزر.
+    return json.dumps({
+        "inline_keyboard": [[
+            {
+                "text": "قناة السورس",
+                "url": SOURCE_CHANNEL_URL,
+                "icon_custom_emoji_id": "5852886383915442268"
+            },
+            {
+                "text": "مطور السورس",
+                "url": SOURCE_DEVELOPER_URL,
+                "icon_custom_emoji_id": "5852886383915442268"
+            }
+        ]]
+    }, ensure_ascii=False)
 
 
 def get_song_bot_image_id():
@@ -5553,6 +5565,20 @@ def channel_post_handler(message):
         "poll"
     ]
 )
+def normalize_bot_name_trigger(text):
+    """توحيد كتابة اسم البوت لإتاحة: مكس / ماكس / ماكسيكو حتى مع مسافات أو رموز خفية."""
+    if not text:
+        return ""
+    value = str(text).strip().lower()
+    value = re.sub(r"[\u200b-\u200f\u202a-\u202e\ufeff]", "", value)
+    value = value.replace("ـ", "")
+    value = re.sub(r"[\s\u0640]+", "", value)
+    value = re.sub(r"[^\w\u0600-\u06ff]", "", value)
+    for a, b in {"أ":"ا", "إ":"ا", "آ":"ا", "ة":"ه", "ى":"ي"}.items():
+        value = value.replace(a, b)
+    return value
+
+
 def main_handler(message):
 
     try:
@@ -5584,11 +5610,23 @@ def main_handler(message):
                 return
 
         # كلمات اسم البوت تعمل في الخاص والمجموعات والقنوات قبل أي اشتراك أو حماية.
-        if message.text and clean_text(message.text) in ("مكس", "ماكس", "مكسيكو"):
-            bot.reply_to(
-                message,
-                "عيوني كيفك✨\nhttps://t.me/Ssource_MaX"
-            )
+        _bot_name_trigger = normalize_bot_name_trigger(getattr(message, "text", ""))
+        if _bot_name_trigger in ("مكس", "ماكس", "ماكسيكو"):
+            markup = types.InlineKeyboardMarkup()
+            try:
+                markup_json = json.dumps({
+                    "inline_keyboard": [[{
+                        "text": "قناة السورس",
+                        "url": SOURCE_CHANNEL_URL,
+                        "icon_custom_emoji_id": "5852886383915442268"
+                    }]]
+                }, ensure_ascii=False)
+                bot.reply_to(message, "عيوني كيفك", reply_markup=markup_json)
+            except Exception:
+                btn = transparent_url_button("قناة السورس", SOURCE_CHANNEL_URL, "5852886383915442268")
+                if btn:
+                    markup.add(btn)
+                bot.reply_to(message, "عيوني كيفك", reply_markup=markup)
             return
 
         if message.chat and message.chat.type == "private" and message.text and message.from_user:
