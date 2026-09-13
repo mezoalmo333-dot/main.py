@@ -40,6 +40,34 @@ telebot.logger.setLevel(logging.INFO)
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
+BOT_SHORT_DESCRIPTION = "بوت متخصص حماية وتنزيل أغاني"
+BOT_DESCRIPTION = (
+    "بوت متخصص حماية وتنزيل أغاني\n"
+    "قناة السورس: https://t.me/Ssource_MaX\n"
+    "المطور: https://t.me/L1_D_R"
+)
+
+def configure_bot_profile():
+    """تحديث وصف البوت وقائمة الأوامر في تيليجرام بدون تعطيل التشغيل إذا فشل API."""
+    try:
+        if hasattr(bot, "set_my_short_description"):
+            bot.set_my_short_description(BOT_SHORT_DESCRIPTION, language_code="ar")
+    except Exception as e:
+        print("[Bot Short Description Error]", repr(e))
+    try:
+        if hasattr(bot, "set_my_description"):
+            bot.set_my_description(BOT_DESCRIPTION, language_code="ar")
+    except Exception as e:
+        print("[Bot Description Error]", repr(e))
+    try:
+        commands = [
+            types.BotCommand("start", "تشغيل البوت"),
+            types.BotCommand("help", "طريقة استعمال البوت"),
+        ]
+        bot.set_my_commands(commands)
+    except Exception as e:
+        print("[Bot Commands Error]", repr(e))
+
 ADD_TO_GROUP_URL = (
     f"https://t.me/{BOT_USERNAME}?startgroup"
     "&admin=delete_messages+restrict_members+invite_users+pin_messages+"
@@ -75,7 +103,7 @@ CE_BOT_REPLY = "5201842613983917014"
 CE_TON_PRICE = "5260450573768990626"
 CE_TON_ANALYSIS = "5357069174512303778"
 CE_FORCE_SUB = "5271801931814165886"
-CE_UPDATE_MAX_REQUESTED = "5258093637450866522"
+CE_UPDATE_MAX_REQUESTED = "5974492756494519709"
 CE_FORCE_VERIFY = "5258093637450866522"
 CE_TON_WALLET = "5258204546391351475"
 CE_TON_BALANCE = "5258368777350816286"
@@ -88,7 +116,7 @@ CE_WELCOME_HELLO = "5258501105293205250"
 CE_WELCOME_INFO = "5258503720928288433"
 CE_ADD_TO_GROUP_REQUESTED = "5274008024585871702"
 CE_ADMIN_USERNAME = "5260399854500191689"
-UPDATE_MAX_URL = "https://t.me/LeaDeR_E"
+UPDATE_MAX_URL = SOURCE_CHANNEL_URL
 
 def tg_emoji(emoji_id, alt="🔹"):
     return f'<tg-emoji emoji-id="{emoji_id}">{alt}</tg-emoji>'
@@ -464,7 +492,8 @@ CREATE TABLE IF NOT EXISTS groups (
     repeat_messages INTEGER DEFAULT 1,
     new_member_protection INTEGER DEFAULT 0,
     max_warnings INTEGER DEFAULT 3,
-    group_locked INTEGER DEFAULT 0
+    group_locked INTEGER DEFAULT 0,
+    usernames INTEGER DEFAULT 0
 )
 """)
 db.commit()
@@ -485,7 +514,8 @@ for c, d in {
     "repeat_messages": "INTEGER DEFAULT 1",
     "new_member_protection": "INTEGER DEFAULT 0",
     "max_warnings": "INTEGER DEFAULT 3",
-    "group_locked": "INTEGER DEFAULT 0"
+    "group_locked": "INTEGER DEFAULT 0",
+    "usernames": "INTEGER DEFAULT 0"
 }.items():
     add_column_if_missing("groups", c, d)
 
@@ -729,6 +759,12 @@ def command_parts(message):
     elif command == "فتح" and argument and clean_text(argument) in ("الجروب", "المجموعه", "المجموعة"):
         command = "فتح_الجروب"
         argument = ""
+    elif command == "قفل" and argument and clean_text(argument) in ("المعرفات", "المعرف", "اليوزرات", "اليوزر"):
+        command = "قفل_المعرفات"
+        argument = ""
+    elif command == "فتح" and argument and clean_text(argument) in ("المعرفات", "المعرف", "اليوزرات", "اليوزر"):
+        command = "فتح_المعرفات"
+        argument = ""
 
     # أوامر متعددة الكلمات للردود
     if command in ("اضف", "اضيف") and argument:
@@ -922,7 +958,7 @@ def button(
 # =========================================================
 CURRENCY_CACHE_SECONDS = 60
 CURRENCY_HTTP_TIMEOUT = 7
-LOVELY_UPDATES_URL = "https://t.me/LeaDeR_E"
+LOVELY_UPDATES_URL = SOURCE_CHANNEL_URL
 
 _currency_cache = {
     "usd_egp": None,
@@ -1628,6 +1664,36 @@ def enforce_group_lock(message):
     # رسائل القنوات/الرسائل المرسلة باسم قناة لا نلمسها.
     sender_chat = getattr(message, "sender_chat", None)
     if sender_chat is not None and getattr(sender_chat, "type", "") == "channel":
+        return False
+    delete_message_safe(message)
+    return True
+
+
+def message_contains_username(message):
+    """يتحقق من وجود معرف تيليجرام (@username) داخل رسالة العضو."""
+    text = (getattr(message, "text", None) or getattr(message, "caption", None) or "")
+    if re.search(r"(?<![A-Za-z0-9_])@[A-Za-z][A-Za-z0-9_]{4,31}\b", text):
+        return True
+    for attr in ("entities", "caption_entities"):
+        for entity in (getattr(message, attr, None) or []):
+            if getattr(entity, "type", "") == "mention":
+                return True
+    return False
+
+
+def enforce_username_lock(message):
+    """قفل المعرفات: يحذف رسائل الأعضاء التي تحتوي @username فقط."""
+    if (not message or not message.from_user or message.from_user.is_bot or
+            message.chat.type not in ("group", "supergroup")):
+        return False
+    if not group_setting(message.chat.id, "usernames"):
+        return False
+    if is_admin(message.chat.id, message.from_user.id):
+        return False
+    sender_chat = getattr(message, "sender_chat", None)
+    if sender_chat is not None and getattr(sender_chat, "type", "") == "channel":
+        return False
+    if not message_contains_username(message):
         return False
     delete_message_safe(message)
     return True
@@ -2741,7 +2807,8 @@ def all_locks(chat_id, state):
         "documents",
         "stickers",
         "audio",
-        "animations"
+        "animations",
+        "usernames"
     ]:
 
         set_group_setting(
@@ -2777,7 +2844,8 @@ def send_settings(message):
         ("audio", "الصوت"),
         ("animations", "المتحركات"),
         ("repeat_messages", "التكرار"),
-        ("new_member_protection", "حماية الجدد")
+        ("new_member_protection", "حماية الجدد"),
+        ("usernames", "المعرفات")
     ]
 
     for col, label in fields:
@@ -4409,9 +4477,7 @@ def send_song_card(message, title, source_url=""):
     """بطاقة الأغنية مع صورة من صور البوت وروابط السورس والمطور."""
     caption = (
         f"<b>MaX Music</b>\n\n"
-        f"🎵 <b>{html.escape(title)}</b>\n\n"
-        f"المصدر: <a href=\"{SOURCE_CHANNEL_URL}\">قناة السورس</a>\n"
-        f"المطور: <a href=\"{SOURCE_DEVELOPER_URL}\">MaX Developer</a>"
+        f"🎵 <b>{html.escape(title)}</b>"
     )
     try:
         cursor.execute("SELECT file_id FROM bot_images ORDER BY RANDOM() LIMIT 1")
@@ -4470,9 +4536,7 @@ def send_youtube_song(message, query, processing_message=None):
         # الكابشن والأزرار يكونان أسفل ملف الأغنية مباشرة.
         caption = (
             f"<b>MaX Music</b>\n\n"
-            f"🎵 <b>{html.escape(title)}</b>\n\n"
-            f"المصدر: قناة السورس\n"
-            f"المطور: MaX Developer"
+            f"🎵 <b>{html.escape(title)}</b>"
         )
         markup = music_source_markup()
 
@@ -4810,7 +4874,7 @@ def start_private(message):
     text = (
         f"{tg_emoji(CE_WELCOME_HELLO, '•')} مرحبًـا يـ {safe_name}\n"
         "\n"
-        f"{tg_emoji(CE_WELCOME_INFO, '•')}هذا البوت مخصص لإدارة وحماية المجموعات بالكـامل.\n"
+        f"{tg_emoji(CE_WELCOME_INFO, '•')}بوت متخصص حماية وتنزيل أغاني.\n"
         "\n"
         f"{tg_emoji(CE_WELCOME_INFO, '•')} اضـف البـوت فـي المجـموعـه الخـاصـه بـك وارفـعـه مشـرف مع جمـيع الصـلاحيـات."
     )
@@ -4827,7 +4891,7 @@ def start_private(message):
         button(
             "Update Max",
             url=UPDATE_MAX_URL,
-            icon_custom_emoji_id=CE_REPLY_BUTTON
+            icon_custom_emoji_id=CE_UPDATE_MAX_REQUESTED
         )
     )
 
@@ -5026,7 +5090,7 @@ def new_members_handler(message):
         update_btn = transparent_url_button(
             "Update Max",
             UPDATE_MAX_URL,
-            emoji_id=CE_REPLY_BUTTON
+            emoji_id=CE_UPDATE_MAX_REQUESTED
         )
         if update_btn:
             markup.add(update_btn)
@@ -5354,6 +5418,12 @@ def broadcast_button_choice(uid):
 
 
 def start_global_reply(message):
+    if not message.from_user or message.from_user.id != DEVELOPER_ID:
+        try:
+            bot.reply_to(message, "❌ إضافة الرد العام للمالك فقط.")
+        except Exception:
+            pass
+        return False
     token = secrets.token_hex(8)
     reply_pending[token] = {
         "chat_id": 0,
@@ -5554,6 +5624,9 @@ def main_handler(message):
         if enforce_group_lock(message):
             return
 
+        if enforce_username_lock(message):
+            return
+
         if message.text and message.text.strip() == ".":
             markup = types.InlineKeyboardMarkup()
             btn = transparent_url_button(
@@ -5570,19 +5643,26 @@ def main_handler(message):
             return
 
         if message.text and clean_text(message.text) == "بوت":
+            # تفاعل قلب مباشر على رسالة المستخدم بدل إرسال رسالة إضافية.
             try:
-                me = bot.get_me()
-                bot_name = full_name(me)
-            except Exception:
-                bot_name = BOT_USERNAME
-
-            bot.send_message(
-                message.chat.id,
-                "تاارا اسمي "
-                + html.escape(bot_name)
-                + " متشوف "
-                + tg_emoji(CE_BOT_REPLY, "🤖")
-            )
+                if hasattr(bot, "set_message_reaction") and hasattr(types, "ReactionTypeEmoji"):
+                    bot.set_message_reaction(
+                        message.chat.id,
+                        message.message_id,
+                        reaction=[types.ReactionTypeEmoji(emoji="❤")]
+                    )
+                else:
+                    # توافق مع الإصدارات الأقدم من pyTelegramBotAPI عبر Bot API مباشرة.
+                    bot._make_request(
+                        "setMessageReaction",
+                        params={
+                            "chat_id": message.chat.id,
+                            "message_id": message.message_id,
+                            "reaction": json.dumps([{"type": "emoji", "emoji": "❤"}])
+                        }
+                    )
+            except Exception as e:
+                print("[Bot Reaction Error]", repr(e))
             return
 
         if continue_reply_setup(message):
@@ -5710,10 +5790,11 @@ def handle_private(message):
         start_private(message)
         return
 
-    if command in (
-        "الاوامر",
-        "مساعده"
-    ):
+    if command in ("help", "مساعده", "مساعدة"):
+        send_commands_menu(message)
+        return
+
+    if command == "الاوامر":
         send_commands_menu(message)
         return
 
@@ -6139,6 +6220,20 @@ def handle_command(
     if command == "تحليل_دولار":
         return send_dollar_analysis(message)
 
+    # قفل/فتح المعرفات (منع @username داخل رسائل الأعضاء)
+    if command in ("قفل_المعرفات", "فتح_المعرفات"):
+        locked = command == "قفل_المعرفات"
+        try:
+            set_group_setting(chat_id, "usernames", locked)
+            bot.reply_to(
+                message,
+                f"{'تم قفل المعرفات' if locked else 'تم فتح المعرفات'}.\n"
+                f"{'لن يُسمح بإرسال @username للأعضاء.' if locked else 'أصبح إرسال المعرفات مسموحًا.'}"
+            )
+        except Exception:
+            bot.reply_to(message, "تعذر تغيير إعداد المعرفات.")
+        return True
+
     # البوت
     if command == "البوت":
 
@@ -6286,7 +6381,9 @@ def handle_command(
         "السجل",
         "الاعدادات",
         "قفل_الجروب",
-        "فتح_الجروب"
+        "فتح_الجروب",
+        "قفل_المعرفات",
+        "فتح_المعرفات"
     }
 
     if (
@@ -7899,12 +7996,17 @@ def protection_engine(message):
 # التشغيل
 # =========================================================
 def setup_default_force_channel():
-    # القناة التي طلبها المطور: تضاف افتراضيًا عند أول تشغيل فقط إذا لم توجد أي قناة.
+    # قناة الاشتراك الإجباري الافتراضية هي قناة السورس.
     try:
-        cursor.execute("SELECT COUNT(*) AS c FROM force_sub_channels")
-        if cursor.fetchone()["c"] == 0:
-            ok, result = add_force_channel("@LeaDeR_E")
-            print("[Force Sub Default]", result if ok else result)
+        # إزالة الإعداد القديم الذي كان يشير لقناة LeaDeR_E فقط، ثم ضمان وجود السورس.
+        cursor.execute("DELETE FROM force_sub_channels WHERE username=? OR url=?", ("@LeaDeR_E", "https://t.me/LeaDeR_E"))
+        db.commit()
+        cursor.execute("SELECT id FROM force_sub_channels WHERE username=? OR url=? LIMIT 1", ("@Ssource_MaX", SOURCE_CHANNEL_URL))
+        if not cursor.fetchone():
+            ok, result = add_force_channel(SOURCE_CHANNEL_URL)
+            print("[Force Sub Source]", result if ok else result)
+        else:
+            print("[Force Sub Source] already configured")
     except Exception as e:
         print("[Force Sub Default Error]", e)
 
@@ -7917,6 +8019,11 @@ def run_bot_forever():
     print(" Custom Emoji: ON")
     print(" Diagnostic Polling: ON")
     print("===================================")
+
+    try:
+        configure_bot_profile()
+    except Exception as e:
+        print("[Bot Profile Setup Error]", repr(e))
 
     try:
         setup_default_force_channel()
