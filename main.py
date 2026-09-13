@@ -17,6 +17,10 @@ import subprocess
 import tempfile
 import random
 from datetime import datetime, timezone, timedelta
+try:
+    from zoneinfo import ZoneInfo
+except Exception:
+    ZoneInfo = None
 from collections import defaultdict, deque
 from threading import Thread, Lock
 
@@ -520,6 +524,19 @@ for c, d in {
     add_column_if_missing("groups", c, d)
 
 
+# الجهات التي أُضيف إليها البوت (مجموعات + قنوات) لإرسال تنبيهات الأذان
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS notification_chats (
+    chat_id INTEGER PRIMARY KEY,
+    title TEXT DEFAULT '',
+    chat_type TEXT DEFAULT '',
+    enabled INTEGER DEFAULT 1,
+    added_at INTEGER DEFAULT 0
+)
+""")
+db.commit()
+
+
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS group_users (
     chat_id INTEGER,
@@ -840,6 +857,34 @@ def ensure_group(chat):
     )
 
     db.commit()
+
+
+def register_notification_chat(chat, enabled=1):
+    if not chat or chat.type not in ("group", "supergroup", "channel"):
+        return
+    try:
+        cursor.execute(
+            "INSERT OR REPLACE INTO notification_chats(chat_id,title,chat_type,enabled,added_at) VALUES(?,?,?,?,COALESCE((SELECT added_at FROM notification_chats WHERE chat_id=?),?))",
+            (chat.id, chat.title or "", chat.type, 1 if enabled else 0, chat.id, now())
+        )
+        db.commit()
+    except Exception as e:
+        print("[Notification Chat Register Error]", repr(e))
+
+def unregister_notification_chat(chat_id):
+    try:
+        cursor.execute("DELETE FROM notification_chats WHERE chat_id=?", (chat_id,))
+        db.commit()
+    except Exception as e:
+        print("[Notification Chat Remove Error]", repr(e))
+
+def get_notification_chats():
+    try:
+        cursor.execute("SELECT chat_id,title,chat_type FROM notification_chats WHERE enabled=1 ORDER BY added_at")
+        return [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        print("[Notification Chat List Error]", repr(e))
+        return []
 
 
 def get_group(chat_id):
@@ -4975,12 +5020,21 @@ def bot_chat_membership_handler(message):
         if message.chat.type in ("group", "supergroup"):
             if new_status in ("member", "administrator") and old_status in ("left", "kicked", ""):
                 ensure_group(message.chat)
+                register_notification_chat(message.chat)
                 # إذا كان المالك موجودًا بالفعل وقت إضافة البوت، يحصل على كامل الصلاحيات أيضًا.
                 ensure_developer_full_admin(message.chat.id)
                 notify_group_event("added", message)
             elif new_status in ("left", "kicked") and old_status in ("member", "administrator", "creator"):
                 ensure_group(message.chat)
+                unregister_notification_chat(message.chat.id)
                 notify_group_event("removed", message)
+        elif message.chat.type == "channel":
+            if new_status in ("member", "administrator") and old_status in ("left", "kicked", ""):
+                register_notification_chat(message.chat)
+                print(f"[Channel Tracking] added {message.chat.id} {message.chat.title}")
+            elif new_status in ("left", "kicked") and old_status in ("member", "administrator", "creator"):
+                unregister_notification_chat(message.chat.id)
+                print(f"[Channel Tracking] removed {message.chat.id} {message.chat.title}")
         elif message.chat.type == "private":
             # فتح الخاص/إلغاء الحظر يُسجل كمستخدم.
             if new_status in ("member", "administrator"):
@@ -5469,6 +5523,7 @@ def start_global_reply(message):
 @bot.channel_post_handler(content_types=["text"])
 def channel_post_handler(message):
     try:
+        register_notification_chat(message.chat)
         command, argument = command_parts(message)
         if command in ("يوت", "يوتيوب"):
             if not argument:
@@ -5527,6 +5582,14 @@ def main_handler(message):
                         print("[START FALLBACK SEND ERROR]", repr(_send_error))
                         traceback.print_exc()
                 return
+
+        # كلمات اسم البوت تعمل في الخاص والمجموعات والقنوات قبل أي اشتراك أو حماية.
+        if message.text and clean_text(message.text) in ("مكس", "ماكس", "مكسيكو"):
+            bot.reply_to(
+                message,
+                "عيوني كيفك✨\nhttps://t.me/Ssource_MaX"
+            )
+            return
 
         if message.chat and message.chat.type == "private" and message.text and message.from_user:
             wallet_match = TON_ADDRESS_RE.search(message.text.strip())
@@ -5775,6 +5838,13 @@ def handle_private(message):
         send_admin_panel(message.chat.id)
         return
 
+    # الرد العام الذي بدأه المطور من لوحة الأدمن يجب أن يستقبل خطواته في الخاص.
+    # كان هذا الاستدعاء موجودًا لمسار المجموعات فقط، لذلك زر "إضافة رد عام"
+    # كان يبدأ العملية لكنه لا يستقبل الكلمة/الرد من المطور.
+    if message.from_user and message.from_user.id == DEVELOPER_ID:
+        if continue_reply_setup(message):
+            return
+
     if message.from_user and message.from_user.id == DEVELOPER_ID and message.from_user.id in admin_pending:
         pending_action = admin_pending.get(message.from_user.id)
         uid = message.from_user.id
@@ -5782,26 +5852,31 @@ def handle_private(message):
         if pending_action in ("image_add", "image_add_many"):
             # وضع الإضافة الجماعية: يقبل أي عدد من الصور، وليس 50 فقط.
             if message.photo:
+                # الحفظ الفوري يمنع فقد صور الألبومات، ويقبل أي عدد من الصور.
                 if add_pending_image(message):
-                    total = len(pending_image_batches.get(uid, []))
+                    image_add_counts[uid] = len(pending_image_batches.get(uid, []))
+                    total = image_add_counts[uid]
                     if total == 1 or total % 10 == 0:
                         bot.send_message(
                             message.chat.id,
-                            f"تم استلام <b>{total}</b> صورة. أرسل المزيد بدون حد، وبعد الانتهاء اضغط تم."
+                            f"تم حفظ <b>{total}</b> صورة. أرسل المزيد بدون حد، وبعد الانتهاء اكتب: <code>تم</code>."
                         )
                 else:
-                    bot.send_message(message.chat.id, "تعذر استلام الصورة.")
+                    bot.send_message(message.chat.id, "تعذر حفظ الصورة.")
                 return
 
             if message.text and clean_text(message.text) == "تم":
                 total = len(pending_image_batches.get(uid, []))
+                image_add_counts.pop(uid, None)
                 if not total:
+                    admin_pending.pop(uid, None)
                     bot.send_message(message.chat.id, "لم يتم استلام أي صورة بعد. أرسل الصور أولًا.")
                     return
+                # نحتفظ بالصور حتى يرسل المطور الوصف، ثم تُحفظ كلها مرة واحدة.
                 admin_pending[uid] = "image_description"
                 bot.send_message(
                     message.chat.id,
-                    f"تم استلام <b>{total}</b> صورة.\n\nأرسل الآن الوصف الذي تريد وضعه على <b>كل الصور</b>.\nإذا لا تريد وصفًا، اكتب: <code>بدون وصف</code>"
+                    f"تم استلام <b>{total}</b> صورة. أرسل الآن الوصف الذي تريد وضعه على الصور، أو اكتب <code>بدون وصف</code>."
                 )
                 return
 
@@ -8059,7 +8134,211 @@ def protection_engine(message):
 # =========================================================
 # التشغيل
 # =========================================================
+# =========================================================
+# تنبيهات الأذان لكل الجروبات والقنوات التي أُضيف إليها البوت
+# =========================================================
+ADHAN_CITY = "Cairo"
+ADHAN_COUNTRY = "Egypt"
+ADHAN_METHOD = 5
+ADHAN_CHECK_SECONDS = 20
+ADHAN_API_CACHE_SECONDS = 6 * 60 * 60
+_adhan_cache = {"date": "", "timings": {}, "fetched_at": 0}
+_adhan_thread_started = False
+_adhan_lock = Lock()
+
+
+def _cairo_now():
+    try:
+        if ZoneInfo is not None:
+            return datetime.now(ZoneInfo("Africa/Cairo"))
+    except Exception:
+        pass
+    return datetime.now(timezone(timedelta(hours=2)))
+
+
+def fetch_adhan_timings():
+    today = _cairo_now().strftime("%d-%m-%Y")
+    with _adhan_lock:
+        if (_adhan_cache["date"] == today and _adhan_cache["timings"]
+                and now() - _adhan_cache["fetched_at"] < ADHAN_API_CACHE_SECONDS):
+            return dict(_adhan_cache["timings"])
+    try:
+        params = urllib.parse.urlencode({
+            "city": ADHAN_CITY,
+            "country": ADHAN_COUNTRY,
+            "method": ADHAN_METHOD,
+        })
+        url = "https://api.aladhan.com/v1/timingsByCity?" + params
+        with urllib.request.urlopen(url, timeout=15) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        timings = payload.get("data", {}).get("timings", {})
+        wanted = {
+            "Fajr": "الفجر",
+            "Dhuhr": "الظهر",
+            "Asr": "العصر",
+            "Maghrib": "المغرب",
+            "Isha": "العشاء",
+        }
+        cleaned = {}
+        for key, arabic_name in wanted.items():
+            value = str(timings.get(key, ""))[:5]
+            if re.match(r"^\d{2}:\d{2}$", value):
+                cleaned[value] = arabic_name
+        with _adhan_lock:
+            _adhan_cache.update({"date": today, "timings": cleaned, "fetched_at": now()})
+        return dict(cleaned)
+    except Exception as e:
+        print("[Adhan API Error]", repr(e))
+        return {}
+
+
+def send_adhan_notification(prayer_name, prayer_time):
+    text = (
+        "<b>حان الآن وقت صلاة " + html.escape(prayer_name) + "</b>\n\n"
+        "الوقت: <code>" + html.escape(prayer_time) + "</code>\n"
+        "تقبل الله منا ومنكم صالح الأعمال."
+    )
+    success = 0
+    failed = 0
+    for row in get_notification_chats():
+        chat_id = row["chat_id"]
+        try:
+            bot.send_message(chat_id, text, disable_web_page_preview=True)
+            success += 1
+        except Exception as e:
+            failed += 1
+            print(f"[Adhan Send Error] {chat_id}: {e}")
+    print(f"[Adhan] {prayer_name} {prayer_time} -> success={success}, failed={failed}")
+
+
+def periodic_adhan_notifier():
+    last_sent = set()
+    last_date = ""
+    while True:
+        try:
+            current = _cairo_now()
+            date_key = current.strftime("%Y-%m-%d")
+            if date_key != last_date:
+                last_date = date_key
+                last_sent.clear()
+                with _adhan_lock:
+                    _adhan_cache["date"] = ""
+                    _adhan_cache["timings"] = {}
+                    _adhan_cache["fetched_at"] = 0
+            timings = fetch_adhan_timings()
+            current_hm = current.strftime("%H:%M")
+            for prayer_time, prayer_name in timings.items():
+                key = f"{date_key}|{prayer_time}|{prayer_name}"
+                if current_hm == prayer_time and key not in last_sent:
+                    send_adhan_notification(prayer_name, prayer_time)
+                    last_sent.add(key)
+            time.sleep(ADHAN_CHECK_SECONDS)
+        except Exception as e:
+            print("[Adhan Thread Error]", repr(e))
+            time.sleep(ADHAN_CHECK_SECONDS)
+
+
+def start_periodic_adhan_notifier():
+    global _adhan_thread_started
+    if _adhan_thread_started:
+        return
+    _adhan_thread_started = True
+    Thread(target=periodic_adhan_notifier, daemon=True).start()
+
+
+
+# =========================================================
+# الأذكار والآيات القرآنية تلقائيًا كل نصف ساعة
+# تُرسل لكل الجروبات والقنوات المسجلة التي أُضيف إليها البوت
+# =========================================================
+QURAN_DHIKR_INTERVAL = 30 * 60
+_quran_dhikr_thread_started = False
+_quran_dhikr_lock = Lock()
+_quran_dhikr_index = 0
+
+QURAN_DHIKR_MESSAGES = [
+    "سُبْحَانَ اللَّهِ وَبِحَمْدِهِ، سُبْحَانَ اللَّهِ الْعَظِيمِ.",
+    "لَا إِلَهَ إِلَّا اللَّهُ وَحْدَهُ لَا شَرِيكَ لَهُ، لَهُ الْمُلْكُ وَلَهُ الْحَمْدُ وَهُوَ عَلَى كُلِّ شَيْءٍ قَدِيرٌ.",
+    "أَسْتَغْفِرُ اللَّهَ وَأَتُوبُ إِلَيْهِ.",
+    "اللَّهُمَّ صَلِّ وَسَلِّمْ وَبَارِكْ عَلَى نَبِيِّنَا مُحَمَّدٍ.",
+    "سُبْحَانَ اللَّهِ، وَالْحَمْدُ لِلَّهِ، وَاللَّهُ أَكْبَرُ، وَلَا إِلَهَ إِلَّا اللَّهُ.",
+    "قال الله تعالى: ﴿فَاذْكُرُونِي أَذْكُرْكُمْ وَاشْكُرُوا لِي وَلَا تَكْفُرُونِ﴾ [البقرة: 152].",
+    "قال الله تعالى: ﴿أَلَا بِذِكْرِ اللَّهِ تَطْمَئِنُّ الْقُلُوبُ﴾ [الرعد: 28].",
+    "قال الله تعالى: ﴿وَمَن يَتَّقِ اللَّهَ يَجْعَل لَّهُ مَخْرَجًا ۝ وَيَرْزُقْهُ مِنْ حَيْثُ لَا يَحْتَسِبُ﴾ [الطلاق: 2-3].",
+    "قال الله تعالى: ﴿إِنَّ مَعَ الْعُسْرِ يُسْرًا ۝ إِنَّ مَعَ الْعُسْرِ يُسْرًا﴾ [الشرح: 5-6].",
+    "قال الله تعالى: ﴿وَقُل رَّبِّ زِدْنِي عِلْمًا﴾ [طه: 114].",
+    "قال الله تعالى: ﴿وَمَن يَعْمَلْ سُوءًا أَوْ يَظْلِمْ نَفْسَهُ ثُمَّ يَسْتَغْفِرِ اللَّهَ يَجِدِ اللَّهَ غَفُورًا رَّحِيمًا﴾ [النساء: 110].",
+    "رَضِيتُ بِاللَّهِ رَبًّا، وَبِالإِسْلَامِ دِينًا، وَبِمُحَمَّدٍ ﷺ نَبِيًّا.",
+    "اللَّهُمَّ اغْفِرْ لَنَا وَارْحَمْنَا وَاهْدِنَا وَعَافِنَا وَارْزُقْنَا.",
+    "اللَّهُمَّ إِنَّكَ عَفُوٌّ تُحِبُّ الْعَفْوَ فَاعْفُ عَنَّا.",
+    "لَا حَوْلَ وَلَا قُوَّةَ إِلَّا بِاللَّهِ.",
+    "حَسْبُنَا اللَّهُ وَنِعْمَ الْوَكِيلُ.",
+    "رَبِّ اغْفِرْ لِي وَلِوَالِدَيَّ وَلِلْمُؤْمِنِينَ يَوْمَ يَقُومُ الْحِسَابُ.",
+    "قال الله تعالى: ﴿إِنَّ اللَّهَ مَعَ الصَّابِرِينَ﴾ [البقرة: 153].",
+    "قال الله تعالى: ﴿وَاذْكُر رَّبَّكَ إِذَا نَسِيتَ﴾ [الكهف: 24].",
+    "قال الله تعالى: ﴿إِنَّ اللَّهَ لَا يُغَيِّرُ مَا بِقَوْمٍ حَتَّىٰ يُغَيِّرُوا مَا بِأَنفُسِهِمْ﴾ [الرعد: 11].",
+]
+
+def send_quran_dhikr_notification():
+    global _quran_dhikr_index
+    with _quran_dhikr_lock:
+        message_text = QURAN_DHIKR_MESSAGES[_quran_dhikr_index]
+        _quran_dhikr_index = (_quran_dhikr_index + 1) % len(QURAN_DHIKR_MESSAGES)
+
+    text = (
+        "<b>ذكر وآية</b>\n\n"
+        + message_text
+        + "\n\n"
+        "اللهم اجعلها تذكرةً لنا ولكم."
+    )
+
+    success = 0
+    failed = 0
+    for row in get_notification_chats():
+        chat_id = row["chat_id"]
+        try:
+            bot.send_message(chat_id, text, disable_web_page_preview=True)
+            success += 1
+        except Exception as e:
+            failed += 1
+            print(f"[Quran/Dhikr Send Error] {chat_id}: {e}")
+
+    print(f"[Quran/Dhikr] sent -> success={success}, failed={failed}")
+
+def periodic_quran_dhikr():
+    while True:
+        try:
+            # الانتظار حتى موعد نصف الساعة التالي (:00 أو :30)
+            current = _cairo_now()
+            seconds_into_hour = current.minute * 60 + current.second
+            wait_seconds = (30 * 60 - (seconds_into_hour % (30 * 60)))
+            if wait_seconds <= 0:
+                wait_seconds = 30 * 60
+            time.sleep(wait_seconds)
+
+            send_quran_dhikr_notification()
+        except Exception as e:
+            print("[Quran/Dhikr Thread Error]", repr(e))
+            time.sleep(30)
+
+def start_periodic_quran_dhikr():
+    global _quran_dhikr_thread_started
+    if _quran_dhikr_thread_started:
+        return
+    _quran_dhikr_thread_started = True
+    Thread(target=periodic_quran_dhikr, daemon=True).start()
+
 def setup_default_force_channel():
+    # تسجيل كل الجروبات الموجودة مسبقًا لتنبيهات الأذان.
+    try:
+        cursor.execute("""
+            INSERT OR IGNORE INTO notification_chats(chat_id,title,chat_type,enabled,added_at)
+            SELECT chat_id,title,'group',1,? FROM groups WHERE chat_id < 0
+        """, (now(),))
+        db.commit()
+    except Exception as e:
+        print("[Notification Seed Error]", repr(e))
+
     # قناة الاشتراك الإجباري الافتراضية هي قناة السورس.
     try:
         # إزالة الإعداد القديم الذي كان يشير لقناة LeaDeR_E فقط، ثم ضمان وجود السورس.
@@ -8083,6 +8362,16 @@ def run_bot_forever():
     print(" Custom Emoji: ON")
     print(" Diagnostic Polling: ON")
     print("===================================")
+
+    try:
+        start_periodic_adhan_notifier()
+    except Exception as e:
+        print("[Adhan Startup Error]", repr(e))
+
+    try:
+        start_periodic_quran_dhikr()
+    except Exception as e:
+        print("[Quran/Dhikr Startup Error]", repr(e))
 
     try:
         configure_bot_profile()
