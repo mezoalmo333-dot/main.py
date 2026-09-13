@@ -29,6 +29,12 @@ DEVELOPER_ID = 8037399518
 BOT_USERNAME = "v_u_kbot"
 DB_NAME = "protection_bot.db"
 
+# =========================================================
+# بيانات السورس
+# =========================================================
+SOURCE_CHANNEL_URL = "https://t.me/Ssource_MaX"
+SOURCE_DEVELOPER_URL = "https://t.me/L1_D_R"
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 telebot.logger.setLevel(logging.INFO)
 
@@ -603,6 +609,15 @@ try:
 except sqlite3.OperationalError:
     pass
 
+# دعم حفظ الصور داخل الردود التلقائية، مع الحفاظ على الردود القديمة.
+for _col, _definition in {
+    "reply_media_type": "TEXT DEFAULT ''",
+    "reply_media_file_id": "TEXT DEFAULT ''",
+    "reply_media_caption": "TEXT DEFAULT ''",
+    "reply_media_entities": "TEXT DEFAULT ''"
+}.items():
+    add_column_if_missing("auto_replies", _col, _definition)
+
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS group_ranks (
     chat_id INTEGER NOT NULL,
@@ -929,10 +944,7 @@ _ton_market_cache_lock = Lock()
 
 
 def transparent_url_button(text, url, emoji_id=None):
-    """
-    زر رابط للردود. يُحافظ على اسم الوظيفة القديم للتوافق،
-    لكن مظهر الأزرار الآن موحد بلون danger كما طلب المطور.
-    """
+    """زر رابط موحد بتصميم MaXeCo."""
     text = strip_non_custom_emoji(str(text or "")).strip()
     kwargs = {
         "text": text,
@@ -1234,10 +1246,10 @@ def send_ton_analysis(message):
     analysis_emoji = tg_emoji(CE_TON_ANALYSIS, "🔹")
     text = (
         f"{analysis_emoji} <b>تحليل ToN</b>\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         f"{price_emoji} <b>{format_money(ton_usd * usd_egp, 2)} EGP</b>\n"
         f"{price_emoji} <b>{format_money(ton_usd, 4)} USD</b>\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         f"{trend} آخر 24 ساعة: <b>{trend_value}</b>"
     )
 
@@ -1450,10 +1462,10 @@ def send_dollar_analysis(message):
 
     text = (
         f"{analysis_emoji} <b>تحليل DoLLar</b>\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         f"{price_emoji} <b>{format_money(usd_egp, 2)} EGP</b>\n"
         f"{price_emoji} <b>1.0000 USD</b>\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         f"{price_emoji} <b>1 USD = {format_money(usd_egp, 2)} EGP</b>\n"
         f"{change_line}\n"
         f"{previous_line}"
@@ -1546,7 +1558,7 @@ def show_member_card(message):
 
     caption = (
         f"<b>معلومات العضو</b>\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         f"الاسم: {mention(u)}\n"
         f"اليوزر: <code>{html.escape(username)}</code>\n"
         f"الايدي: <code>{u.id}</code>\n"
@@ -2251,16 +2263,16 @@ def show_profile(message, target):
     caption = (
         f"🔎 <b>كشف المستخدم</b>\n"
         f"<b>الاسم:</b> {mention(target)}\n"
-        f"┈┅⊷━⊷┅┅┈\n"
+        f"\n"
         f"<b>اليوزر:</b> "
         f"{html.escape(username_text(target))}\n"
-        f"┈┅⊷━⊷┅┅┈\n"
+        f"\n"
         f"<b>الايدي:</b> "
         f"<code>{target.id}</code>\n"
-        f"┈┅⊷━⊷┅┅┈\n"
+        f"\n"
         f"<b>رسائله:</b> "
         f"<code>{messages}</code>\n"
-        f"┈┅⊷━⊷┅┅┈\n"
+        f"\n"
         f"<b>تحذيراته:</b> "
         f"<code>{warnings}</code>"
     )
@@ -2336,15 +2348,15 @@ def owner_profile(message):
 
     text = (
         "✢ 𝐓𝐇𝐄 𝐎𝐖𝐍𝐄𝐑 ✢\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         f"𝐍𝐀𝐌𝐄  :   ✢ {mention(owner, owner=True)} ✢\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         f"𝐔𝐒𝐄𝐑  :   ✢ "
         f"{html.escape(username_text(owner))} ✢\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         f"𝐈𝐃  :  ✢ "
         f"<code>{owner.id}</code> ✢\n"
-        "┈┅⊷━⊷┅┅┈"
+        ""
     )
 
     markup = types.InlineKeyboardMarkup()
@@ -2840,16 +2852,16 @@ def command_category_text(category, viewer_id=None, chat_id=None):
     if not command_category_allowed(category, viewer_id, chat_id):
         return "❌ هذه الأوامر ليست ضمن صلاحيات رتبتك."
     texts = {
-        "locks": "🔒 <b>أوامر القفل</b>\n┈┅⊷━⊷┅┅┈\n<code>قفل الروابط</code>\n<code>قفل الصور</code>\n<code>قفل الفيديو</code>\n<code>قفل الملفات</code>\n<code>قفل الملصقات</code>\n<code>قفل الصوت</code>\n<code>قفل المتحركات</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>\n<code>قفل الجروب</code>\n<code>قفل الكل</code>",
-        "unlocks": "🔓 <b>أوامر الفتح</b>\n┈┅⊷━⊷┅┅┈\n<code>فتح الروابط</code>\n<code>فتح الصور</code>\n<code>فتح الفيديو</code>\n<code>فتح الملفات</code>\n<code>فتح الملصقات</code>\n<code>فتح الصوت</code>\n<code>فتح المتحركات</code>\n<code>فتح التكرار</code>\n<code>فتح حماية الجدد</code>\n<code>فتح الجروب</code>\n<code>فتح الكل</code>",
-        "groups": "👥 <b>أوامر المجموعات</b>\n┈┅⊷━⊷┅┅┈\n<code>رتبتي</code>\n<code>ا</code>\n<code>معلومات</code>\n<code>احصائيات</code>\n<code>السجل</code>\n<code>الاعدادات</code>\n<code>الساعة</code>\n<code>المالك</code>\n<code>المطور</code>",
-        "admin": "👮 <b>أوامر الإدارة</b>\n┈┅⊷━⊷┅┅┈\n<code>حظر</code>\n<code>فك حظر</code>\n<code>حظر عام</code>\n<code>طرد</code>\n<code>كتم</code>\n<code>فك كتم</code>\n<code>تحذير</code>\n<code>تحذيرات</code>\n<code>مسح التحذيرات</code>\n<code>الغاء تحذير</code>\n<code>قفل الجروب</code>\n<code>فتح الجروب</code>",
-        "protection": "🛡️ <b>أوامر الحماية</b>\n┈┅⊷━⊷┅┅┈\n<code>منع كلمة ...</code>\n<code>الغاء منع كلمة ...</code>\n<code>قائمة الكلمات</code>\n<code>قفل الروابط</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>",
-        "ranks": "👑 <b>أوامر الرتب</b>\n┈┅⊷━⊷┅┅┈\n<code>رفع مساعد المالك</code>\n<code>تنزيل مساعد المالك</code>\n<code>رفع مدير</code>\n<code>تنزيل مدير</code>\n<code>رفع ادمن</code>\n<code>تنزيل ادمن</code>\n<code>رفع مشرف</code>\n<code>تنزيل مشرف</code>\n<code>رفع حيوان</code>\n<code>تنزيل حيوان</code>",
-        "replies": "💬 <b>أوامر الردود</b>\n┈┅⊷━⊷┅┅┈\n<code>اضف رد</code>\n<code>حذف رد</code>\n<code>قائمة الردود</code>\n\nالرد الذي تضيفه من داخل المجموعة يُحفظ لهذه المجموعة فقط.",
-        "ton": "💎 <b>أوامر TON</b>\n┈┅⊷━⊷┅┅┈\n<code>1ton</code> أو <code>1تون</code> — سعر TON\n<code>تحليل تون</code> — تحليل آخر 24 ساعة\n<code>تحليل دولار</code> — سعر الدولار مقابل الجنيه",
-        "music": "🎵 <b>أوامر الأغاني</b>\n┈┅⊷━⊷┅┅┈\n<code>يوت اسم الأغنية</code> — يبحث في YouTube ويرسل الأغنية كملف صوتي.",
-        "images": "🖼️ <b>أوامر الصور</b>\n┈┅⊷━⊷┅┅┈\n<code>صورة</code> — يرسل صورة عشوائية من صور البوت التي يضيفها المطور.",
+        "locks": "🔒 <b>أوامر القفل</b>\n\n<code>قفل الروابط</code>\n<code>قفل الصور</code>\n<code>قفل الفيديو</code>\n<code>قفل الملفات</code>\n<code>قفل الملصقات</code>\n<code>قفل الصوت</code>\n<code>قفل المتحركات</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>\n<code>قفل الجروب</code>\n<code>قفل الكل</code>",
+        "unlocks": "🔓 <b>أوامر الفتح</b>\n\n<code>فتح الروابط</code>\n<code>فتح الصور</code>\n<code>فتح الفيديو</code>\n<code>فتح الملفات</code>\n<code>فتح الملصقات</code>\n<code>فتح الصوت</code>\n<code>فتح المتحركات</code>\n<code>فتح التكرار</code>\n<code>فتح حماية الجدد</code>\n<code>فتح الجروب</code>\n<code>فتح الكل</code>",
+        "groups": "👥 <b>أوامر المجموعات</b>\n\n<code>رتبتي</code>\n<code>ا</code>\n<code>معلومات</code>\n<code>احصائيات</code>\n<code>السجل</code>\n<code>الاعدادات</code>\n<code>الساعة</code>\n<code>المالك</code>\n<code>المطور</code>",
+        "admin": "👮 <b>أوامر الإدارة</b>\n\n<code>حظر</code>\n<code>فك حظر</code>\n<code>حظر عام</code>\n<code>طرد</code>\n<code>كتم</code>\n<code>فك كتم</code>\n<code>تحذير</code>\n<code>تحذيرات</code>\n<code>مسح التحذيرات</code>\n<code>الغاء تحذير</code>\n<code>قفل الجروب</code>\n<code>فتح الجروب</code>",
+        "protection": "🛡️ <b>أوامر الحماية</b>\n\n<code>منع كلمة ...</code>\n<code>الغاء منع كلمة ...</code>\n<code>قائمة الكلمات</code>\n<code>قفل الروابط</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>",
+        "ranks": "👑 <b>أوامر الرتب</b>\n\n<code>رفع مساعد المالك</code>\n<code>تنزيل مساعد المالك</code>\n<code>رفع مدير</code>\n<code>تنزيل مدير</code>\n<code>رفع ادمن</code>\n<code>تنزيل ادمن</code>\n<code>رفع مشرف</code>\n<code>تنزيل مشرف</code>\n<code>رفع حيوان</code>\n<code>تنزيل حيوان</code>",
+        "replies": "💬 <b>أوامر الردود</b>\n\n<code>اضف رد</code>\n<code>حذف رد</code>\n<code>قائمة الردود</code>\n\nالرد الذي تضيفه من داخل المجموعة يُحفظ لهذه المجموعة فقط.",
+        "ton": "💎 <b>أوامر TON</b>\n\n<code>1ton</code> أو <code>1تون</code> — سعر TON\n<code>تحليل تون</code> — تحليل آخر 24 ساعة\n<code>تحليل دولار</code> — سعر الدولار مقابل الجنيه",
+        "music": "🎵 <b>أوامر الأغاني</b>\n\n<code>يوت اسم الأغنية</code> — يبحث في YouTube ويرسل الأغنية كملف صوتي.",
+        "images": "🖼️ <b>أوامر الصور</b>\n\n<code>صورة</code> أو <code>صور</code> — يرسل صورة عشوائية من صور البوت التي يضيفها المطور.",
     }
     return texts.get(category, "📚 <b>قائمة أوامر البوت</b>")
 
@@ -2863,7 +2875,7 @@ def commands_back_markup(viewer_id=None):
 
 def send_commands_menu(message):
     viewer_id = message.from_user.id if message.from_user else 0
-    text = "📚 <b>قائمة أوامر البوت</b>\n┈┅⊷━⊷┅┅┈\nالأوامر المتاحة لرتبتك فقط:"
+    text = "📚 <b>قائمة أوامر البوت</b>\n\nالأوامر المتاحة لرتبتك فقط:"
     bot.reply_to(message, text, reply_markup=commands_menu_markup(viewer_id, message.chat.id if message.chat.type in ("group", "supergroup") else None))
 
 
@@ -2876,16 +2888,16 @@ def commands_text(owner=None, viewer_id=None, chat_id=None):
     allowed_ranks = command_category_allowed("ranks", viewer_id, chat_id)
     lines = [
         "<b>قائمة أوامر البوت</b>",
-        "┈┅⊷━⊷┅┅┈",
+        "",
         "<b>للجميع:</b>",
         "<code>الاوامر</code> • <code>مساعدة</code> • <code>ا</code> • <code>ايدي</code> • <code>معلوماتي</code>",
         "<code>كشف</code> • <code>رتبتي</code> • <code>معلومات</code> • <code>البوت</code> • <code>المطور</code> • <code>المالك</code>",
-        "<code>الساعة</code> • <code>صورة</code> • <code>كات</code> • <code>يوت اسم الأغنية</code>",
+        "<code>الساعة</code> • <code>صورة</code> • <code>كات</code> • <code>يوت اسم الأغنية</code> • <code>شغل {اسم الأغنية}</code>",
         "<code>اضف رد</code> • <code>حذف رد</code> • <code>قائمة الردود</code>",
     ]
     if allowed_admin:
         lines += [
-            "┈┅⊷━⊷┅┅┈",
+            "",
             "<b>الإدارة والحماية:</b>",
             "<code>حظر</code> • <code>فك حظر</code> • <code>حظر عام</code> • <code>طرد</code> • <code>كتم</code> • <code>فك كتم</code>",
             "<code>تحذير</code> • <code>تحذيرات</code> • <code>مسح التحذيرات</code> • <code>الغاء تحذير</code>",
@@ -2895,7 +2907,7 @@ def commands_text(owner=None, viewer_id=None, chat_id=None):
         ]
     if allowed_ranks:
         lines += [
-            "┈┅⊷━⊷┅┅┈",
+            "",
             "<b>نظام الرتب:</b>",
             "<code>رفع مساعد المالك</code> • <code>تنزيل مساعد المالك</code>",
             "<code>رفع مدير</code> • <code>تنزيل مدير</code> • <code>رفع ادمن</code> • <code>تنزيل ادمن</code>",
@@ -2935,7 +2947,7 @@ MOD_PERMS = {
     ),
 
     "manage_video_chats": (
-        "🎥 إدارة المكالمات",
+        "🎵 تشغيل الأغاني",
         "can_manage_video_chats"
     ),
 
@@ -3003,7 +3015,7 @@ def moderator_panel(call, token):
 
     bot.edit_message_text(
         "🛡️ <b>اختيار صلاحيات المشرف</b>\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         f"👤 الهدف: {mention(p['target'])}\n\n"
         "اختر الصلاحيات ثم اضغط تأكيد.\n"
         "⚠️ صلاحية رفع المشرفين محجوزة "
@@ -3064,9 +3076,13 @@ def save_auto_reply(
     button_url="",
     button_emoji_id="",
     reply_entities="",
-    button_data=None
+    button_data=None,
+    reply_media_type="",
+    reply_media_file_id="",
+    reply_media_caption="",
+    reply_media_entities=""
 ):
-    """حفظ الرد مع دعم أكثر من زر شفاف، مع إبقاء الحقول القديمة للتوافق."""
+    """حفظ الرد، بما فيه الصورة المرسلة أثناء إنشاء الرد إن وجدت."""
     if button_data is None:
         button_data = []
         if button_enabled and button_url:
@@ -3089,17 +3105,11 @@ def save_auto_reply(
     cursor.execute(
         """
         INSERT INTO auto_replies(
-            chat_id,
-            trigger,
-            reply_text,
-            button_enabled,
-            button_text,
-            button_url,
-            button_emoji_id,
-            reply_entities,
-            button_data
+            chat_id, trigger, reply_text, button_enabled, button_text,
+            button_url, button_emoji_id, reply_entities, button_data,
+            reply_media_type, reply_media_file_id, reply_media_caption, reply_media_entities
         )
-        VALUES(?,?,?,?,?,?,?,?,?)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(chat_id,trigger)
         DO UPDATE SET
             reply_text=excluded.reply_text,
@@ -3108,18 +3118,17 @@ def save_auto_reply(
             button_url=excluded.button_url,
             button_emoji_id=excluded.button_emoji_id,
             reply_entities=excluded.reply_entities,
-            button_data=excluded.button_data
+            button_data=excluded.button_data,
+            reply_media_type=excluded.reply_media_type,
+            reply_media_file_id=excluded.reply_media_file_id,
+            reply_media_caption=excluded.reply_media_caption,
+            reply_media_entities=excluded.reply_media_entities
         """,
         (
-            chat_id,
-            clean_text(trigger),
-            reply_text,
-            1 if button_data else 0,
-            first_text,
-            first_url,
-            first_emoji,
-            reply_entities or "",
-            button_data_json
+            chat_id, clean_text(trigger), reply_text, 1 if button_data else 0,
+            first_text, first_url, first_emoji, reply_entities or "", button_data_json,
+            reply_media_type or "", reply_media_file_id or "",
+            reply_media_caption or "", reply_media_entities or ""
         )
     )
     db.commit()
@@ -3281,22 +3290,35 @@ def send_saved_auto_reply(message, row):
         return False
 
     markup = reply_button_markup(row)
-    entities = deserialize_message_entities(
-        row["reply_entities"] if "reply_entities" in row.keys() else ""
-    )
+    entities_raw = row["reply_media_entities"] if "reply_media_entities" in row.keys() and row["reply_media_entities"] else (row["reply_entities"] if "reply_entities" in row.keys() else "")
+    entities = deserialize_message_entities(entities_raw)
+
+    media_type = row["reply_media_type"] if "reply_media_type" in row.keys() else ""
+    media_file_id = row["reply_media_file_id"] if "reply_media_file_id" in row.keys() else ""
+    media_caption = row["reply_media_caption"] if "reply_media_caption" in row.keys() else ""
 
     try:
-        kwargs = {"reply_markup": markup}
+        if media_type == "photo" and media_file_id:
+            kwargs = {
+                "reply_markup": markup,
+                "reply_to_message_id": message.message_id
+            }
+            if media_caption:
+                kwargs["caption"] = media_caption
+            if entities:
+                kwargs["caption_entities"] = entities
+                kwargs["parse_mode"] = None
+            bot.send_photo(message.chat.id, media_file_id, **kwargs)
+            return True
+
+        kwargs = {
+            "reply_markup": markup,
+            "reply_to_message_id": message.message_id
+        }
         if entities:
             kwargs["entities"] = entities
             kwargs["parse_mode"] = None
-
-        kwargs["reply_to_message_id"] = message.message_id
-        _original_send_message(
-            message.chat.id,
-            row["reply_text"],
-            **kwargs
-        )
+        _original_send_message(message.chat.id, row["reply_text"], **kwargs)
         return True
     except Exception as e:
         print("[Auto Reply Send Error]", e)
@@ -3406,7 +3428,11 @@ def _save_pending_reply(token, with_buttons=True):
         first.get("url", ""),
         first.get("emoji_id", ""),
         p.get("reply_entities", ""),
-        buttons
+        buttons,
+        p.get("reply_media_type", ""),
+        p.get("reply_media_file_id", ""),
+        p.get("reply_media_caption", ""),
+        p.get("reply_media_entities", "")
     )
     reply_pending.pop(token, None)
     return True
@@ -3439,13 +3465,26 @@ def continue_reply_setup(message):
             return True
 
         if step == "reply":
-            reply_text = message.text or message.caption or ""
-            if not reply_text.strip():
-                bot.reply_to(message, "❌ أرسل نص الرد فقط.")
-                return True
-
-            p["reply_text"] = reply_text
-            p["reply_entities"] = serialize_message_entities(message)
+            # يمكن أن يكون الرد نصًا أو صورة. إذا أرسل المطور صورة، نحفظ
+            # file_id الخاص بها داخل نفس الرد حتى تظهر الصورة تلقائيًا عند كتابة الكلمة.
+            if message.photo:
+                p["reply_text"] = message.caption or ""
+                p["reply_entities"] = ""
+                p["reply_media_type"] = "photo"
+                p["reply_media_file_id"] = message.photo[-1].file_id
+                p["reply_media_caption"] = message.caption or ""
+                p["reply_media_entities"] = serialize_message_entities(message)
+            else:
+                reply_text = message.text or message.caption or ""
+                if not reply_text.strip():
+                    bot.reply_to(message, "أرسل نص الرد أو صورة للرد.")
+                    return True
+                p["reply_text"] = reply_text
+                p["reply_entities"] = serialize_message_entities(message)
+                p["reply_media_type"] = ""
+                p["reply_media_file_id"] = ""
+                p["reply_media_caption"] = ""
+                p["reply_media_entities"] = ""
             p["step"] = "button_choice"
             ask_markup = types.InlineKeyboardMarkup()
             ask_markup.row(
@@ -3572,7 +3611,7 @@ def admin_users_text():
     """عرض حساب المطور ثم آخر 50 مستخدمًا فتحوا البوت في الخاص."""
     lines = [
         f"{tg_emoji(CE_ADMIN, '•')} <b>المستخدمون</b>",
-        "┈┅⊷━⊷┅┅┈"
+        ""
     ]
 
     # إظهار حساب المطور أولًا كما طلب صاحب البوت.
@@ -3592,7 +3631,7 @@ def admin_users_text():
         f"{tg_emoji(CE_OWNER_DEVELOPER, '•')} <b>حسابك:</b> "
         f"<a href=\"tg://user?id={DEVELOPER_ID}\">{owner_name}</a> — {owner_username}"
     )
-    lines.append("┈┅⊷━⊷┅┅┈")
+    lines.append("")
 
     cursor.execute("""
         SELECT user_id,first_name,last_name,username,first_seen,last_seen
@@ -3685,7 +3724,7 @@ def admin_control_markup():
 def admin_control_text():
     return (
         "<b>التحكم الكامل بالبوت</b>\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         "من هنا تتحكم في المجموعات، الردود، الاشتراك الإجباري، والسجل.\n"
         "إدارة القنوات الإجبارية متاحة من زر الاشتراك الإجباري."
     )
@@ -3855,11 +3894,11 @@ def send_admin_panel(chat_id, message_id=None):
 
     text = (
         "🛡️ <b>لوحة أدمن البوت</b>\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         "مرحبًا بك في لوحة التحكم الخاصة بالمطور.\n\n"
         "من هنا يمكنك متابعة حالة البوت، المجموعات،\n"
         "الردود التلقائية، وسجل الإجراءات.\n"
-        "┈┅⊷━⊷┅┅┈"
+        ""
     )
 
     if message_id is not None:
@@ -3900,13 +3939,13 @@ def admin_stats_text():
 
     return (
         "📊 <b>إحصائيات البوت</b>\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         f"👥 المجموعات: <code>{groups_count}</code>\n"
         f"👤 الأعضاء المسجلون: <code>{members_count}</code>\n"
         f"💬 الردود التلقائية: <code>{replies_count}</code>\n"
         f"📝 إجراءات الإدارة: <code>{actions_count}</code>\n"
         f"🖼️ صور البوت: <code>{images_count}</code>\n"
-        "┈┅⊷━⊷┅┅┈"
+        ""
     )
 
 
@@ -3918,11 +3957,11 @@ def admin_groups_text():
     rows = cursor.fetchall()
 
     if not rows:
-        return "👥 <b>المجموعات</b>\n┈┅⊷━⊷┅┅┈\nلا توجد مجموعات مسجلة حتى الآن."
+        return "👥 <b>المجموعات</b>\n\nلا توجد مجموعات مسجلة حتى الآن."
 
     lines = [
         "👥 <b>المجموعات المسجلة</b>",
-        "┈┅⊷━⊷┅┅┈"
+        ""
     ]
 
     for index, row in enumerate(rows, 1):
@@ -3942,11 +3981,11 @@ def admin_replies_text():
     rows = cursor.fetchall()
 
     if not rows:
-        return "💬 <b>الردود التلقائية</b>\n┈┅⊷━⊷┅┅┈\nلا توجد ردود محفوظة."
+        return "💬 <b>الردود التلقائية</b>\n\nلا توجد ردود محفوظة."
 
     lines = [
         "💬 <b>آخر الردود التلقائية</b>",
-        "┈┅⊷━⊷┅┅┈"
+        ""
     ]
 
     for index, row in enumerate(rows, 1):
@@ -3967,11 +4006,11 @@ def admin_actions_text():
     rows = cursor.fetchall()
 
     if not rows:
-        return "📝 <b>سجل الإجراءات</b>\n┈┅⊷━⊷┅┅┈\nلا يوجد سجل حتى الآن."
+        return "📝 <b>سجل الإجراءات</b>\n\nلا يوجد سجل حتى الآن."
 
     lines = [
         "📝 <b>آخر إجراءات الإدارة</b>",
-        "┈┅⊷━⊷┅┅┈"
+        ""
     ]
 
     for row in rows:
@@ -4091,25 +4130,29 @@ def force_sub_missing(user_id):
 def force_sub_markup(user_id, channels=None):
     channels = channels if channels is not None else get_force_channels()
     markup = types.InlineKeyboardMarkup(row_width=1)
+
+    # تصميم بسيط: زر رابط مستقل لكل قناة، ثم زر تحقق واحد.
+    missing_ids = []
     for row in channels:
-        subscribed = user_subscribed_to_channel(user_id, row)
+        if not user_subscribed_to_channel(user_id, row):
+            missing_ids.append(str(row["id"]))
+
         channel_url = row["url"] or ""
         if channel_url:
-            # زر القناة الأول: نفس رابط القناة وباسم LeAaDeR.
-            subscribe_btn = transparent_url_button(
-                "LeAaDeR",
-                channel_url,
-                emoji_id=row["emoji_id"] or CE_FORCE_SUB
-            )
+            # استخدم الاسم المخصص المحفوظ، أو اسم القناة إذا لم يوجد.
+            label = (row["button_text"] or row["title"] or row["username"] or "القناة").strip()
+            subscribe_btn = transparent_url_button(label, channel_url, emoji_id=None)
             if subscribe_btn:
                 markup.add(subscribe_btn)
-        # زر التحقق يكون أسفل زر القناة، ويُفحص فعليًا عند الضغط.
-        markup.add(button(
-            "تم التحقق" if subscribed else "تحقق من الاشتراك",
-            callback_data=f"force_sub_check:{row['id']}",
-            style="success" if subscribed else "primary",
-            icon_custom_emoji_id=CE_FORCE_VERIFY
-        ))
+
+    check_text = "تحقق من الاشتراك" if missing_ids else "تم التحقق"
+    check_style = "primary" if missing_ids else "success"
+    markup.add(button(
+        check_text,
+        callback_data="force_sub_check:all",
+        style=check_style,
+        icon_custom_emoji_id=CE_FORCE_VERIFY
+    ))
     return markup
 
 
@@ -4123,10 +4166,10 @@ def send_force_sub_prompt(message, missing=None):
     user_mention = mention(message.from_user, owner=True)
     text = (
         f"{user_mention}\n"
-        "<b>الاشتراك الإجباري</b>\n"
-        "┈┅⊷━⊷┅┅┈\n"
-        "لازم تشترك في القناة قبل التحدث.\n"
-        "اضغط على زر LeAaDeR، ثم اضغط على تحقق من الاشتراك بعد الاشتراك."
+        "<b>BoT MaXeCo</b>  Protecting the best groups on Telegram\n"
+        "\n"
+        "لازم تشترك في القنوات المطلوبة قبل التحدث في المجموعة.\n"
+        "اشترك من الأزرار بالأسفل، وبعدها اضغط على <b>تحقق من الاشتراك</b>."
     )
     try:
         sent = bot.send_message(message.chat.id, text, reply_markup=markup)
@@ -4146,8 +4189,13 @@ def enforce_force_subscription(message):
     sender_chat = getattr(message, "sender_chat", None)
     if sender_chat is not None:
         sender_type = getattr(sender_chat, "type", "")
+        # منشورات القنوات والرسائل المرسلة باسم القناة لا تخص العضو، فلا نحذفها.
         if sender_type == "channel":
             return False
+
+    # الاشتراك الإجباري يطبّق على الرسائل التي لها مرسل مستخدم فقط.
+    if not message.from_user:
+        return False
 
     # حماية إضافية: أي رسالة مصدرها قناة لا تدخل في الاشتراك الإجباري.
     if getattr(message, "is_automatic_forward", False) and sender_chat is not None:
@@ -4167,7 +4215,7 @@ def enforce_force_subscription(message):
 
 def force_channels_admin_text():
     rows = get_force_channels()
-    lines = ["<b>قنوات الاشتراك الإجباري</b>", "┈┅⊷━⊷┅┅┈"]
+    lines = ["<b>قنوات الاشتراك الإجباري</b>", ""]
     if not rows:
         lines.append("لا توجد قنوات مضافة.")
     else:
@@ -4221,7 +4269,7 @@ def bot_images_text():
     count = cursor.fetchone()["c"]
     return (
         "<b>صور البوت</b>\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         f"عدد الصور المحفوظة: <code>{count}</code>\n\n"
         "عند كتابة <code>صورة</code> في مجموعة، يرسل البوت صورة عشوائية من هذه القائمة."
     )
@@ -4266,10 +4314,11 @@ def send_random_bot_image(message):
     return True
 
 # =========================================================
-# تحميل أغاني YouTube
+# تحميل أغاني YouTube + مشغل المكالمة الصوتية
 # =========================================================
+
 def download_youtube_song(query):
-    """يبحث عن أول نتيجة في YouTube عبر yt-dlp ويحولها إلى ملف صوتي."""
+    """يبحث عن أول نتيجة في YouTube عبر yt-dlp ويرجع ملف الصوت وعنوانه."""
     if not query:
         return None, "اكتب اسم الأغنية بعد أمر يوت."
     try:
@@ -4280,7 +4329,6 @@ def download_youtube_song(query):
     temp_dir = tempfile.mkdtemp(prefix="maxyt_")
     output = os.path.join(temp_dir, "%(title).80s.%(ext)s")
     opts = {
-        # نفضل M4A حتى يعمل التنزيل بدون الحاجة إلى FFmpeg في Pydroid.
         "format": "bestaudio[ext=m4a]/bestaudio",
         "noplaylist": True,
         "quiet": True,
@@ -4295,13 +4343,41 @@ def download_youtube_song(query):
                 return None, "لم يتم العثور على الأغنية."
             entry = info.get("entries", [info])[0]
             title = entry.get("title") or query
-        files = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if f.lower().endswith((".mp3", ".m4a", ".opus", ".webm", ".ogg"))]
+        files = [
+            os.path.join(temp_dir, f)
+            for f in os.listdir(temp_dir)
+            if f.lower().endswith((".mp3", ".m4a", ".opus", ".webm", ".ogg"))
+        ]
         if not files:
-            return None, "تم العثور على الأغنية لكن تعذر تجهيز الملف الصوتي. تأكد من وجود FFmpeg."
+            return None, "تم العثور على الأغنية لكن تعذر تجهيز الملف الصوتي."
         return (files[0], title, temp_dir), None
     except Exception as e:
         print("[YouTube Download Error]", repr(e))
-        return None, "تعذر تنزيل الأغنية. تأكد من تثبيت yt-dlp وFFmpeg ثم حاول مرة أخرى."
+        return None, "تعذر تنزيل الأغنية. تأكد من تثبيت yt-dlp ثم حاول مرة أخرى."
+
+
+def send_song_card(message, title, source_url=""):
+    """بطاقة الأغنية مع صورة من صور البوت وروابط السورس والمطور."""
+    caption = (
+        f"<b>MaX Music</b>\n\n"
+        f"🎵 <b>{html.escape(title)}</b>\n\n"
+        f"المصدر: <a href=\"{SOURCE_CHANNEL_URL}\">قناة السورس</a>\n"
+        f"المطور: <a href=\"{SOURCE_DEVELOPER_URL}\">MaX Developer</a>"
+    )
+    try:
+        cursor.execute("SELECT file_id FROM bot_images ORDER BY RANDOM() LIMIT 1")
+        row = cursor.fetchone()
+        if row:
+            bot.send_photo(message.chat.id, row["file_id"], caption=caption, reply_to_message_id=message.message_id)
+        else:
+            bot.send_message(message.chat.id, caption, disable_web_page_preview=True, reply_to_message_id=message.message_id)
+    except Exception as e:
+        print("[Song Card Error]", repr(e))
+        try:
+            bot.send_message(message.chat.id, caption, disable_web_page_preview=True, reply_to_message_id=message.message_id)
+        except Exception:
+            pass
+
 
 def send_youtube_song(message, query):
     result, error = download_youtube_song(query)
@@ -4310,34 +4386,217 @@ def send_youtube_song(message, query):
         return True
     path, title, temp_dir = result
     try:
+        # عرض بطاقة الأغنية أولًا، مع صورة محفوظة في البوت إن وجدت.
+        send_song_card(message, title)
         with open(path, "rb") as audio:
             bot.send_audio(
                 message.chat.id,
                 audio,
                 title=title,
                 performer="YouTube",
-                reply_to_message_id=message.message_id
+                reply_to_message_id=message.message_id,
             )
     except Exception as e:
         print("[YouTube Send Error]", repr(e))
         bot.reply_to(message, "تعذر إرسال الأغنية. قد يكون حجم الملف أكبر من الحد المسموح به في Telegram.")
     finally:
         try:
-            import shutil
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            __import__("shutil").rmtree(temp_dir, ignore_errors=True)
         except Exception:
             pass
     return True
+
+
+def handle_music_command(message, query):
+    """تشغيل الأمر شغل/تشغيل كتحميل وإرسال للأغنية فقط، بدون دخول أي مكالمة صوتية."""
+    if message.chat.type not in ("group", "supergroup", "private"):
+        bot.reply_to(message, "هذا الأمر متاح في المجموعات والخاص فقط.")
+        return True
+    if not query:
+        bot.reply_to(message, 'استخدم الأمر: <code>شغل {اسم الأغنية}</code>')
+        return True
+    bot.reply_to(message, "جاري البحث عن الأغنية وتجهيزها...")
+    return send_youtube_song(message, query)
 
 # =========================================================
 # سؤال كات
 # =========================================================
 CAT_QUESTIONS = [
-    "ما هو أول شيء تفعله عندما تستيقظ؟",
-    "ما هي أغنيتك المفضلة؟",
-    "لو تقدر تسافر الآن، تختار أي بلد؟",
-    "ما أكثر شيء يضحكك؟",
-    "ما هو أفضل وقت في اليوم بالنسبة لك؟"
+    'ما هو أول شيء تفعله عندما تستيقظ؟',
+    'ما هي أغنيتك المفضلة؟',
+    'لو تقدر تسافر الآن، تختار أي بلد؟',
+    'ما أكثر شيء يضحكك؟',
+    'ما هو أفضل وقت في اليوم بالنسبة لك؟',
+    'مين أقرب شخص ليك؟',
+    'ما أكثر صفة تحبها في نفسك؟',
+    'ما أكثر صفة تتمنى تغيرها في نفسك؟',
+    'ما هو حلمك الأكبر؟',
+    'ما هو أكثر موقف محرج حصل لك؟',
+    'ما هو أكثر شيء تخاف منه؟',
+    'ما هو الشيء الذي لا تستطيع الاستغناء عنه؟',
+    'لو ربحت مليون، ماذا ستفعل؟',
+    'ما هي أكتر أكلة بتحبها؟',
+    'ما هي أكتر أكلة لا تحبها؟',
+    'مين المطرب المفضل عندك؟',
+    'ما الفيلم الذي تستطيع مشاهدته أكثر من مرة؟',
+    'ما المسلسل المفضل عندك؟',
+    'ما اللعبة التي تحبها أكثر؟',
+    'هل تحب السهر أم النوم مبكرًا؟',
+    'ما أجمل ذكرى عندك؟',
+    'ما أسوأ عادة عندك؟',
+    'ما أجمل صفة في صديقك المفضل؟',
+    'هل تسامح بسهولة؟',
+    'هل تثق بالناس بسرعة؟',
+    'ما أكثر شيء يعصبك؟',
+    'ما أكثر شيء يفرحك؟',
+    'ما أكثر كلمة تقولها؟',
+    'لو تقدر تغير اسمك، هتختار إيه؟',
+    'ما اللون المفضل عندك؟',
+    'ما رقمك المفضل؟',
+    'ما الشهر المفضل عندك؟',
+    'ما الفصل المفضل عندك؟',
+    'البحر أم الجبل؟',
+    'الليل أم النهار؟',
+    'القهوة أم الشاي؟',
+    'البيت أم الخروج؟',
+    'الهدوء أم الزحمة؟',
+    'الفلوس أم الشهرة؟',
+    'الحب أم الصداقة؟',
+    'لو عندك آلة زمن، هتروح للماضي ولا المستقبل؟',
+    'مين الشخص اللي نفسك تقابله؟',
+    'ما البلد التي تتمنى زيارتها؟',
+    'ما أكثر مكان ترتاح فيه؟',
+    'ما الشيء الذي يجعلك تبتسم فورًا؟',
+    'ما أكثر موقف لن تنساه؟',
+    'ما النصيحة التي لن تنساها؟',
+    'هل أنت شخص غيور؟',
+    'هل أنت شخص عصبي؟',
+    'هل أنت اجتماعي؟',
+    'ما أكثر شيء تندم عليه؟',
+    'ما القرار الذي غير حياتك؟',
+    'ما الشيء الذي تتمنى حدوثه قريبًا؟',
+    'ما أكثر شيء يشغلك هذه الأيام؟',
+    'ما الشيء الذي يجعلك تشعر بالأمان؟',
+    'ما أكثر شيء يزعجك في الناس؟',
+    'ما أكثر شيء تحترمه في الناس؟',
+    'هل تفضل العمل وحدك أم مع فريق؟',
+    'هل تحب المفاجآت؟',
+    'هل تحب الهدايا؟',
+    'ما أفضل هدية حصلت عليها؟',
+    'ما الهدية التي تتمنى الحصول عليها؟',
+    'ما أكثر تطبيق تستخدمه؟',
+    'ما أكثر موقع تزوره؟',
+    'ما أكثر لعبة لعبتها في طفولتك؟',
+    'ما الكرتون المفضل عندك زمان؟',
+    'ما أول هاتف امتلكته؟',
+    'ما أول حساب سوشيال عملته؟',
+    'ما أول أغنية حفظتها؟',
+    'ما أول مكان سافرت إليه؟',
+    'هل تحب التصوير؟',
+    'هل تحب الرسم؟',
+    'هل تحب الرياضة؟',
+    'ما رياضتك المفضلة؟',
+    'ما فريقك المفضل؟',
+    'ما اللاعب الذي تفضله؟',
+    'هل تحب الأفلام أم المسلسلات؟',
+    'رعب أم كوميدي؟',
+    'أكشن أم رومانسي؟',
+    'فيلم قديم أم جديد؟',
+    'ما أكثر شيء تتمنى تعلمه؟',
+    'ما المهارة التي تتقنها؟',
+    'هل تحب البرمجة؟',
+    'هل تحب الموسيقى؟',
+    'ما الآلة الموسيقية التي تحبها؟',
+    'ما أكثر صوت تحبه؟',
+    'ما أكثر رائحة تحبها؟',
+    'ما أكثر شيء يذكرك بالطفولة؟',
+    'من كان قدوتك وأنت صغير؟',
+    'ما الوظيفة التي كنت تحلم بها؟',
+    'ما الوظيفة التي تتمنى العمل بها الآن؟',
+    'هل تفضل المال أم وقت الفراغ؟',
+    'هل تحب المغامرة؟',
+    'هل تفضل التخطيط أم العفوية؟',
+    'هل أنت من محبي الروتين؟',
+    'ما أكثر عادة يومية تحبها؟',
+    'ما الشيء الذي تبدأ به يومك؟',
+    'ما الشيء الذي تنهي به يومك؟',
+    'كم ساعة تنام عادة؟',
+    'هل تحب النوم؟',
+    'ما أكثر شيء يجعلك تفقد تركيزك؟',
+    'ما أكثر شيء يساعدك على التركيز؟',
+    'هل تحب الدراسة؟',
+    'ما المادة التي كنت تحبها؟',
+    'ما المادة التي كنت تكرهها؟',
+    'ما أجمل مكان رأيته؟',
+    'ما أجمل منظر تحبه؟',
+    'هل تحب المطر؟',
+    'هل تحب الشتاء؟',
+    'هل تحب الصيف؟',
+    'ما أفضل وقت للخروج؟',
+    'هل تحب السفر وحدك؟',
+    'من تختار ليكون معك في رحلة؟',
+    'ما السيارة التي تحلم بها؟',
+    'ما المكان الذي تتمنى أن تعيش فيه؟',
+    'لو تستطيع امتلاك أي موهبة، ماذا تختار؟',
+    'لو تستطيع حذف شيء من العالم، ماذا تحذف؟',
+    'لو تستطيع إضافة شيء للعالم، ماذا تضيف؟',
+    'لو أصبحت مشهورًا، في ماذا تريد أن تشتهر؟',
+    'لو رجع بك الزمن سنة، ماذا ستغير؟',
+    'لو تستطيع مقابلة نفسك بعد عشر سنوات، ماذا ستسألها؟',
+    'ما الشيء الذي تتمنى أن يعرفه الناس عنك؟',
+    'ما الشيء الذي لا يعرفه عنك معظم الناس؟',
+    'ما أكثر شيء تفتخر به؟',
+    'ما الإنجاز الذي تريد تحقيقه؟',
+    'ما أكبر درس تعلمته من الحياة؟',
+    'من أكثر شخص أثر في حياتك؟',
+    'ما أكثر موقف جعلك أقوى؟',
+    'ما الشيء الذي لا يمكن أن تسامح عليه؟',
+    'ما أهم شيء عندك في الصداقة؟',
+    'ما أهم شيء عندك في الحب؟',
+    'هل تؤمن بالحب من أول نظرة؟',
+    'هل تؤمن بالحظ؟',
+    'هل تؤمن أن كل شيء يحدث لسبب؟',
+    'ما أكثر شيء يجعلك تثق في شخص؟',
+    'ما أكثر شيء يجعلك تنهي علاقتك بشخص؟',
+    'هل تفضل الصراحة حتى لو كانت مؤلمة؟',
+    'هل تكتم زعلك أم تتكلم؟',
+    'عندما تحزن، ماذا تفعل؟',
+    'عندما تفرح، من أول شخص تخبره؟',
+    'ما أكثر شيء يغير مزاجك؟',
+    'ما أكثر شيء يحسن مزاجك؟',
+    'ما الأغنية التي تصف حالتك الآن؟',
+    'ما الكلمة التي تحب سماعها؟',
+    'ما الكلمة التي تكره سماعها؟',
+    'لو معك يوم كامل بدون إنترنت، ماذا ستفعل؟',
+    'لو معك أسبوع إجازة، أين ستذهب؟',
+    'لو خيروك بين الشهرة والراحة، ماذا تختار؟',
+    'لو خيروك بين مدينة كبيرة وقرية هادئة، ماذا تختار؟',
+    'لو خيروك بين المال والحب، ماذا تختار؟',
+    'ما أكثر شيء تتمنى شراءه؟',
+    'ما أول شيء ستشتريه لو معك فلوس كثيرة؟',
+    'هل تحب التسوق؟',
+    'هل تحب الطبخ؟',
+    'ما أكتر أكلة تعرف تعملها؟',
+    'ما المشروب المفضل عندك؟',
+    'ما الحلوى المفضلة عندك؟',
+    'هل تحب الأكل الحار؟',
+    'ما الوجبة التي لا تمل منها؟',
+    'ما المطعم الذي تحب زيارته؟',
+    'هل تحب القطط؟',
+    'هل تحب الكلاب؟',
+    'ما الحيوان المفضل عندك؟',
+    'لو امتلكت حيوانًا، ماذا تختار؟',
+    'ما أكثر شيء يجعلك تشعر بالراحة؟',
+    'ما أكثر شيء يجعلك تشعر بالتوتر؟',
+    'ما الشيء الذي تتمنى أن تتوقف عن فعله؟',
+    'ما الشيء الذي تتمنى أن تبدأه؟',
+    'ما الشيء الذي تريد إنجازه هذا الشهر؟',
+    'ما هدفك لهذه السنة؟',
+    'ما الشيء الذي تتمنى أن يسمعه قلبك الآن؟',
+    'ما الرسالة التي توجهها لنفسك؟',
+    'ما الرسالة التي توجهها لأصحابك؟',
+    'ما الشيء الذي تتمنى أن يحدث غدًا؟',
+    'ما السؤال الذي تتمنى أن يسألك إياه أحد؟',
 ]
 
 def send_cat_question(message):
@@ -4423,9 +4682,9 @@ def start_private(message):
 
     text = (
         f"{tg_emoji(CE_WELCOME_HELLO, '•')} مرحبًـا يـ {safe_name}\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         f"{tg_emoji(CE_WELCOME_INFO, '•')}هذا البوت مخصص لإدارة وحماية المجموعات بالكـامل.\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         f"{tg_emoji(CE_WELCOME_INFO, '•')} اضـف البـوت فـي المجـموعـه الخـاصـه بـك وارفـعـه مشـرف مع جمـيع الصـلاحيـات."
     )
 
@@ -4545,10 +4804,10 @@ def new_members_handler_legacy_original(message):
 
     text = (
         "🎉 <b>أهلًا وسهلًا!</b>\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         + "\n".join(names)
         + "\n"
-        "┈┅⊷━⊷┅┅┈\n"
+        "\n"
         "❤️ نورتوا الجروب!"
     )
 
@@ -4620,9 +4879,9 @@ def new_members_handler(message):
         safe_name = html.escape(full_name(u))
         welcome_text = (
             f"{tg_emoji(CE_WELCOME_HELLO, '•')} مرحبًـا يـ {safe_name}\n"
-            "┈┅⊷━⊷┅┅┈\n"
+            "\n"
             f"{tg_emoji(CE_WELCOME_INFO, '•')}هذا البوت مخصص لإدارة وحماية المجموعات بالكـامل.\n"
-            "┈┅⊷━⊷┅┅┈\n"
+            "\n"
             f"{tg_emoji(CE_WELCOME_INFO, '•')} اضـف البـوت فـي المجـموعـه الخـاصـه بـك وارفـعـه مشـرف مع جمـيع الصـلاحيـات."
         )
 
@@ -4696,7 +4955,7 @@ def track_private_user(message, notify=True):
     try:
         notify_text = (
             f"{tg_emoji(CE_ADMIN, '•')} مستخدم جديد استخدم البوت\n"
-            "┈┅⊷━⊷┅┅┈\n"
+            "\n"
             f"{tg_emoji(CE_PERSON, '•')} الاسم: <a href=\"tg://user?id={u.id}\">{html.escape(full_name(u))}</a>\n"
             f"{tg_emoji(CE_USERNAME, '•')} اليوزر: {html.escape(username_text(u))}\n"
             f"{tg_emoji(CE_ID, '•')} الايدي: <code>{u.id}</code>"
@@ -4756,7 +5015,7 @@ def notify_group_event(kind, message):
     try:
         text = (
             f"{tg_emoji(CE_ADMIN, '•')} {label}\n"
-            "┈┅⊷━⊷┅┅┈\n"
+            "\n"
             f"{tg_emoji(CE_MEMBER, '•')} المجموعة: <b>{html.escape(chat.title or 'بدون اسم')}</b>\n"
             f"{tg_emoji(CE_MEMBER, '•')} الرابط: <a href=\"{html.escape(get_group_open_link(chat), quote=True)}\">فتح المجموعة</a>\n"
             f"{tg_emoji(CE_PERSON, '•')} بواسطة: <a href=\"tg://user?id={actor.id}\">{html.escape(full_name(actor))}</a>\n"
@@ -4808,7 +5067,7 @@ def format_bot_list(message):
     bots = get_known_group_bots(message.chat.id)
     if not bots:
         return "لا توجد بوتات معروفة حاليًا في المجموعة. Telegram لا يتيح للبوتات قراءة قائمة جميع الأعضاء." 
-    lines = ["<b>البوتات الموجودة</b>", "┈┅⊷━⊷┅┅┈"]
+    lines = ["<b>البوتات الموجودة</b>", ""]
     for i, u in enumerate(bots, 1):
         uname = f"@{html.escape(u.username)}" if getattr(u, "username", None) else "لا يوجد يوزر"
         lines.append(f"{i}. <a href=\"tg://user?id={u.id}\">{html.escape(full_name(u))}</a> — {uname}")
@@ -4863,7 +5122,7 @@ def send_admins_list(message):
     except Exception:
         bot.reply_to(message, "تعذر جلب المشرفين حاليًا.")
         return True
-    lines = ["<b>مشرفو المجموعة</b>", "┈┅⊷━⊷┅┅┈"]
+    lines = ["<b>مشرفو المجموعة</b>", ""]
     for i, admin in enumerate(admins, 1):
         u = admin.user
         uname = f"@{html.escape(u.username)}" if u.username else "لا يوجد يوزر"
@@ -5170,7 +5429,12 @@ def main_handler(message):
                         send_youtube_song(message, _command_arg)
                     return
 
-            if message.chat.type in ("group", "supergroup") and _clean_command == "صورة":
+            if _clean_command in ("شغل", "تشغيل"):
+                if message.chat.type in ("group", "supergroup"):
+                    handle_music_command(message, _command_arg)
+                    return
+
+            if message.chat.type in ("group", "supergroup") and _clean_command in ("صورة", "صوره", "صور", "صور_البوت", "صورالبوت"):
                 send_random_bot_image(message)
                 return
 
@@ -5609,9 +5873,9 @@ def handle_command(
         bot.reply_to(
             message,
             f"👤 {mention(u)}\n"
-            "┈┅⊷━⊷┅┅┈\n"
+            "\n"
             f"🆔 <code>{u.id}</code>\n"
-            "┈┅⊷━⊷┅┅┈\n"
+            "\n"
             f"👤 {html.escape(username_text(u))}"
         )
 
@@ -5638,7 +5902,7 @@ def handle_command(
         bot.reply_to(
             message,
             f"{mention(u)}\n"
-            "┈┅⊷━⊷┅┅┈\n"
+            "\n"
             f"الرتبة: <b>{html.escape(rank_name)}</b>"
         )
         return True
@@ -5679,7 +5943,7 @@ def handle_command(
         bot.reply_to(
             message,
             f"🏠 <b>معلومات المجموعة</b>\n"
-            "┈┅⊷━⊷┅┅┈\n"
+            "\n"
             f"📌 {html.escape(message.chat.title or '')}\n"
             f"🆔 <code>{chat_id}</code>\n"
             f"👥 <code>{members}</code>"
@@ -5817,7 +6081,7 @@ def handle_command(
     if command == "قائمة_الردود":
         cursor.execute("SELECT trigger FROM auto_replies WHERE chat_id=? ORDER BY trigger COLLATE NOCASE", (chat_id,))
         rows = cursor.fetchall()
-        text = "📋 <b>الردود التلقائية</b>\n┈┅⊷━⊷┅┅┈\n"
+        text = "📋 <b>الردود التلقائية</b>\n\n"
         text += "\n".join(f"• <code>{html.escape(r['trigger'])}</code>" for r in rows) if rows else "لا توجد ردود تلقائية محفوظة."
         bot.reply_to(message, text)
         return True
@@ -6497,7 +6761,7 @@ def handle_command(
         bot.reply_to(
             message,
             "📋 <b>الكلمات الممنوعة</b>\n"
-            "┈┅⊷━⊷┅┅┈\n"
+            "\n"
             + (
                 "\n".join(
                     "🚫 " + html.escape(w)
@@ -6555,7 +6819,7 @@ def handle_command(
         bot.reply_to(
             message,
             "📊 <b>إحصائيات المجموعة</b>\n"
-            "┈┅⊷━⊷┅┅┈\n"
+            "\n"
             f"👥 <code>{s['users']}</code>\n"
             f"💬 <code>{s['messages']}</code>\n"
             f"🚫 <code>{w}</code>\n"
@@ -6591,7 +6855,7 @@ def handle_command(
 
         lines = [
             "📝 <b>آخر إجراءات الإدارة</b>",
-            "┈┅⊷━⊷┅┅┈"
+            ""
         ]
 
         for r in rows:
@@ -6817,19 +7081,45 @@ def callbacks(call):
             bot.send_message(chat_id, f"تمت الإذاعة إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
             return
 
-        # فحص الاشتراك الإجباري: نفس الزر يفتح القناة عند عدم الاشتراك، ويتحول للأخضر بعد الاشتراك.
+        # فحص الاشتراك الإجباري لجميع القنوات مرة واحدة.
         if call.data.startswith("force_sub_check:"):
             try:
-                channel_id = int(call.data.split(":", 1)[1])
-                cursor.execute("SELECT * FROM force_sub_channels WHERE id=? AND enabled=1", (channel_id,))
+                target = call.data.split(":", 1)[1]
+                if target == "all":
+                    missing_now = force_sub_missing(uid)
+                    if not missing_now:
+                        bot.answer_callback_query(call.id, "تم التحقق من الاشتراك.")
+                        delete_message_safe(call.message)
+                    else:
+                        bot.answer_callback_query(
+                            call.id,
+                            "لسه مشتركش في كل القنوات المطلوبة.",
+                            show_alert=True
+                        )
+                    return
+
+                # دعم الزر القديم لو وُجدت رسالة اشتراك سابقة في المحادثة.
+                channel_id = int(target)
+                cursor.execute(
+                    "SELECT * FROM force_sub_channels WHERE id=? AND enabled=1",
+                    (channel_id,)
+                )
                 row = cursor.fetchone()
                 if not row:
                     bot.answer_callback_query(call.id, "القناة لم تعد موجودة.", show_alert=True)
                     return
                 if user_subscribed_to_channel(uid, row):
-                    bot.answer_callback_query(call.id, "تم التحقق من الاشتراك.")
-                    # بعد نجاح التحقق تُحذف رسالة الاشتراك بالكامل، وليس الأزرار فقط.
-                    delete_message_safe(call.message)
+                    if not force_sub_missing(uid):
+                        bot.answer_callback_query(call.id, "تم التحقق من الاشتراك.")
+                        delete_message_safe(call.message)
+                    else:
+                        bot.answer_callback_query(call.id, "تم الاشتراك، باقي قنوات مطلوبة.")
+                        try:
+                            bot.edit_message_reply_markup(
+                                chat_id, call.message.message_id, reply_markup=force_sub_markup(uid)
+                            )
+                        except Exception:
+                            pass
                 else:
                     bot.answer_callback_query(
                         call.id,
@@ -6903,7 +7193,7 @@ def callbacks(call):
             viewer_id = call.from_user.id
             bot.send_message(
                 chat_id,
-                "📚 <b>قائمة أوامر البوت</b>\n┈┅⊷━⊷┅┅┈\nالأوامر المتاحة لرتبتك فقط:",
+                "📚 <b>قائمة أوامر البوت</b>\n\nالأوامر المتاحة لرتبتك فقط:",
                 reply_markup=commands_menu_markup(viewer_id, chat_id)
             )
             return
@@ -6922,7 +7212,7 @@ def callbacks(call):
             bot.answer_callback_query(call.id)
             if category == "home":
                 bot.edit_message_text(
-                    "📚 <b>قائمة أوامر البوت</b>\n┈┅⊷━⊷┅┅┈\nالأوامر المتاحة لرتبتك فقط:",
+                    "📚 <b>قائمة أوامر البوت</b>\n\nالأوامر المتاحة لرتبتك فقط:",
                     chat_id, call.message.message_id,
                     reply_markup=commands_menu_markup(owner_id, chat_id)
                 )
