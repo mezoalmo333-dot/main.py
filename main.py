@@ -4494,22 +4494,18 @@ def send_random_bot_image(message):
 # =========================================================
 
 def download_youtube_song(query):
-    """يبحث عن أول نتيجة في YouTube عبر yt-dlp ويرجع ملف الصوت وعنوانه."""
+    """يبحث عن أول نتيجة في YouTube عبر yt-dlp ويحولها إلى ملف صوتي."""
     if not query:
         return None, "اكتب اسم الأغنية بعد أمر يوت."
     try:
         import yt_dlp
     except Exception:
-        try:
-            subprocess.run([sys.executable, "-m", "pip", "install", "-U", "yt-dlp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120, check=False)
-            import yt_dlp
-        except Exception as install_error:
-            print("[yt-dlp install error]", repr(install_error))
-            return None, "مكتبة yt-dlp غير مثبتة. ثبّتها بالأمر: pip install -U yt-dlp ثم أعد تشغيل البوت."
+        return None, "مكتبة yt-dlp غير مثبتة. ثبّتها في Pydroid 3 بالأمر: pip install -U yt-dlp"
 
     temp_dir = tempfile.mkdtemp(prefix="maxyt_")
     output = os.path.join(temp_dir, "%(title).80s.%(ext)s")
     opts = {
+        # نفضل M4A حتى يعمل التنزيل بدون الحاجة إلى FFmpeg في Pydroid.
         "format": "bestaudio[ext=m4a]/bestaudio",
         "noplaylist": True,
         "quiet": True,
@@ -4524,18 +4520,13 @@ def download_youtube_song(query):
                 return None, "لم يتم العثور على الأغنية."
             entry = info.get("entries", [info])[0]
             title = entry.get("title") or query
-        files = [
-            os.path.join(temp_dir, f)
-            for f in os.listdir(temp_dir)
-            if f.lower().endswith((".mp3", ".m4a", ".opus", ".webm", ".ogg"))
-        ]
+        files = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if f.lower().endswith((".mp3", ".m4a", ".opus", ".webm", ".ogg"))]
         if not files:
-            return None, "تم العثور على الأغنية لكن تعذر تجهيز الملف الصوتي."
+            return None, "تم العثور على الأغنية لكن تعذر تجهيز الملف الصوتي. تأكد من وجود FFmpeg."
         return (files[0], title, temp_dir), None
     except Exception as e:
         print("[YouTube Download Error]", repr(e))
-        return None, "تعذر تنزيل الأغنية. تأكد من تثبيت yt-dlp ثم حاول مرة أخرى."
-
+        return None, "تعذر تنزيل الأغنية. تأكد من تثبيت yt-dlp وFFmpeg ثم حاول مرة أخرى."
 
 def send_song_card(message, title, source_url=""):
     """بطاقة الأغنية مع صورة من صور البوت وروابط السورس والمطور."""
@@ -4568,27 +4559,6 @@ def music_source_markup():
     elif developer_btn: markup.row(developer_btn)
     return markup
 
-def raw_music_reply_markup():
-    return {"inline_keyboard": [[
-        {"text":"قناة السورس","url":SOURCE_CHANNEL_URL,"icon_custom_emoji_id":CE_SOURCE_BUTTON},
-        {"text":"مطور السورس","url":SOURCE_DEVELOPER_URL,"icon_custom_emoji_id":CE_SOURCE_BUTTON}
-    ]]}
-
-def raw_send_audio_with_music_buttons(message, path, caption, thumb=None):
-    boundary="----MaXeCo"+secrets.token_hex(12); body=bytearray()
-    def field(name,value):
-        body.extend((f"--{boundary}\r\n").encode()); body.extend((f'Content-Disposition: form-data; name="{name}"\r\n\r\n').encode()); body.extend(str(value).encode()); body.extend(b"\r\n")
-    field("chat_id",message.chat.id); field("caption",caption); field("parse_mode","HTML"); field("reply_to_message_id",message.message_id)
-    field("reply_markup",json.dumps(raw_music_reply_markup(),ensure_ascii=False,separators=(",",":")))
-    if thumb: field("thumbnail",thumb)
-    filename=os.path.basename(path) or "audio.m4a"
-    with open(path,"rb") as f: data=f.read()
-    body.extend((f"--{boundary}\r\n").encode()); body.extend((f'Content-Disposition: form-data; name="audio"; filename="{filename}"\r\n').encode()); body.extend(b"Content-Type: application/octet-stream\r\n\r\n"); body.extend(data); body.extend(b"\r\n"); body.extend((f"--{boundary}--\r\n").encode())
-    req=urllib.request.Request(f"https://api.telegram.org/bot{BOT_TOKEN}/sendAudio",data=bytes(body),headers={"Content-Type":f"multipart/form-data; boundary={boundary}"},method="POST")
-    with urllib.request.urlopen(req,timeout=180) as response: result=json.loads(response.read().decode("utf-8","replace"))
-    if not result.get("ok"): raise RuntimeError(result.get("description","Telegram sendAudio failed"))
-    return result
-
 def get_song_bot_image_id():
     """يرجع صورة عشوائية محفوظة لاستخدامها مع الأغنية."""
     try:
@@ -4600,58 +4570,42 @@ def get_song_bot_image_id():
         return None
 
 
-def send_youtube_song(message, query, processing_message=None):
+def send_youtube_song(message, query):
     result, error = download_youtube_song(query)
     if error:
-        if processing_message:
-            try:
-                bot.delete_message(message.chat.id, processing_message.message_id)
-            except Exception:
-                pass
         bot.reply_to(message, error)
         return True
-
     path, title, temp_dir = result
     try:
-        # لا نرسل بطاقة منفصلة قبل الصوت.
-        # الكابشن والأزرار يكونان أسفل ملف الأغنية مباشرة.
-        caption = (
-            f"<b>MaX Music</b>\n\n"
-            f"🎵 <b>{html.escape(title)}</b>"
-        )
-        markup = music_source_markup()
-
-        # إرسال مباشر عبر Bot API لضمان ظهور Premium Emoji حتى مع نسخة مكتبة قديمة.
-        image_id = get_song_bot_image_id()
-        try:
-            raw_send_audio_with_music_buttons(message, path, caption, image_id)
-        except Exception as raw_error:
-            print("[Raw Music Send Error]", repr(raw_error))
-            with open(path, "rb") as audio:
-                bot.send_audio(message.chat.id, audio, title=title, performer="YouTube", caption=caption, parse_mode="HTML", reply_markup=markup, reply_to_message_id=message.message_id)
-
-        # الرسالة المؤقتة "جاري البحث..." تختفي بمجرد إرسال الأغنية.
-        if processing_message:
-            try:
-                bot.delete_message(message.chat.id, processing_message.message_id)
-            except Exception as e:
-                print("[Processing Message Delete]", repr(e))
-
+        with open(path, "rb") as audio:
+            bot.send_audio(
+                message.chat.id,
+                audio,
+                title=title,
+                performer="YouTube",
+                reply_to_message_id=message.message_id
+            )
     except Exception as e:
         print("[YouTube Send Error]", repr(e))
-        if processing_message:
-            try:
-                bot.delete_message(message.chat.id, processing_message.message_id)
-            except Exception:
-                pass
         bot.reply_to(message, "تعذر إرسال الأغنية. قد يكون حجم الملف أكبر من الحد المسموح به في Telegram.")
     finally:
         try:
-            __import__("shutil").rmtree(temp_dir, ignore_errors=True)
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
         except Exception:
             pass
     return True
 
+# =========================================================
+# سؤال كات
+# =========================================================
+CAT_QUESTIONS = [
+    "ما هو أول شيء تفعله عندما تستيقظ؟",
+    "ما هي أغنيتك المفضلة؟",
+    "لو تقدر تسافر الآن، تختار أي بلد؟",
+    "ما أكثر شيء يضحكك؟",
+    "ما هو أفضل وقت في اليوم بالنسبة لك؟"
+]
 
 def handle_music_command(message, query):
     """أمر شغل/تشغيل: يبحث في YouTube ويرسل الأغنية في الشات فقط."""
