@@ -32,6 +32,7 @@ BOT_TOKEN = "8878742478:AAH8DjGN6XN5Njdgku7Z1i7CI6-CexDZ_es"
 
 DEVELOPER_ID = 8037399518
 BOT_USERNAME = "v_u_kbot"
+BOT_NAME = "MaXeCo"
 DB_NAME = "protection_bot.db"
 
 # =========================================================
@@ -53,8 +54,19 @@ BOT_DESCRIPTION = (
 )
 
 def configure_bot_profile():
-    # متعمدًا لا يغير اسم أو البايو أو الوصف أو أوامر البوت.
-    return None
+    # تغيير اسم البوت فقط. لا نلمس الوصف أو الأوامر أو أي شيء خاص بالأغاني.
+    try:
+        if hasattr(bot, "set_my_name"):
+            bot.set_my_name(BOT_NAME, language_code="ar")
+        else:
+            import urllib.parse
+            import urllib.request
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/setMyName"
+            data = urllib.parse.urlencode({"name": BOT_NAME, "language_code": "ar"}).encode("utf-8")
+            urllib.request.urlopen(url, data=data, timeout=15).read()
+        print("[Bot Name] Set to", BOT_NAME)
+    except Exception as e:
+        print("[Bot Name Error]", repr(e))
 
 ADD_TO_GROUP_URL = (
     f"https://t.me/{BOT_USERNAME}?startgroup"
@@ -4528,48 +4540,6 @@ def download_youtube_song(query):
         print("[YouTube Download Error]", repr(e))
         return None, "تعذر تنزيل الأغنية. تأكد من تثبيت yt-dlp وFFmpeg ثم حاول مرة أخرى."
 
-def send_song_card(message, title, source_url=""):
-    """بطاقة الأغنية مع صورة من صور البوت وروابط السورس والمطور."""
-    caption = (
-        f"<b>MaX Music</b>\n\n"
-        f"🎵 <b>{html.escape(title)}</b>"
-    )
-    try:
-        cursor.execute("SELECT file_id FROM bot_images ORDER BY RANDOM() LIMIT 1")
-        row = cursor.fetchone()
-        if row:
-            bot.send_photo(message.chat.id, row["file_id"], caption=caption, reply_to_message_id=message.message_id)
-        else:
-            bot.send_message(message.chat.id, caption, disable_web_page_preview=True, reply_to_message_id=message.message_id)
-    except Exception as e:
-        print("[Song Card Error]", repr(e))
-        try:
-            bot.send_message(message.chat.id, caption, disable_web_page_preview=True, reply_to_message_id=message.message_id)
-        except Exception:
-            pass
-
-
-def music_source_markup():
-    """أزرار السورس والمطور مع Premium Emoji."""
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    source_btn = transparent_url_button("قناة السورس", SOURCE_CHANNEL_URL, CE_SOURCE_BUTTON)
-    developer_btn = transparent_url_button("مطور السورس", SOURCE_DEVELOPER_URL, CE_SOURCE_BUTTON)
-    if source_btn and developer_btn: markup.row(source_btn, developer_btn)
-    elif source_btn: markup.row(source_btn)
-    elif developer_btn: markup.row(developer_btn)
-    return markup
-
-def get_song_bot_image_id():
-    """يرجع صورة عشوائية محفوظة لاستخدامها مع الأغنية."""
-    try:
-        cursor.execute("SELECT file_id FROM bot_images ORDER BY RANDOM() LIMIT 1")
-        row = cursor.fetchone()
-        return row["file_id"] if row else None
-    except Exception as e:
-        print("[Song Image Error]", repr(e))
-        return None
-
-
 def send_youtube_song(message, query):
     result, error = download_youtube_song(query)
     if error:
@@ -8300,6 +8270,11 @@ def setup_default_force_channel():
         print("[Force Sub Default Error]", e)
 
 def run_bot_forever():
+    try:
+        configure_bot_profile()
+    except Exception as e:
+        print("[Bot Profile Startup Error]", repr(e))
+
     print("===================================")
     print(" Protection Bot Started")
     print(" Bot: @" + BOT_USERNAME)
