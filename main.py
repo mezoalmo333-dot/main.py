@@ -44,8 +44,7 @@ telebot.logger.setLevel(logging.INFO)
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
-BOT_NAME = "حمايه اذكار الساعة ماكسيكو"
-BOT_SHORT_DESCRIPTION = "بوت حماية وأذكار الساعة وتنزيل أغاني"
+BOT_SHORT_DESCRIPTION = "بوت متخصص حماية وتنزيل أغاني"
 BOT_DESCRIPTION = (
     "بوت متخصص حماية وتنزيل أغاني\n"
     "قناة السورس: https://t.me/Ssource_MaX\n"
@@ -53,30 +52,8 @@ BOT_DESCRIPTION = (
 )
 
 def configure_bot_profile():
-    """تحديث وصف البوت وقائمة الأوامر في تيليجرام بدون تعطيل التشغيل إذا فشل API."""
-    try:
-        if hasattr(bot, "set_my_name"):
-            bot.set_my_name(BOT_NAME, language_code="ar")
-    except Exception as e:
-        print("[Bot Name Error]", repr(e))
-    try:
-        if hasattr(bot, "set_my_short_description"):
-            bot.set_my_short_description(BOT_SHORT_DESCRIPTION, language_code="ar")
-    except Exception as e:
-        print("[Bot Short Description Error]", repr(e))
-    try:
-        if hasattr(bot, "set_my_description"):
-            bot.set_my_description(BOT_DESCRIPTION, language_code="ar")
-    except Exception as e:
-        print("[Bot Description Error]", repr(e))
-    try:
-        commands = [
-            types.BotCommand("start", "تشغيل البوت"),
-            types.BotCommand("help", "طريقة استعمال البوت"),
-        ]
-        bot.set_my_commands(commands)
-    except Exception as e:
-        print("[Bot Commands Error]", repr(e))
+    # متعمدًا لا يغير اسم أو البايو أو الوصف أو أوامر البوت.
+    return None
 
 ADD_TO_GROUP_URL = (
     f"https://t.me/{BOT_USERNAME}?startgroup"
@@ -110,6 +87,8 @@ CE_REPLY_BUTTON = "5274008024585871702"
 CE_WELCOME_LINE = "5256143829672672750"
 CE_DEV_BUTTON = "5260233433107407649"
 CE_BOT_REPLY = "5201842613983917014"
+# Premium Emoji المطلوب لأزرار قناة السورس ومطور السورس
+CE_SOURCE_BUTTON = "5852886383915442268"
 CE_TON_PRICE = "5260450573768990626"
 CE_TON_ANALYSIS = "5357069174512303778"
 CE_FORCE_SUB = "5271801931814165886"
@@ -4574,23 +4553,17 @@ def send_song_card(message, title, source_url=""):
 
 
 def music_source_markup():
-    """أزرار السورس والمطور أسفل الأغنية مع Premium Emoji مباشرة عبر Bot API."""
-    # نرسل الـ markup كـ JSON مباشرة حتى لا تقوم نسخة قديمة من pyTelegramBotAPI
-    # بإسقاط icon_custom_emoji_id من الزر.
-    return json.dumps({
-        "inline_keyboard": [[
-            {
-                "text": "قناة السورس",
-                "url": SOURCE_CHANNEL_URL,
-                "icon_custom_emoji_id": "5852886383915442268"
-            },
-            {
-                "text": "مطور السورس",
-                "url": SOURCE_DEVELOPER_URL,
-                "icon_custom_emoji_id": "5852886383915442268"
-            }
-        ]]
-    }, ensure_ascii=False)
+    """أزرار السورس والمطور التي تظهر أسفل ملف الأغنية."""
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    source_btn = transparent_url_button("قناة السورس", SOURCE_CHANNEL_URL, CE_SOURCE_BUTTON)
+    developer_btn = transparent_url_button("مطور السورس", SOURCE_DEVELOPER_URL, CE_SOURCE_BUTTON)
+    if source_btn and developer_btn:
+        markup.row(source_btn, developer_btn)
+    elif source_btn:
+        markup.row(source_btn)
+    elif developer_btn:
+        markup.row(developer_btn)
+    return markup
 
 
 def get_song_bot_image_id():
@@ -5565,20 +5538,6 @@ def channel_post_handler(message):
         "poll"
     ]
 )
-def normalize_bot_name_trigger(text):
-    """توحيد كتابة اسم البوت لإتاحة: مكس / ماكس / ماكسيكو حتى مع مسافات أو رموز خفية."""
-    if not text:
-        return ""
-    value = str(text).strip().lower()
-    value = re.sub(r"[\u200b-\u200f\u202a-\u202e\ufeff]", "", value)
-    value = value.replace("ـ", "")
-    value = re.sub(r"[\s\u0640]+", "", value)
-    value = re.sub(r"[^\w\u0600-\u06ff]", "", value)
-    for a, b in {"أ":"ا", "إ":"ا", "آ":"ا", "ة":"ه", "ى":"ي"}.items():
-        value = value.replace(a, b)
-    return value
-
-
 def main_handler(message):
 
     try:
@@ -5610,24 +5569,22 @@ def main_handler(message):
                 return
 
         # كلمات اسم البوت تعمل في الخاص والمجموعات والقنوات قبل أي اشتراك أو حماية.
-        _bot_name_trigger = normalize_bot_name_trigger(getattr(message, "text", ""))
-        if _bot_name_trigger in ("مكس", "ماكس", "ماكسيكو"):
-            markup = types.InlineKeyboardMarkup()
-            try:
-                markup_json = json.dumps({
-                    "inline_keyboard": [[{
-                        "text": "قناة السورس",
-                        "url": SOURCE_CHANNEL_URL,
-                        "icon_custom_emoji_id": "5852886383915442268"
-                    }]]
-                }, ensure_ascii=False)
-                bot.reply_to(message, "عيوني كيفك", reply_markup=markup_json)
-            except Exception:
-                btn = transparent_url_button("قناة السورس", SOURCE_CHANNEL_URL, "5852886383915442268")
-                if btn:
-                    markup.add(btn)
-                bot.reply_to(message, "عيوني كيفك", reply_markup=markup)
-            return
+        # نقبل المسافات وعلامات الترقيم والـ @username أيضًا حتى لا تفشل المطابقة.
+        if message.text:
+            _name_text = message.text.strip()
+            _name_text = _name_text.replace("@v_u_kbot", "").replace("@v_u_kbotbot", "")
+            _name_text = _name_text.strip(" \t\r\n.,!?؟،:;؛-_ـ")
+            if clean_text(_name_text) in ("مكس", "ماكس", "مكسيكو"):
+                _max_markup = types.InlineKeyboardMarkup(row_width=1)
+                _max_source_btn = transparent_url_button("قناة السورس", SOURCE_CHANNEL_URL, CE_SOURCE_BUTTON)
+                if _max_source_btn:
+                    _max_markup.row(_max_source_btn)
+                bot.reply_to(
+                    message,
+                    "عيوني كيفك✨",
+                    reply_markup=_max_markup
+                )
+                return
 
         if message.chat and message.chat.type == "private" and message.text and message.from_user:
             wallet_match = TON_ADDRESS_RE.search(message.text.strip())
@@ -8410,11 +8367,6 @@ def run_bot_forever():
         start_periodic_quran_dhikr()
     except Exception as e:
         print("[Quran/Dhikr Startup Error]", repr(e))
-
-    try:
-        configure_bot_profile()
-    except Exception as e:
-        print("[Bot Profile Setup Error]", repr(e))
 
     try:
         setup_default_force_channel()
