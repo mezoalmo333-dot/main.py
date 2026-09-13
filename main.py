@@ -99,7 +99,7 @@ CE_AFTER_PERSON = "5890941464900278076"
 CE_REPLY_BUTTON = "5274008024585871702"
 CE_WELCOME_LINE = "5256143829672672750"
 CE_DEV_BUTTON = "5260233433107407649"
-CE_BOT_REPLY = "5201842613983917014"
+CE_BOT_REPLY = "5852886383915442268"
 CE_TON_PRICE = "5260450573768990626"
 CE_TON_ANALYSIS = "5357069174512303778"
 CE_FORCE_SUB = "5271801931814165886"
@@ -4499,8 +4499,8 @@ def send_youtube_song(message, query, processing_message=None):
         caption = (
             f"<b>MaX Music</b>\n\n"
             f"🎵 <b>{html.escape(title)}</b>\n\n"
-            f"المصدر: قناة السورس\n"
-            f"المطور: MaX Developer"
+            f":\n"
+            f": "
         )
         markup = music_source_markup()
 
