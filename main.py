@@ -3114,6 +3114,8 @@ admin_pending = {}
 broadcast_pending = {}
 image_add_counts = defaultdict(int)
 image_add_timers = {}
+# صور الإضافة الجماعية: يتم تجميع أي عدد من الصور ثم وضع وصف واحد عليها كلها.
+pending_image_batches = defaultdict(list)
 
 
 def get_auto_reply(chat_id, text):
@@ -4359,6 +4361,9 @@ def bot_images_markup():
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.row(
         button("إضافة صور", callback_data="admin:images_add", style="primary", icon_custom_emoji_id=CE_MEMBER),
+        button("إضافة عدة صور", callback_data="admin:images_add_many", style="primary", icon_custom_emoji_id=CE_MEMBER)
+    )
+    markup.row(
         button("حذف الكل", callback_data="admin:images_clear", style="danger", icon_custom_emoji_id=CE_ERROR)
     )
     markup.row(button("رجوع", callback_data="admin:open", style="primary", icon_custom_emoji_id=CE_COMMANDS))
@@ -4377,6 +4382,29 @@ def add_bot_image(message):
     )
     db.commit()
     return True
+
+
+def add_pending_image(message):
+    """يجمع الصورة داخل قائمة الإضافة الجماعية، بدون حد 50 صورة."""
+    if not message.photo:
+        return False
+    photo = message.photo[-1]
+    pending_image_batches[message.from_user.id].append(photo.file_id)
+    return True
+
+
+def save_pending_image_batch(user_id, description=""):
+    """يحفظ كل الصور المجمعة دفعة واحدة ويضع نفس الوصف على كل الصور."""
+    images = pending_image_batches.pop(user_id, [])
+    if not images:
+        return 0
+    added_at = now()
+    cursor.executemany(
+        "INSERT INTO bot_images(file_id,caption,added_at) VALUES(?,?,?)",
+        [(file_id, description, added_at) for file_id in images]
+    )
+    db.commit()
+    return len(images)
 
 
 def _finish_image_album_notice(chat_id, user_id):
@@ -5631,7 +5659,7 @@ def main_handler(message):
             markup = types.InlineKeyboardMarkup()
             btn = transparent_url_button(
                 "صلي علي النبي",
-                "https://t.me/LeaDeR_E"
+                "https://t.me/Ssource_MaX"
             )
             if btn:
                 markup.add(btn)
@@ -5749,29 +5777,51 @@ def handle_private(message):
 
     if message.from_user and message.from_user.id == DEVELOPER_ID and message.from_user.id in admin_pending:
         pending_action = admin_pending.get(message.from_user.id)
-        if pending_action == "image_add":
-            if message.text and clean_text(message.text) == "تم":
-                uid = message.from_user.id
-                pending_count = image_add_counts.pop(uid, 0)
-                timer = image_add_timers.pop(uid, None)
-                if timer:
-                    try:
-                        timer.cancel()
-                    except Exception:
-                        pass
-                admin_pending.pop(uid, None)
-                if pending_count:
-                    bot.send_message(message.chat.id, f"تم حفظ <b>{pending_count}</b> صورة.")
-                bot.send_message(message.chat.id, bot_images_text(), reply_markup=bot_images_markup())
-                return
+        uid = message.from_user.id
+
+        if pending_action in ("image_add", "image_add_many"):
+            # وضع الإضافة الجماعية: يقبل أي عدد من الصور، وليس 50 فقط.
             if message.photo:
-                if add_bot_image(message):
-                    # يدعم إرسال عدة صور دفعة واحدة كألبوم Telegram.
-                    queue_image_added_notice(message)
+                if add_pending_image(message):
+                    total = len(pending_image_batches.get(uid, []))
+                    if total == 1 or total % 10 == 0:
+                        bot.send_message(
+                            message.chat.id,
+                            f"تم استلام <b>{total}</b> صورة. أرسل المزيد بدون حد، وبعد الانتهاء اضغط تم."
+                        )
                 else:
-                    bot.send_message(message.chat.id, "تعذر حفظ الصورة.")
+                    bot.send_message(message.chat.id, "تعذر استلام الصورة.")
                 return
-            bot.send_message(message.chat.id, "أرسل صورة واحدة أو ألبوم صور كامل، أو اكتب تم لإنهاء الإضافة.")
+
+            if message.text and clean_text(message.text) == "تم":
+                total = len(pending_image_batches.get(uid, []))
+                if not total:
+                    bot.send_message(message.chat.id, "لم يتم استلام أي صورة بعد. أرسل الصور أولًا.")
+                    return
+                admin_pending[uid] = "image_description"
+                bot.send_message(
+                    message.chat.id,
+                    f"تم استلام <b>{total}</b> صورة.\n\nأرسل الآن الوصف الذي تريد وضعه على <b>كل الصور</b>.\nإذا لا تريد وصفًا، اكتب: <code>بدون وصف</code>"
+                )
+                return
+
+            bot.send_message(message.chat.id, "أرسل الصور واحدة تلو الأخرى أو كألبومات، ويمكنك إرسال أكثر من 50 صورة. بعد الانتهاء اكتب: <code>تم</code>")
+            return
+
+        if pending_action == "image_description":
+            if not message.text:
+                bot.send_message(message.chat.id, "أرسل الوصف كنص، أو اكتب <code>بدون وصف</code>.")
+                return
+            description = message.text.strip()
+            if clean_text(description) in ("بدون وصف", "بدون"):
+                description = ""
+            count = save_pending_image_batch(uid, description)
+            admin_pending.pop(uid, None)
+            bot.send_message(
+                message.chat.id,
+                f"تم حفظ <b>{count}</b> صورة بنجاح" + (" مع الوصف." if description else " بدون وصف."),
+                reply_markup=bot_images_markup()
+            )
             return
 
         if pending_action == "force_add" and message.text:
@@ -7283,8 +7333,19 @@ def callbacks(call):
 
             if action == "images_add":
                 admin_pending[uid] = "image_add"
+                pending_image_batches.pop(uid, None)
                 bot.answer_callback_query(call.id)
-                bot.send_message(chat_id, "أرسل صورة واحدة أو عدة صور دفعة واحدة كألبوم. يمكن وضع وصف مع الصورة. عند الانتهاء اكتب: تم")
+                bot.send_message(chat_id, "أرسل صورة واحدة أو عدة صور دفعة واحدة. عند الانتهاء اكتب: <code>تم</code> ثم سيطلب منك البوت الوصف.")
+                return
+
+            if action == "images_add_many":
+                admin_pending[uid] = "image_add_many"
+                pending_image_batches.pop(uid, None)
+                bot.answer_callback_query(call.id)
+                bot.send_message(
+                    chat_id,
+                    "<b>إضافة عدة صور</b>\n\nأرسل أي عدد من الصور، ويمكنك إرسال أكثر من <b>50 صورة</b> على دفعات أو ألبومات.\n\nبعد الانتهاء اكتب: <code>تم</code>، وبعدها أرسل الوصف الذي تريد وضعه على كل الصور."
+                )
                 return
 
             if action == "images_clear":
