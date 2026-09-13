@@ -16,6 +16,7 @@ import urllib.parse
 import subprocess
 import tempfile
 import random
+import sys
 from datetime import datetime, timezone, timedelta
 try:
     from zoneinfo import ZoneInfo
@@ -4499,7 +4500,12 @@ def download_youtube_song(query):
     try:
         import yt_dlp
     except Exception:
-        return None, "مكتبة yt-dlp غير مثبتة. ثبّتها في Pydroid 3 بالأمر: pip install -U yt-dlp"
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", "-U", "yt-dlp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120, check=False)
+            import yt_dlp
+        except Exception as install_error:
+            print("[yt-dlp install error]", repr(install_error))
+            return None, "مكتبة yt-dlp غير مثبتة. ثبّتها بالأمر: pip install -U yt-dlp ثم أعد تشغيل البوت."
 
     temp_dir = tempfile.mkdtemp(prefix="maxyt_")
     output = os.path.join(temp_dir, "%(title).80s.%(ext)s")
@@ -4553,18 +4559,35 @@ def send_song_card(message, title, source_url=""):
 
 
 def music_source_markup():
-    """أزرار السورس والمطور التي تظهر أسفل ملف الأغنية."""
+    """أزرار السورس والمطور مع Premium Emoji."""
     markup = types.InlineKeyboardMarkup(row_width=2)
     source_btn = transparent_url_button("قناة السورس", SOURCE_CHANNEL_URL, CE_SOURCE_BUTTON)
     developer_btn = transparent_url_button("مطور السورس", SOURCE_DEVELOPER_URL, CE_SOURCE_BUTTON)
-    if source_btn and developer_btn:
-        markup.row(source_btn, developer_btn)
-    elif source_btn:
-        markup.row(source_btn)
-    elif developer_btn:
-        markup.row(developer_btn)
+    if source_btn and developer_btn: markup.row(source_btn, developer_btn)
+    elif source_btn: markup.row(source_btn)
+    elif developer_btn: markup.row(developer_btn)
     return markup
 
+def raw_music_reply_markup():
+    return {"inline_keyboard": [[
+        {"text":"قناة السورس","url":SOURCE_CHANNEL_URL,"icon_custom_emoji_id":CE_SOURCE_BUTTON},
+        {"text":"مطور السورس","url":SOURCE_DEVELOPER_URL,"icon_custom_emoji_id":CE_SOURCE_BUTTON}
+    ]]}
+
+def raw_send_audio_with_music_buttons(message, path, caption, thumb=None):
+    boundary="----MaXeCo"+secrets.token_hex(12); body=bytearray()
+    def field(name,value):
+        body.extend((f"--{boundary}\r\n").encode()); body.extend((f'Content-Disposition: form-data; name="{name}"\r\n\r\n').encode()); body.extend(str(value).encode()); body.extend(b"\r\n")
+    field("chat_id",message.chat.id); field("caption",caption); field("parse_mode","HTML"); field("reply_to_message_id",message.message_id)
+    field("reply_markup",json.dumps(raw_music_reply_markup(),ensure_ascii=False,separators=(",",":")))
+    if thumb: field("thumbnail",thumb)
+    filename=os.path.basename(path) or "audio.m4a"
+    with open(path,"rb") as f: data=f.read()
+    body.extend((f"--{boundary}\r\n").encode()); body.extend((f'Content-Disposition: form-data; name="audio"; filename="{filename}"\r\n').encode()); body.extend(b"Content-Type: application/octet-stream\r\n\r\n"); body.extend(data); body.extend(b"\r\n"); body.extend((f"--{boundary}--\r\n").encode())
+    req=urllib.request.Request(f"https://api.telegram.org/bot{BOT_TOKEN}/sendAudio",data=bytes(body),headers={"Content-Type":f"multipart/form-data; boundary={boundary}"},method="POST")
+    with urllib.request.urlopen(req,timeout=180) as response: result=json.loads(response.read().decode("utf-8","replace"))
+    if not result.get("ok"): raise RuntimeError(result.get("description","Telegram sendAudio failed"))
+    return result
 
 def get_song_bot_image_id():
     """يرجع صورة عشوائية محفوظة لاستخدامها مع الأغنية."""
@@ -4598,40 +4621,14 @@ def send_youtube_song(message, query, processing_message=None):
         )
         markup = music_source_markup()
 
-        # نحاول استخدام صورة البوت كصورة مصغرة للملف الصوتي إن كانت Telegram تقبلها.
-        # إذا لم تقبلها Telegram، نرسل الصوت بدون thumbnail بدل تعطيل الإرسال.
+        # إرسال مباشر عبر Bot API لضمان ظهور Premium Emoji حتى مع نسخة مكتبة قديمة.
         image_id = get_song_bot_image_id()
-        sent = False
-        if image_id:
-            try:
-                with open(path, "rb") as audio:
-                    bot.send_audio(
-                        message.chat.id,
-                        audio,
-                        title=title,
-                        performer="YouTube",
-                        caption=caption,
-                        parse_mode="HTML",
-                        reply_markup=markup,
-                        reply_to_message_id=message.message_id,
-                        thumb=image_id,
-                    )
-                sent = True
-            except Exception as thumb_error:
-                print("[Song Thumbnail Fallback]", repr(thumb_error))
-
-        if not sent:
+        try:
+            raw_send_audio_with_music_buttons(message, path, caption, image_id)
+        except Exception as raw_error:
+            print("[Raw Music Send Error]", repr(raw_error))
             with open(path, "rb") as audio:
-                bot.send_audio(
-                    message.chat.id,
-                    audio,
-                    title=title,
-                    performer="YouTube",
-                    caption=caption,
-                    parse_mode="HTML",
-                    reply_markup=markup,
-                    reply_to_message_id=message.message_id,
-                )
+                bot.send_audio(message.chat.id, audio, title=title, performer="YouTube", caption=caption, parse_mode="HTML", reply_markup=markup, reply_to_message_id=message.message_id)
 
         # الرسالة المؤقتة "جاري البحث..." تختفي بمجرد إرسال الأغنية.
         if processing_message:
