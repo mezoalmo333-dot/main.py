@@ -1123,7 +1123,7 @@ def button(
 # =========================================================
 CURRENCY_CACHE_SECONDS = 60
 CURRENCY_HTTP_TIMEOUT = 7
-LOVELY_UPDATES_URL = "https://t.me/LeaDeR_E"
+LOVELY_UPDATES_URL = "https://t.me/Ssource_MaX"
 
 _currency_cache = {
     "usd_egp": None,
@@ -5471,6 +5471,7 @@ def bot_chat_membership_handler(message):
                 notify_group_event("added", message)
             elif new_status in ("left", "kicked") and old_status in ("member", "administrator", "creator"):
                 ensure_group(message.chat)
+                remove_group_from_stats_and_log(message.chat.id)
                 notify_group_event("removed", message)
         elif message.chat.type == "private":
             # فتح الخاص/إلغاء الحظر يُسجل كمستخدم.
@@ -6233,12 +6234,12 @@ def main_handler(message):
                 return
 
             _reaction = message.text.strip()
-            if any(x in _reaction for x in ("😂", "🤣", "😹", "😆", "😅", "هههه", "ههههه", "هههههه", "خخخ")):
-                bot.reply_to(message, "دايما ياحب ♥")
+            if any(x in _reaction for x in ("😂", "🤣", "😹", "😆", "😅", "هههه", "ههههه", "هههههه",)):
+                bot.reply_to(message, "مش تشوف اسمي ريم ولا ايش 🙄 =https://t.me/Ssource_MaX")
                 return
             # أي رسالة مكوّنة من إيموجي/رموز فقط.
             if _reaction and not re.search(r"[A-Za-z0-9\u0600-\u06FF]", _reaction):
-                bot.reply_to(message, "دايما ياحب ♥")
+                bot.reply_to(message, "مش تشوف اسمي ريم ولا ايش 🙄=https://t.me/Ssource_MaX")
                 return
 
         if message.text and message.text.strip() == ".":
@@ -6246,7 +6247,7 @@ def main_handler(message):
             markup = types.InlineKeyboardMarkup()
             btn = transparent_url_button(
                 "صلي علي النبي",
-                "https://t.me/LeaDeR_E"
+                "https://t.me/Ssource_MaX"
             )
             if btn:
                 markup.add(btn)
@@ -6259,11 +6260,11 @@ def main_handler(message):
 
         if message.text:
             _laugh_text = clean_text(message.text)
-            if any(x in _laugh_text for x in ("هههه", "ههههه", "هههههه", "😂", "🤣", "خخخ")):
-                bot.reply_to(message, "دايما ياحب ♥")
+            if any(x in _laugh_text for x in ("هههه", "ههههه", "هههههه", "😂", "🤣", )):
+                bot.reply_to(message, "مش تشوف اسمي ريم ولا ايش 🙄=https://t.me/Ssource_MaX")
                 return
 
-        if message.text and clean_text(message.text) == "بوت":
+        if message.chat.type in ("group", "supergroup") and message.text and clean_text(message.text) == "بوت":
             try:
                 me = bot.get_me()
                 bot_name = full_name(me)
@@ -6272,7 +6273,7 @@ def main_handler(message):
 
             bot.send_message(
                 message.chat.id,
-                "تاارا اسمي "
+                "ريم اسمي "
                 + html.escape(bot_name)
                 + " متشوف "
                 + tg_emoji(CE_BOT_REPLY, "🤖")
