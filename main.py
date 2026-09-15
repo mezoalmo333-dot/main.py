@@ -244,20 +244,20 @@ def decorate_text(text):
     # ---------------------------------------------------------
     heading_patterns = [
         # (regex, replacement text, custom emoji)
-        (r'(<b>)\s*[🚫⚙️]\s*(نظام الرتب\s*:?)\s*(</b>)',
-         r'\1\2 ' + tg_emoji(CE_RANKS, "") + r'\3'),
-        (r'(<b>)\s*[🚫⚙️]\s*(الحماية\s*:?)\s*(</b>)',
-         r'\1\2 ' + tg_emoji(CE_PROTECTION, "") + r'\3'),
-        (r'(<b>)\s*[🚫⚙️]\s*(الإدارة|الادارة\s*:?)\s*(</b>)',
-         r'\1\2 ' + tg_emoji(CE_ADMIN, "") + r'\3'),
-        (r'(<b>)\s*[🚫⚙️]\s*(الكلمات\s*:?)\s*(</b>)',
+        (r'(<b>)\s*[👑📚🛡️🔒🚫⚙️👥]\s*(نظام الرتب\s*:?)\s*(</b>)',
+         r'\1\2 ' + tg_emoji(CE_RANKS, "👑") + r'\3'),
+        (r'(<b>)\s*[👑📚🛡️🔒🚫⚙️👥]\s*(الحماية\s*:?)\s*(</b>)',
+         r'\1\2 ' + tg_emoji(CE_PROTECTION, "🛡️") + r'\3'),
+        (r'(<b>)\s*[👑📚🛡️🔒🚫⚙️👥]\s*(الإدارة|الادارة\s*:?)\s*(</b>)',
+         r'\1\2 ' + tg_emoji(CE_ADMIN, "🛡️") + r'\3'),
+        (r'(<b>)\s*[👑📚🛡️🔒🚫⚙️👥]\s*(الكلمات\s*:?)\s*(</b>)',
          r'\1\2 ' + tg_emoji(CE_WORDS, "🚫") + r'\3'),
-        (r'(<b>)\s*[🚫⚙️]\s*(للجميع\s*:?)\s*(</b>)',
-         r'\1\2 ' + tg_emoji(CE_EVERYONE, "") + r'\3'),
-        (r'(<b>)\s*[🚫⚙️]\s*(قائمة أوامر البوت)\s*(</b>)',
-         r'\1\2 ' + tg_emoji(CE_COMMANDS, "") + r'\3'),
-        (r'(<b>)\s*[🚫⚙️]\s*(قائمة اوامر البوت)\s*(</b>)',
-         r'\1\2 ' + tg_emoji(CE_COMMANDS, "") + r'\3'),
+        (r'(<b>)\s*[👑📚🛡️🔒🚫⚙️👥]\s*(للجميع\s*:?)\s*(</b>)',
+         r'\1\2 ' + tg_emoji(CE_EVERYONE, "👥") + r'\3'),
+        (r'(<b>)\s*[👑📚🛡️🔒🚫⚙️👥]\s*(قائمة أوامر البوت)\s*(</b>)',
+         r'\1\2 ' + tg_emoji(CE_COMMANDS, "📚") + r'\3'),
+        (r'(<b>)\s*[👑📚🛡️🔒🚫⚙️👥]\s*(قائمة اوامر البوت)\s*(</b>)',
+         r'\1\2 ' + tg_emoji(CE_COMMANDS, "📚") + r'\3'),
     ]
 
     for pattern, replacement in heading_patterns:
@@ -268,15 +268,15 @@ def decorate_text(text):
     #    نعمل ذلك على مستوى السطر حتى لا ندخل الإيموجي وسط الجملة.
     # ---------------------------------------------------------
     semantic_heads = [
-        ("قائمة أوامر البوت", CE_COMMANDS, ""),
-        ("قائمة اوامر البوت", CE_COMMANDS, ""),
-        ("نظام الرتب", CE_RANKS, ""),
-        ("الحماية", CE_PROTECTION, ""),
-        ("حماية", CE_PROTECTION, ""),
-        ("الإدارة", CE_ADMIN, ""),
-        ("الادارة", CE_ADMIN, ""),
+        ("قائمة أوامر البوت", CE_COMMANDS, "📚"),
+        ("قائمة اوامر البوت", CE_COMMANDS, "📚"),
+        ("نظام الرتب", CE_RANKS, "👑"),
+        ("الحماية", CE_PROTECTION, "🛡️"),
+        ("حماية", CE_PROTECTION, "🛡️"),
+        ("الإدارة", CE_ADMIN, "🛡️"),
+        ("الادارة", CE_ADMIN, "🛡️"),
         ("الكلمات", CE_WORDS, "🚫"),
-        ("للجميع", CE_EVERYONE, ""),
+        ("للجميع", CE_EVERYONE, "👥"),
     ]
 
     lines = []
@@ -1403,7 +1403,7 @@ def send_ton_conversion(message, ton_amount):
 
     usd_amount = ton_amount * ton_usd
     egp_amount = usd_amount * usd_egp
-    price_emoji = tg_emoji(CE_TON_PRICE, "")
+    price_emoji = tg_emoji(CE_TON_PRICE, "💎")
 
     text = (
         "<b>ToN</b>\n"
@@ -1457,7 +1457,7 @@ def send_ton_analysis(message):
         trend = "<b>مستقر</b>"
         trend_value = "0.00%"
 
-    price_emoji = tg_emoji(CE_TON_PRICE, "")
+    price_emoji = tg_emoji(CE_TON_PRICE, "💎")
     analysis_emoji = tg_emoji(CE_TON_ANALYSIS, "🔹")
     text = (
         f"{analysis_emoji} <b>تحليل ToN</b>\n"
@@ -1592,7 +1592,7 @@ def send_currency_conversion(message, usd_amount):
         return False
 
     egp_amount = usd_amount * usd_egp
-    price_emoji = tg_emoji(CE_TON_PRICE, "")
+    price_emoji = tg_emoji(CE_TON_PRICE, "💎")
 
     text = (
         "<b>DoLLar</b>\n"
@@ -1654,7 +1654,7 @@ def send_dollar_analysis(message):
         bot.reply_to(message, "تعذر جلب سعر الدولار حاليًا، حاول مرة أخرى بعد قليل.")
         return True
 
-    price_emoji = tg_emoji(CE_TON_PRICE, "")
+    price_emoji = tg_emoji(CE_TON_PRICE, "💎")
     analysis_emoji = tg_emoji(CE_TON_ANALYSIS, "🔹")
     history_current, previous_rate, change, percent, history_date = get_usd_egp_24h_change()
 
@@ -2812,7 +2812,7 @@ def add_warning(message, target):
             return (
                 f"⚠️ تم تحذير {mention(target)}\n"
                 f"📊 وصل إلى {maximum}\n"
-                " تم كتمه تلقائيًا."
+                "🔇 تم كتمه تلقائيًا."
             )
 
         except Exception:
@@ -3007,12 +3007,12 @@ def send_settings(message):
 
     markup.add(
         button(
-            " قفل الكل",
+            "🔒 قفل الكل",
             callback_data="lock_all",
             style="danger"
         ),
         button(
-            " فتح الكل",
+            "🔓 فتح الكل",
             callback_data="unlock_all",
             style="success"
         )
@@ -3048,7 +3048,6 @@ def command_category_allowed(category, viewer_id, chat_id=None):
 
 
 def commands_menu_markup(viewer_id=None, chat_id=None):
-    # إخفاء جميع أزرار التصنيفات والإبقاء على زر كل الأوامر فقط.
     markup = types.InlineKeyboardMarkup(row_width=1)
     token = str(viewer_id or 0)
     markup.add(
@@ -3061,23 +3060,22 @@ def commands_menu_markup(viewer_id=None, chat_id=None):
     )
     return markup
 
-
 def command_category_text(category, viewer_id=None, chat_id=None):
     if not command_category_allowed(category, viewer_id, chat_id):
         return "❌ هذه الأوامر ليست ضمن صلاحيات رتبتك."
     texts = {
-        "locks": " <b>أوامر القفل</b>\n\n<code>قفل الروابط</code>\n<code>قفل الصور</code>\n<code>قفل الفيديو</code>\n<code>قفل الملفات</code>\n<code>قفل الملصقات</code>\n<code>قفل الصوت</code>\n<code>قفل المتحركات</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>\n<code>قفل الجروب</code>\n<code>قفل الكل</code>",
-        "unlocks": " <b>أوامر الفتح</b>\n\n<code>فتح الروابط</code>\n<code>فتح الصور</code>\n<code>فتح الفيديو</code>\n<code>فتح الملفات</code>\n<code>فتح الملصقات</code>\n<code>فتح الصوت</code>\n<code>فتح المتحركات</code>\n<code>فتح التكرار</code>\n<code>فتح حماية الجدد</code>\n<code>فتح الجروب</code>\n<code>فتح الكل</code>",
-        "groups": " <b>أوامر المجموعات</b>\n\n<code>رتبتي</code>\n<code>ا</code>\n<code>معلومات</code>\n<code>احصائيات</code>\n<code>السجل</code>\n<code>الاعدادات</code>\n<code>الساعة</code>\n<code>المالك</code>\n<code>المطور</code>",
-        "admin": " <b>أوامر الإدارة</b>\n\n<code>حظر</code>\n<code>فك حظر</code>\n<code>حظر عام</code>\n<code>طرد</code>\n<code>كتم</code>\n<code>فك كتم</code>\n<code>تحذير</code>\n<code>تحذيرات</code>\n<code>مسح التحذيرات</code>\n<code>الغاء تحذير</code>\n<code>قفل الجروب</code>\n<code>فتح الجروب</code>",
-        "protection": " <b>أوامر الحماية</b>\n\n<code>منع كلمة ...</code>\n<code>الغاء منع كلمة ...</code>\n<code>قائمة الكلمات</code>\n<code>قفل الروابط</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>",
-        "ranks": " <b>أوامر الرتب</b>\n\n<code>رفع مساعد المالك</code>\n<code>تنزيل مساعد المالك</code>\n<code>رفع مدير</code>\n<code>تنزيل مدير</code>\n<code>رفع ادمن</code>\n<code>تنزيل ادمن</code>\n<code>رفع مشرف</code>\n<code>تنزيل مشرف</code>\n<code>رفع حيوان</code>\n<code>تنزيل حيوان</code>",
-        "replies": " <b>أوامر الردود</b>\n\n<code>اضف رد</code>\n<code>حذف رد</code>\n<code>قائمة الردود</code>\n\nالرد الذي تضيفه من داخل المجموعة يُحفظ لهذه المجموعة فقط.",
-        "ton": " <b>أوامر TON</b>\n\n<code>1ton</code> أو <code>1تون</code> — سعر TON\n<code>تحليل تون</code> — تحليل آخر 24 ساعة\n<code>تحليل دولار</code> — سعر الدولار مقابل الجنيه",
-        "music": " <b>أوامر الأغاني</b>\n\n<code>تنزيل {اسم الأغنية}</code> — يبحث في YouTube ويرسل الأغنية كملف صوتي.",
+        "locks": "🔒 <b>أوامر القفل</b>\n\n<code>قفل الروابط</code>\n<code>قفل الصور</code>\n<code>قفل الفيديو</code>\n<code>قفل الملفات</code>\n<code>قفل الملصقات</code>\n<code>قفل الصوت</code>\n<code>قفل المتحركات</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>\n<code>قفل الجروب</code>\n<code>قفل الكل</code>",
+        "unlocks": "🔓 <b>أوامر الفتح</b>\n\n<code>فتح الروابط</code>\n<code>فتح الصور</code>\n<code>فتح الفيديو</code>\n<code>فتح الملفات</code>\n<code>فتح الملصقات</code>\n<code>فتح الصوت</code>\n<code>فتح المتحركات</code>\n<code>فتح التكرار</code>\n<code>فتح حماية الجدد</code>\n<code>فتح الجروب</code>\n<code>فتح الكل</code>",
+        "groups": "👥 <b>أوامر المجموعات</b>\n\n<code>رتبتي</code>\n<code>ا</code>\n<code>معلومات</code>\n<code>احصائيات</code>\n<code>السجل</code>\n<code>الاعدادات</code>\n<code>الساعة</code>\n<code>المالك</code>\n<code>المطور</code>",
+        "admin": "👮 <b>أوامر الإدارة</b>\n\n<code>حظر</code>\n<code>فك حظر</code>\n<code>حظر عام</code>\n<code>طرد</code>\n<code>كتم</code>\n<code>فك كتم</code>\n<code>تحذير</code>\n<code>تحذيرات</code>\n<code>مسح التحذيرات</code>\n<code>الغاء تحذير</code>\n<code>قفل الجروب</code>\n<code>فتح الجروب</code>",
+        "protection": "🛡️ <b>أوامر الحماية</b>\n\n<code>منع كلمة ...</code>\n<code>الغاء منع كلمة ...</code>\n<code>قائمة الكلمات</code>\n<code>قفل الروابط</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>",
+        "ranks": "👑 <b>أوامر الرتب</b>\n\n<code>رفع مساعد المالك</code>\n<code>تنزيل مساعد المالك</code>\n<code>رفع مدير</code>\n<code>تنزيل مدير</code>\n<code>رفع ادمن</code>\n<code>تنزيل ادمن</code>\n<code>رفع مشرف</code>\n<code>تنزيل مشرف</code>\n<code>رفع حيوان</code>\n<code>تنزيل حيوان</code>",
+        "replies": "💬 <b>أوامر الردود</b>\n\n<code>اضف رد</code>\n<code>حذف رد</code>\n<code>قائمة الردود</code>\n\nالرد الذي تضيفه من داخل المجموعة يُحفظ لهذه المجموعة فقط.",
+        "ton": "💎 <b>أوامر TON</b>\n\n<code>1ton</code> أو <code>1تون</code> — سعر TON\n<code>تحليل تون</code> — تحليل آخر 24 ساعة\n<code>تحليل دولار</code> — سعر الدولار مقابل الجنيه",
+        "music": "🎵 <b>أوامر الأغاني</b>\n\n<code>تنزيل {اسم الأغنية}</code> — يبحث في YouTube ويرسل الأغنية كملف صوتي.",
         "images": "أوامر الصور\n\n<code>صور</code> — إرسال صور\n<code>صورة بنات</code> — إرسال صور بنات\n<code>صورة ولاد</code> — إرسال صور ولاد",
     }
-    return texts.get(category, " <b>قائمة أوامر البوت</b>")
+    return texts.get(category, "📚 <b>قائمة أوامر البوت</b>")
 
 
 def commands_back_markup(viewer_id=None):
@@ -3089,7 +3087,7 @@ def commands_back_markup(viewer_id=None):
 
 def send_commands_menu(message):
     viewer_id = message.from_user.id if message.from_user else 0
-    text = " <b>قائمة أوامر البوت</b>\n\nالأوامر المتاحة لرتبتك فقط:"
+    text = "📚 <b>قائمة أوامر البوت</b>\n\nالأوامر المتاحة لرتبتك فقط:"
     bot.reply_to(message, text, reply_markup=commands_menu_markup(viewer_id, message.chat.id if message.chat.type in ("group", "supergroup") else None))
 
 
@@ -3136,37 +3134,37 @@ def commands_text(owner=None, viewer_id=None, chat_id=None):
 MOD_PERMS = {
 
     "change_info": (
-        " تغيير المعلومات",
+        "✏️ تغيير المعلومات",
         "can_change_info"
     ),
 
     "delete_messages": (
-        " حذف الرسائل",
+        "🗑 حذف الرسائل",
         "can_delete_messages"
     ),
 
     "restrict_members": (
-        " تقييد الأعضاء",
+        "🔇 تقييد الأعضاء",
         "can_restrict_members"
     ),
 
     "invite_users": (
-        " دعوة الأعضاء",
+        "👥 دعوة الأعضاء",
         "can_invite_users"
     ),
 
     "pin_messages": (
-        " تثبيت الرسائل",
+        "📌 تثبيت الرسائل",
         "can_pin_messages"
     ),
 
     "manage_video_chats": (
-        " تشغيل الأغاني",
+        "🎵 تشغيل الأغاني",
         "can_manage_video_chats"
     ),
 
     "manage_topics": (
-        " إدارة المواضيع",
+        "🧵 إدارة المواضيع",
         "can_manage_topics"
     )
 }
@@ -3228,7 +3226,7 @@ def moderator_panel(call, token):
     )
 
     bot.edit_message_text(
-        " <b>اختيار صلاحيات المشرف</b>\n"
+        "🛡️ <b>اختيار صلاحيات المشرف</b>\n"
         "\n"
         f"👤 الهدف: {mention(p['target'])}\n\n"
         "اختر الصلاحيات ثم اضغط تأكيد.\n"
@@ -4160,7 +4158,7 @@ def send_admin_panel(chat_id, message_id=None):
         return False
 
     text = (
-        " <b>لوحة أدمن البوت</b>\n"
+        "🛡️ <b>لوحة أدمن البوت</b>\n"
         "\n"
         "مرحبًا بك في لوحة التحكم الخاصة بالمطور.\n\n"
         "من هنا يمكنك متابعة حالة البوت، المجموعات،\n"
@@ -4207,11 +4205,11 @@ def admin_stats_text():
     return (
         "📊 <b>إحصائيات البوت</b>\n"
         "\n"
-        f" المجموعات: <code>{groups_count}</code>\n"
+        f"👥 المجموعات: <code>{groups_count}</code>\n"
         f"👤 الأعضاء المسجلون: <code>{members_count}</code>\n"
-        f" الردود التلقائية: <code>{replies_count}</code>\n"
+        f"💬 الردود التلقائية: <code>{replies_count}</code>\n"
         f"📝 إجراءات الإدارة: <code>{actions_count}</code>\n"
-        f" صور البوت: <code>{images_count}</code>\n"
+        f"🖼️ صور البوت: <code>{images_count}</code>\n"
         ""
     )
 
@@ -4224,10 +4222,10 @@ def admin_groups_text():
     rows = cursor.fetchall()
 
     if not rows:
-        return " <b>المجموعات</b>\n\nلا توجد مجموعات مسجلة حتى الآن."
+        return "👥 <b>المجموعات</b>\n\nلا توجد مجموعات مسجلة حتى الآن."
 
     lines = [
-        " <b>المجموعات المسجلة</b>",
+        "👥 <b>المجموعات المسجلة</b>",
         ""
     ]
 
@@ -4248,10 +4246,10 @@ def admin_replies_text():
     rows = cursor.fetchall()
 
     if not rows:
-        return " <b>الردود التلقائية</b>\n\nلا توجد ردود محفوظة."
+        return "💬 <b>الردود التلقائية</b>\n\nلا توجد ردود محفوظة."
 
     lines = [
-        " <b>آخر الردود التلقائية</b>",
+        "💬 <b>آخر الردود التلقائية</b>",
         ""
     ]
 
@@ -4372,7 +4370,6 @@ def add_force_channel(value):
 
 
 def ensure_default_force_channel():
-    """إضافة قناة السورس العامة تلقائيًا للاشتراك الإجباري في كل الجروبات."""
     try:
         cursor.execute(
             "SELECT 1 FROM force_sub_channels WHERE username=? OR url=? LIMIT 1",
@@ -4741,7 +4738,7 @@ def send_song_card(message, title, source_url=""):
     """بطاقة الأغنية مع صورة من صور البوت وروابط السورس والمطور."""
     caption = (
         f"<b>Music</b>\n\n"
-        f" <b>{html.escape(title)}</b>\n\n"
+        f"🎵 <b>{html.escape(title)}</b>\n\n"
         f"المصدر: <a href=\"{SOURCE_CHANNEL_URL}\">قناة السورس</a>\n"
         f"المطور: <a href=\"{SOURCE_DEVELOPER_URL}\">Developer</a>"
     )
@@ -5107,7 +5104,7 @@ def send_ton_wallet_info(message, address):
         lines = [
             f"{tg_emoji(CE_TON_WALLET, '💼')} <b>Wallet :</b> <code>{html.escape(address)}</code>",
             "—————«•»—————",
-            f"{tg_emoji(CE_TON_BALANCE, '')} <b>Balance :</b> {_ton_format(balance_ton)} TON ≈ {usd_text}",
+            f"{tg_emoji(CE_TON_BALANCE, '💎')} <b>Balance :</b> {_ton_format(balance_ton)} TON ≈ {usd_text}",
             "—————«•»—————"
         ]
         jettons = []
@@ -5310,9 +5307,6 @@ def start_private(message):
             welcome_text,
             reply_markup=markup
         )
-        # إظهار لوحة الكيبورد الداخلية لكل عضو يبدأ البوت، وليس للمطور فقط.
-        # تُرسل في رسالة مستقلة لأن Telegram لا يسمح بجمع ReplyKeyboard وInlineKeyboard
-        # في نفس الرسالة.
         try:
             bot.send_message(
                 message.chat.id,
@@ -5636,14 +5630,14 @@ def group_welcome_caption(message, user):
         ".Add Me To Your Group .\n\n"
         f"╭───────────────╮\n"
         f"│ 👤 𝑵𝒂me: {name}\n"
-        f"│  𝑮𝒓𝒐𝒖𝒑: {group_name}\n"
+        f"│ 👥 𝑮𝒓𝒐𝒖𝒑: {group_name}\n"
         f"│ 🔗 𝑳𝒊𝒏𝒌: {group_link}\n"
         f"│ 📨 𝑼𝒔𝒆𝒓𝒏𝒂𝒎𝒆: {username}\n"
         f"│ 🆔 𝑼𝒔𝒆𝒓 𝑰𝑫: <code>{user.id}</code>\n"
         f"│ 📅 𝑫𝒂𝒕𝒆: {now_local}\n"
         f"│ ⏰ 𝑻𝒊𝒎𝒆: {time_local}\n"
         f"├───────────────\n"
-        f"│  𝑴𝒆𝒎𝒃𝒆𝒓𝒔: {members}\n"
+        f"│ 👥 𝑴𝒆𝒎𝒃𝒆𝒓𝒔: {members}\n"
         f"│ 🛡 𝑨𝒅𝒎𝒊𝒏𝒔: {admins}\n"
         f"╰───────────────╯"
     )
@@ -5985,7 +5979,6 @@ def perform_broadcast(source_message, scope="all", reply_markup=None):
             if reply_markup is not None:
                 kwargs["reply_markup"] = reply_markup
             copied = bot.copy_message(**kwargs)
-            # تثبيت نسخة الإذاعة داخل الجروبات والقنوات إذا كانت صلاحيات البوت تسمح.
             try:
                 if target_id < 0 and copied is not None:
                     bot.pin_chat_message(
@@ -6322,6 +6315,14 @@ def main_handler(message):
                 send_single_adhkar(message)
                 return
 
+            _reaction = message.text.strip()
+            if any(x in _reaction for x in ("😂", "🤣", "😹", "😆", "😅", "هههه", "ههههه", "هههههه", "خخخ")):
+                bot.reply_to(message, "")
+                return
+            # أي رسالة مكوّنة من إيموجي/رموز فقط.
+            if _reaction and not re.search(r"[A-Za-z0-9\u0600-\u06FF]", _reaction):
+                bot.reply_to(message, "")
+                return
 
         if message.text and message.text.strip() == ".":
 
@@ -6338,6 +6339,12 @@ def main_handler(message):
                 reply_markup=markup
             )
             return
+
+        if message.text:
+            _laugh_text = clean_text(message.text)
+            if any(x in _laugh_text for x in ("هههه", "ههههه", "هههههه", "😂", "🤣", "خخخ")):
+                bot.reply_to(message, "")
+                return
 
         if message.text and clean_text(message.text) == "بوت":
             try:
@@ -6529,7 +6536,7 @@ def handle_private(message):
             "🤖 <b>بوت حماية وإدارة المجموعات</b>\n\n"
             "⚡ Polling\n"
             "💾 SQLite\n"
-            " حماية وإدارة"
+            "🛡️ حماية وإدارة"
         )
 
         return
@@ -6919,9 +6926,9 @@ def handle_command(
             message,
             f"🏠 <b>معلومات المجموعة</b>\n"
             "\n"
-            f" {html.escape(message.chat.title or '')}\n"
+            f"📌 {html.escape(message.chat.title or '')}\n"
             f"🆔 <code>{chat_id}</code>\n"
-            f" <code>{members}</code>"
+            f"👥 <code>{members}</code>"
         )
 
         return True
@@ -6941,9 +6948,9 @@ def handle_command(
             message,
             "🤖 <b>بوت حماية متطور</b>\n"
             "💾 SQLite\n"
-            " حماية روابط وكلمات ووسائط\n"
+            "🛡️ حماية روابط وكلمات ووسائط\n"
             "⚠️ نظام تحذيرات\n"
-            " نظام رتب"
+            "👑 نظام رتب"
         )
 
         return True
@@ -7084,7 +7091,7 @@ def handle_command(
     if command == "قائمة_الردود":
         cursor.execute("SELECT trigger FROM auto_replies WHERE chat_id=? ORDER BY trigger COLLATE NOCASE", (chat_id,))
         rows = cursor.fetchall()
-        text = " <b>الردود التلقائية</b>\n\n"
+        text = "📋 <b>الردود التلقائية</b>\n\n"
         text += "\n".join(f"• <code>{html.escape(r['trigger'])}</code>" for r in rows) if rows else "لا توجد ردود تلقائية محفوظة."
         bot.reply_to(message, text)
         return True
@@ -7649,10 +7656,10 @@ def handle_command(
             bot.reply_to(
                 message,
                 (
-                    " تم قفل الكل."
+                    "🔒 تم قفل الكل."
                     if command == "قفل"
                     else
-                    " تم فتح الكل."
+                    "🔓 تم فتح الكل."
                 )
             )
 
@@ -7672,10 +7679,10 @@ def handle_command(
             bot.reply_to(
                 message,
                 (
-                    " تم تفعيل حماية الجدد."
+                    "🔒 تم تفعيل حماية الجدد."
                     if command == "قفل"
                     else
-                    " تم تعطيل حماية الجدد."
+                    "🔓 تم تعطيل حماية الجدد."
                 )
             )
 
@@ -7692,10 +7699,10 @@ def handle_command(
             bot.reply_to(
                 message,
                 (
-                    " تم قفل "
+                    "🔒 تم قفل "
                     if command == "قفل"
                     else
-                    " تم فتح "
+                    "🔓 تم فتح "
                 )
                 + argument
                 + "."
@@ -7771,7 +7778,7 @@ def handle_command(
 
         bot.reply_to(
             message,
-            " <b>الكلمات الممنوعة</b>\n"
+            "📋 <b>الكلمات الممنوعة</b>\n"
             "\n"
             + (
                 "\n".join(
@@ -7831,8 +7838,8 @@ def handle_command(
             message,
             "📊 <b>إحصائيات المجموعة</b>\n"
             "\n"
-            f" <code>{s['users']}</code>\n"
-            f" <code>{s['messages']}</code>\n"
+            f"👥 <code>{s['users']}</code>\n"
+            f"💬 <code>{s['messages']}</code>\n"
             f"🚫 <code>{w}</code>\n"
             f"📝 <code>{a}</code>"
         )
@@ -8263,7 +8270,7 @@ def callbacks(call):
             viewer_id = call.from_user.id
             bot.send_message(
                 chat_id,
-                " <b>قائمة أوامر البوت</b>\n\nالأوامر المتاحة لرتبتك فقط:",
+                "📚 <b>قائمة أوامر البوت</b>\n\nالأوامر المتاحة لرتبتك فقط:",
                 reply_markup=commands_menu_markup(viewer_id, chat_id)
             )
             return
@@ -8282,7 +8289,7 @@ def callbacks(call):
             bot.answer_callback_query(call.id)
             if category == "home":
                 bot.edit_message_text(
-                    " <b>قائمة أوامر البوت</b>\n\nالأوامر المتاحة لرتبتك فقط:",
+                    "📚 <b>قائمة أوامر البوت</b>\n\nالأوامر المتاحة لرتبتك فقط:",
                     chat_id, call.message.message_id,
                     reply_markup=commands_menu_markup(owner_id, chat_id)
                 )
