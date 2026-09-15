@@ -37,51 +37,6 @@ DB_NAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "protection_b
 SOURCE_CHANNEL_URL = "https://t.me/Ssource_MaX"
 SOURCE_DEVELOPER_URL = "https://t.me/L1_D_R"
 
-# =========================================================
-# Custom Emoji IDs (V7)
-# =========================================================
-CE_ADD_GROUP = "6014859822669765417"
-CE_OWNER_DEVELOPER = "6026358867460366307"
-CE_MEMBER = "6026214410530333332"
-CE_ERROR = "5463150060655104540"
-CE_SUCCESS = "5462991735275670716"
-CE_ADMIN = "6024070839597540699"
-CE_ID = "6026322901404229165"
-CE_USERNAME = "5463083548791556323"
-CE_START = "6014944072748244263"
-CE_PROTECTION = "5891225499677496831"
-CE_RANKS = "5463397536670697642"
-CE_PERSON = "5463295393758464486"
-CE_WORDS = "4936296803390718929"
-CE_EVERYONE = "5461018558580401820"
-CE_COMMANDS = "5463200135678796607"
-CE_WELCOME = "5764739309810751596"
-CE_AFTER_PERSON = "5890941464900278076"
-CE_REPLY_BUTTON = "5274008024585871702"
-CE_WELCOME_LINE = "5256143829672672750"
-CE_DEV_BUTTON = "5260233433107407649"
-CE_BOT_REPLY = "6023972922933121628"
-CE_TON_PRICE = "5260450573768990626"
-CE_TON_ANALYSIS = "5357069174512303778"
-CE_FORCE_SUB = "5271801931814165886"
-CE_UPDATE_MAX_REQUESTED = "5974492756494519709"
-CE_FORCE_VERIFY = "5258093637450866522"
-CE_TON_WALLET = "5258204546391351475"
-CE_TON_BALANCE = "5258368777350816286"
-CE_TON_USERS = "5260399854500191689"
-CE_TON_NFT = "5301296193790308732"
-CE_TON_DEV_BUTTON = "5253959125838090076"
-CE_WELCOME_HELLO = "5258501105293205250"
-CE_WELCOME_INFO = "5258503720928288433"
-CE_ADD_TO_GROUP_REQUESTED = "5409282701087762738"
-CE_ADMIN_USERNAME = "5260399854500191689"
-ADMIN_UI_EMOJI = "5942584499559735519"
-ADMIN_BACK_EMOJI = "5854967531793550989"
-BROADCAST_UI_EMOJI = "6048537430036844009"
-WELCOME_DEV_EMOJI = "5974053252491119713"
-WELCOME_HELLO_EMOJI = "6008263495932448198"
-MUTE_UI_EMOJI = "5936230155574842929"
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 telebot.logger.setLevel(logging.INFO)
 
@@ -111,11 +66,12 @@ def configure_bot_profile():
         commands = [
             types.BotCommand("start", "بدء البوت"),
             types.BotCommand("help", "طريقة استعمال البوت"),
-            types.BotCommand("تنزيل", "تنزيل أغنية من يوتيوب"),
+            types.BotCommand("يوت", "البحث عن أغنية من يوتيوب"),
             types.BotCommand("صور", "إرسال صور"),
             types.BotCommand("صور_بنات", "إرسال صور بنات"),
             types.BotCommand("صور_ولاد", "إرسال صور ولاد"),
             types.BotCommand("همسه", "همسة وأذكار للمجموعة"),
+            types.BotCommand("محفظة", "كشف محفظة TON"),
         ]
         bot.set_my_commands(commands)
     except Exception as e:
@@ -127,42 +83,106 @@ ADD_TO_GROUP_URL = (
     "change_info+manage_topics+manage_video_chats"
 )
 
+def _welcome_media():
+    """إرجاع وسائط الترحيب العامة المحفوظة، إن وُجدت."""
+    try:
+        row = cursor.execute("SELECT setting,value FROM settings WHERE chat_id=0 AND setting IN ('welcome_media_type','welcome_media_id')").fetchall()
+        data = {r['setting']: r['value'] for r in row}
+        media_type = data.get('welcome_media_type','')
+        media_id = data.get('welcome_media_id','')
+        if media_type in ('photo','video') and media_id:
+            return media_type, media_id
+    except Exception as e:
+        print('[Welcome Media Read Error]', repr(e))
+    return None, None
+
 def send_welcome_with_bot_photo(chat_id, caption, reply_markup=None, reply_to_message_id=None):
-    """إرسال الترحيب بصورة البوت فعليًا في الخاص والمجموعات."""
-    # صورة بروفايل البوت من Telegram.
+    """إرسال الترحيب بصورة/فيديو مخصص، ثم صورة بروفايل البوت كاحتياط."""
+    media_type, media_id = _welcome_media()
+    try:
+        if media_type == 'video':
+            return bot.send_video(chat_id, media_id, caption=caption, parse_mode='HTML', reply_markup=reply_markup, reply_to_message_id=reply_to_message_id)
+        if media_type == 'photo':
+            return bot.send_photo(chat_id, media_id, caption=caption, parse_mode='HTML', reply_markup=reply_markup, reply_to_message_id=reply_to_message_id)
+    except Exception as e:
+        print('[Welcome Custom Media Error]', repr(e))
     try:
         me = bot.get_me()
         photos = bot.get_user_profile_photos(me.id, limit=1)
-        if photos and getattr(photos, "total_count", 0) > 0 and photos.photos:
-            file_id = photos.photos[0][-1].file_id
-            try:
-                return _original_send_photo(
-                    chat_id, file_id, caption=caption, parse_mode="HTML",
-                    reply_markup=reply_markup,
-                    reply_to_message_id=reply_to_message_id
-                )
-            except Exception as e:
-                print("[Welcome Profile Photo Send Error]", repr(e))
+        if photos and photos.total_count:
+            return bot.send_photo(chat_id, photos.photos[0][-1].file_id, caption=caption, parse_mode='HTML', reply_markup=reply_markup, reply_to_message_id=reply_to_message_id)
     except Exception as e:
-        print("[Welcome Profile Photo Lookup Error]", repr(e))
+        print('[Welcome Bot Photo Error]', repr(e))
+    return bot.send_message(chat_id, caption, parse_mode='HTML', reply_markup=reply_markup, reply_to_message_id=reply_to_message_id)
 
-    # إذا لم توجد صورة للبوت، استخدم صورة محفوظة من صور البوت.
-    try:
-        cursor.execute("SELECT file_id FROM bot_images ORDER BY RANDOM() LIMIT 1")
-        row = cursor.fetchone()
-        if row and row["file_id"]:
-            return _original_send_photo(
-                chat_id, row["file_id"], caption=caption, parse_mode="HTML",
-                reply_markup=reply_markup,
-                reply_to_message_id=reply_to_message_id
-            )
-    except Exception as e:
-        print("[Welcome Saved Photo Error]", repr(e))
+def save_welcome_media(message):
+    """يحفظ آخر صورة/فيديو أرسله المطور كوسائط ترحيب عامة."""
+    media_type = None
+    media_id = None
+    if getattr(message, 'photo', None):
+        media_type, media_id = 'photo', message.photo[-1].file_id
+    elif getattr(message, 'video', None):
+        media_type, media_id = 'video', message.video.file_id
+    if not media_id:
+        return False
+    set_global_setting('welcome_media_type', media_type)
+    set_global_setting('welcome_media_id', media_id)
+    return True
 
-    return bot.send_message(
-        chat_id, caption, reply_markup=reply_markup,
-        reply_to_message_id=reply_to_message_id
-    )
+
+# =========================================================
+# Custom Emoji IDs
+# =========================================================
+CE_ADD_GROUP = "6014859822669765417"
+CE_OWNER_DEVELOPER = "6026358867460366307"
+CE_MEMBER = "6026214410530333332"
+CE_ERROR = "5463150060655104540"
+CE_SUCCESS = "5462991735275670716"
+CE_ADMIN = "6024070839597540699"
+CE_ID = "6026322901404229165"
+CE_USERNAME = "5463083548791556323"
+CE_START = "6014944072748244263"
+CE_PROTECTION = "5891225499677496831"
+CE_RANKS = "5463397536670697642"
+CE_PERSON = "5463295393758464486"
+CE_WORDS = "4936296803390718929"
+CE_EVERYONE = "5461018558580401820"
+CE_COMMANDS = "5463200135678796607"
+CE_WELCOME = "5764739309810751596"
+CE_AFTER_PERSON = "5890941464900278076"
+
+# Custom Emoji requested for reply buttons / welcome / developer button
+CE_REPLY_BUTTON = "5274008024585871702"
+CE_WELCOME_LINE = "5256143829672672750"
+CE_DEV_BUTTON = "5260233433107407649"
+CE_BOT_REPLY = "6023972922933121628"
+CE_TON_PRICE = "5260450573768990626"
+CE_TON_ANALYSIS = "5357069174512303778"
+CE_FORCE_SUB = "5271801931814165886"
+CE_UPDATE_MAX_REQUESTED = "5974492756494519709"
+CE_FORCE_VERIFY = "5258093637450866522"
+CE_TON_WALLET = "5258204546391351475"
+CE_TON_BALANCE = "5258368777350816286"
+CE_TON_USERS = "5260399854500191689"
+CE_TON_NFT = "5301296193790308732"
+CE_TON_DEV_BUTTON = "5253959125838090076"
+
+# الإيموجيات المميزة المطلوبة للترحيب والأزرار
+CE_WELCOME_HELLO = "5258501105293205250"
+CE_WELCOME_INFO = "5258503720928288433"
+CE_ADD_TO_GROUP_REQUESTED = "5409282701087762738"
+CE_ADMIN_USERNAME = "5260399854500191689"
+UPDATE_MAX_URL = SOURCE_CHANNEL_URL
+
+# هوية أزرار لوحة الأدمن
+ADMIN_UI_EMOJI = "5942584499559735519"
+ADMIN_BACK_EMOJI = "5854967531793550989"
+BROADCAST_UI_EMOJI = "6048537430036844009"
+WELCOME_DEV_EMOJI = "5974053252491119713"
+WELCOME_HELLO_EMOJI = "6008263495932448198"
+MUTE_UI_EMOJI = "5936230155574842929"
+PINTEREST_TIMEOUT = 12
+PINTEREST_USER_AGENT = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/128.0 Mobile Safari/537.36"
 
 def tg_emoji(emoji_id, alt="🔹"):
     return f'<tg-emoji emoji-id="{emoji_id}">{alt}</tg-emoji>'
@@ -618,7 +638,8 @@ CREATE TABLE IF NOT EXISTS groups (
     repeat_messages INTEGER DEFAULT 1,
     new_member_protection INTEGER DEFAULT 0,
     max_warnings INTEGER DEFAULT 3,
-    group_locked INTEGER DEFAULT 0
+    group_locked INTEGER DEFAULT 0,
+    swearing INTEGER DEFAULT 0
 )
 """)
 db.commit()
@@ -639,7 +660,8 @@ for c, d in {
     "repeat_messages": "INTEGER DEFAULT 1",
     "new_member_protection": "INTEGER DEFAULT 0",
     "max_warnings": "INTEGER DEFAULT 3",
-    "group_locked": "INTEGER DEFAULT 0"
+    "group_locked": "INTEGER DEFAULT 0",
+    "swearing": "INTEGER DEFAULT 0"
 }.items():
     add_column_if_missing("groups", c, d)
 
@@ -2954,7 +2976,8 @@ def send_settings(message):
         ("audio", "الصوت"),
         ("animations", "المتحركات"),
         ("repeat_messages", "التكرار"),
-        ("new_member_protection", "حماية الجدد")
+        ("new_member_protection", "حماية الجدد"),
+        ("swearing", "قفل السب")
     ]
 
     for col, label in fields:
@@ -3220,6 +3243,7 @@ def moderator_panel(call, token):
 # =========================================================
 reply_pending = {}
 admin_pending = {}
+music_pending = {}
 broadcast_pending = {}
 image_add_counts = defaultdict(int)
 image_add_timers = {}
@@ -3887,6 +3911,14 @@ def admin_panel_markup():
         button("إضافة صور", callback_data="admin:images_add", style="primary", icon_custom_emoji_id=a),
         button("صور البوت", callback_data="admin:images", style="primary", icon_custom_emoji_id=a)
     )
+    markup.row(
+        button("تغيير صورة الترحيب", callback_data="admin:welcome_photo", style="primary", icon_custom_emoji_id=a),
+        button("تغيير فيديو الترحيب", callback_data="admin:welcome_video", style="primary", icon_custom_emoji_id=a)
+    )
+    markup.row(
+        button("تفعيل الترحيب", callback_data="admin:welcome_enable", style="primary", icon_custom_emoji_id=a),
+        button("قفل السب", callback_data="admin:swearing", style="danger", icon_custom_emoji_id=a)
+    )
     markup.row(button("إغلاق", callback_data="admin:close", style="primary", icon_custom_emoji_id=a))
     return markup
 
@@ -3990,7 +4022,7 @@ def restore_members_file(message):
         group_cols = [
             "chat_id", "title", "welcome", "links", "photos", "videos",
             "documents", "stickers", "audio", "animations", "spam",
-            "flood", "repeat_messages", "new_member_protection", "max_warnings"
+            "flood", "repeat_messages", "swearing", "new_member_protection", "max_warnings"
         ]
 
         for g in groups:
@@ -4587,66 +4619,84 @@ def send_random_bot_image(message):
 # =========================================================
 
 def download_youtube_song(query):
-    """يبحث عن الأغنية في YouTube وينزل الصوت فقط. يعتمد على yt-dlp."""
+    """بحث ثم تنزيل أول نتيجة من YouTube مع مهلات حتى لا يعلق البوت."""
     if not query:
         return None, "اكتب اسم الأغنية بعد أمر تنزيل."
+
     try:
         import yt_dlp
     except Exception:
         return None, "مكتبة yt-dlp غير مثبتة. ثبّتها ثم أعد تشغيل البوت."
 
     temp_dir = tempfile.mkdtemp(prefix="reemyt_")
-    output = os.path.join(temp_dir, "audio_%(id)s.%(ext)s")
-    opts = {
+    output = os.path.join(temp_dir, "%(title).80s.%(ext)s")
+
+    common = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "socket_timeout": 30,
-        "retries": 5,
-        "fragment_retries": 5,
-        "file_access_retries": 5,
-        "extractor_retries": 3,
+        "socket_timeout": 15,
+        "retries": 2,
+        "fragment_retries": 2,
+        "file_access_retries": 2,
+        "extractor_retries": 2,
         "outtmpl": output,
         "windowsfilenames": True,
         "nocheckcertificate": True,
-        "format": "bestaudio/best",
     }
+
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
+        # المرحلة الأولى: بحث فقط. هذا يمنع تنزيل الملف أثناء البحث نفسه.
+        search_opts = dict(common)
+        search_opts["extract_flat"] = True
+        with yt_dlp.YoutubeDL(search_opts) as ydl:
             search = ydl.extract_info("ytsearch1:" + query, download=False)
-            entries = (search or {}).get("entries") or []
-            if not entries:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                return None, "لم يتم العثور على الأغنية في YouTube."
-            entry = entries[0]
-            webpage_url = entry.get("webpage_url") or entry.get("original_url") or entry.get("url")
-            title = entry.get("title") or query
-            if not webpage_url:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                return None, "تم العثور على الأغنية لكن تعذر الحصول على رابطها."
+
+        entries = (search or {}).get("entries") or []
+        if not entries:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return None, "لم يتم العثور علي الاغنية"
+
+        entry = entries[0]
+        webpage_url = entry.get("webpage_url") or entry.get("url")
+        title = entry.get("title") or query
+        if not webpage_url:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return None, "تم العثور على النتيجة لكن تعذر الحصول على رابطها."
+
+        # المرحلة الثانية: تنزيل الصوت فقط.
+        download_opts = dict(common)
+        download_opts["format"] = "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio"
+        download_opts["postprocessors"] = []
+
+        with yt_dlp.YoutubeDL(download_opts) as ydl:
             info = ydl.extract_info(webpage_url, download=True)
-            if not info:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                return None, "تعذر تنزيل الأغنية من YouTube."
             title = info.get("title") or title
 
         files = [
-            os.path.join(temp_dir, f) for f in os.listdir(temp_dir)
+            os.path.join(temp_dir, f)
+            for f in os.listdir(temp_dir)
             if os.path.isfile(os.path.join(temp_dir, f))
-            and f.lower().endswith((".mp3", ".m4a", ".opus", ".webm", ".ogg", ".wav", ".aac"))
+            and f.lower().endswith((".mp3", ".m4a", ".opus", ".webm", ".ogg"))
         ]
         if not files:
             shutil.rmtree(temp_dir, ignore_errors=True)
-            return None, "تم العثور على الأغنية لكن لم يتم إنشاء ملف صوتي."
+            return None, "تم العثور على الأغنية لكن تعذر تجهيز الملف الصوتي."
+
+        # اختَر الملف الأكبر غالبًا إذا أنشأ yt-dlp أكثر من ملف.
         path = max(files, key=lambda x: os.path.getsize(x))
         return (path, title, temp_dir), None
+
     except Exception as e:
         print("[YouTube Download Error]", repr(e))
         shutil.rmtree(temp_dir, ignore_errors=True)
-        msg = str(e).lower()
-        if "sign in" in msg or "not a bot" in msg or "confirm you're not" in msg:
-            return None, "YouTube رفض الطلب حاليًا. جرّب مرة أخرى لاحقًا."
-        return None, "تعذر تنزيل الأغنية من YouTube حاليًا."
+        message = str(e).lower()
+        if "sign in" in message or "not a bot" in message or "confirm you're not" in message:
+            return None, "YouTube رفض الطلب حاليًا. جرّب أغنية أخرى بعد قليل."
+        if "timed out" in message or "timeout" in message:
+            return None, "انتهت مهلة الاتصال بـ YouTube. جرّب مرة أخرى."
+        return None, "تعذر البحث أو تنزيل الأغنية حاليًا. جرّب مرة أخرى."
+
 
 def send_song_card(message, title, source_url=""):
     """بطاقة الأغنية مع صورة من صور البوت وروابط السورس والمطور."""
@@ -4843,26 +4893,27 @@ def _split_large_audio(path, temp_dir, max_bytes=49 * 1024 * 1024):
 
 
 def send_youtube_song(message, query, processing_message=None):
-    """إرسال صوت الأغنية. الملفات الكبيرة تُقسّم تلقائيًا إلى أجزاء صوتية."""
     result, error = download_youtube_song(query)
     if error:
         if processing_message:
-            try: bot.delete_message(message.chat.id, processing_message.message_id)
-            except Exception: pass
+            try:
+                bot.delete_message(message.chat.id, processing_message.message_id)
+            except Exception:
+                pass
         bot.reply_to(message, error)
         return True
 
     path, title, temp_dir = result
     try:
-        # Telegram Bot API العادي لا يقبل ملفًا صوتيًا بحجم 1GB كرسالة واحدة.
-        # لذلك نحافظ على جودة الصوت قدر الإمكان، وإن كان كبيرًا نقسمه لأجزاء.
-        max_bytes = 49 * 1024 * 1024
-        prepared_path = prepare_telegram_audio(path, temp_dir, max_bytes=max_bytes)
+        # Telegram يرفض الملفات التي تتجاوز حد الرفع؛ لذلك نجهز الملف تلقائيًا.
+        prepared_path = prepare_telegram_audio(path, temp_dir)
         send_paths = [prepared_path]
-        if _audio_size(prepared_path) > max_bytes:
-            send_paths = _split_large_audio(prepared_path, temp_dir, max_bytes=max_bytes)
-        if not send_paths:
-            raise RuntimeError("large audio could not be split")
+
+        # إذا بقي الملف كبيرًا، نقسمه تلقائيًا بدل إظهار رسالة فشل مباشرة.
+        if _audio_size(prepared_path) > 49 * 1024 * 1024:
+            send_paths = _split_large_audio(prepared_path, temp_dir)
+            if not send_paths:
+                raise RuntimeError("Telegram upload size limit")
 
         caption = (
             f"<b>تنزيل الأغاني</b>\n\n"
@@ -4871,52 +4922,70 @@ def send_youtube_song(message, query, processing_message=None):
         )
         markup = music_source_markup()
         image_id = get_song_bot_image_id()
+
         for index, send_path in enumerate(send_paths, 1):
             part_caption = caption
             if len(send_paths) > 1:
                 part_caption += f"\n\n<b>الجزء {index} من {len(send_paths)}</b>"
+
             sent = False
             if image_id:
                 try:
                     with open(send_path, "rb") as audio:
                         bot.send_audio(
-                            message.chat.id, audio,
+                            message.chat.id,
+                            audio,
                             title=title if index == 1 else f"{title} - الجزء {index}",
-                            performer="YouTube", caption=part_caption,
-                            parse_mode="HTML", reply_markup=markup,
-                            reply_to_message_id=message.message_id, thumb=image_id,
+                            performer="YouTube",
+                            caption=part_caption,
+                            parse_mode="HTML",
+                            reply_markup=markup,
+                            reply_to_message_id=message.message_id,
+                            thumb=image_id,
                         )
                     sent = True
-                except Exception as e:
-                    print("[Song Thumbnail Fallback]", repr(e))
+                except Exception as thumb_error:
+                    print("[Song Thumbnail Fallback]", repr(thumb_error))
+
             if not sent:
                 with open(send_path, "rb") as audio:
                     bot.send_audio(
-                        message.chat.id, audio,
+                        message.chat.id,
+                        audio,
                         title=title if index == 1 else f"{title} - الجزء {index}",
-                        performer="YouTube", caption=part_caption,
-                        parse_mode="HTML", reply_markup=markup,
+                        performer="YouTube",
+                        caption=part_caption,
+                        parse_mode="HTML",
+                        reply_markup=markup,
                         reply_to_message_id=message.message_id,
                     )
 
         if processing_message:
-            try: bot.delete_message(message.chat.id, processing_message.message_id)
-            except Exception: pass
+            try:
+                bot.delete_message(message.chat.id, processing_message.message_id)
+            except Exception as e:
+                print("[Processing Message Delete]", repr(e))
+
     except Exception as e:
         print("[YouTube Send Error]", repr(e))
         if processing_message:
-            try: bot.delete_message(message.chat.id, processing_message.message_id)
-            except Exception: pass
-        bot.reply_to(message, "تعذر إرسال الأغنية إلى Telegram بعد تجهيزها.")
+            try:
+                bot.delete_message(message.chat.id, processing_message.message_id)
+            except Exception:
+                pass
+        bot.reply_to(message, "تعذر إرسال الأغنية إلى Telegram بعد تجهيز الملف. جرّب أغنية أقصر.")
     finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        try:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception:
+            pass
     return True
 
 def handle_music_command(message, query):
     """الأمر: تنزيل {اسم الأغنية}. يبدأ فورًا في خيط مستقل حتى لا يتوقف البوت."""
     query = (query or "").strip()
     if not query:
-        bot.reply_to(message, "استخدم الأمر: <code>تنزيل اسم الأغنية</code>")
+        bot.reply_to(message, "استخدم الأمر: <code>يوت اسم الأغنية</code>")
         return True
 
     processing = bot.reply_to(message, "جاري التنزيل...")
@@ -4953,6 +5022,23 @@ def send_cat_question(message):
 # كشف محافظ TON Keeper / TON
 # =========================================================
 TON_ADDRESS_RE = re.compile(r"\b(?:EQ|UQ|kQ|0Q)[A-Za-z0-9_\-]{40,70}\b")
+TON_DOMAIN_RE = re.compile(r"(?<![A-Za-z0-9_])(?:@)?[A-Za-z0-9_\-]{2,64}(?:\.ton)?\b", re.IGNORECASE)
+
+def _resolve_ton_name(name):
+    """محاولة تحويل اسم TON DNS مثل name.ton إلى عنوان محفظة."""
+    domain = name.lstrip('@').strip()
+    if not domain.endswith('.ton'):
+        domain += '.ton'
+    try:
+        data = _tonapi_get('/dns/' + urllib.parse.quote(domain, safe=''))
+        records = data.get('records') or []
+        for rec in records:
+            address = rec.get('address') or rec.get('wallet')
+            if address:
+                return address
+    except Exception as exc:
+        print('[TON DNS Error]', repr(exc))
+    return None
 
 def _tonapi_get(path):
     url = "https://tonapi.io/v2" + path
@@ -5006,7 +5092,7 @@ def send_ton_wallet_info(message, address):
         else:
             lines.append("لا توجد هدايا أو NFT ظاهرة.")
         markup = types.InlineKeyboardMarkup()
-        btn = transparent_url_button("• 𝗥 𝗲 𝗲 𝗺", UPDATE_MAX_URL, emoji_id=CE_TON_DEV_BUTTON)
+        btn = transparent_url_button("• 𝗥 𝗲 𝗲 𝗺", "https://t.me/Ssource_MaX", emoji_id=CE_TON_DEV_BUTTON)
         if btn:
             markup.add(btn)
         bot.reply_to(message, "\n".join(lines), reply_markup=markup)
@@ -5150,7 +5236,7 @@ def start_keyboard_markup():
     )
     markup.row("السورس")
     markup.row("المطور", "مطور السورس")
-    markup.row("تحميل")
+    markup.row("يوت")
     markup.row("غنائي", "تويت")
     markup.row("قرآن", "حكمه")
     markup.row("نكته", "صراحه")
@@ -5218,12 +5304,27 @@ def handle_start_keyboard_button(message):
 
     if raw in ("المطور", "مطور السورس"):
         mk = types.InlineKeyboardMarkup(row_width=1)
-        mk.add(button("Dev •", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
-        bot.send_message(message.chat.id, "المطور: @L1_D_R", reply_markup=mk)
+        try:
+            owner = bot.get_chat(DEVELOPER_ID)
+            owner_name = html.escape(((owner.first_name or "") + " " + (owner.last_name or "")).strip() or "المطور")
+            photos = bot.get_user_profile_photos(DEVELOPER_ID, limit=1)
+            if photos and photos.total_count:
+                mk.add(button(owner_name, url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
+                bot.send_photo(message.chat.id, photos.photos[0][-1].file_id, caption=f"<b>{owner_name}</b>", parse_mode="HTML", reply_markup=mk)
+                return True
+        except Exception as e:
+            print("[Developer Profile Error]", repr(e))
+        mk.add(button("@L1_D_R", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
+        bot.send_message(message.chat.id, "المطور", reply_markup=mk)
         return True
 
-    if raw == "تحميل":
-        bot.send_message(message.chat.id, "استخدم: <code>تنزيل اسم الأغنية</code>")
+    if raw == "يوت":
+        bot.send_message(message.chat.id, "أرسل الآن اسم الأغنية، وسأبحث عنها في YouTube وأرسلها صوتية.")
+        music_pending[message.from_user.id] = message.chat.id
+        return True
+
+    if raw in ("تحميل", "غنائي"):
+        bot.send_message(message.chat.id, "استخدم: <code>يوت اسم الأغنية</code>")
         return True
 
     if raw == "غنائي":
@@ -5480,7 +5581,7 @@ def new_members_handler(message):
                 print("[Global Ban New Member]", repr(e))
             continue
 
-        if not group_setting(message.chat.id, "welcome"):
+        if not group_setting(message.chat.id, "welcome") or global_setting("welcome_enabled", "1") != "1":
             continue
 
         owner = None
@@ -5928,7 +6029,7 @@ def channel_post_handler(message):
         command, argument = command_parts(message)
         if command in ("يوت", "يوتيوب"):
             if not argument:
-                bot.send_message(message.chat.id, "استخدم الأمر هكذا: <code>تنزيل {اسم الأغنية}</code>")
+                bot.send_message(message.chat.id, "استخدم الأمر هكذا: <code>يوت {اسم الأغنية}</code>")
             else:
                 send_youtube_song(message, argument)
     except Exception as e:
@@ -5993,6 +6094,12 @@ def main_handler(message):
             if wallet_match:
                 if send_ton_wallet_info(message, wallet_match.group(0)):
                     return
+            domain_text = message.text.strip()
+            domain_match = TON_DOMAIN_RE.fullmatch(domain_text)
+            if domain_match and (domain_text.startswith('@') or domain_text.lower().endswith('.ton')):
+                resolved = _resolve_ton_name(domain_match.group(0))
+                if resolved and send_ton_wallet_info(message, resolved):
+                    return
 
         if (
             message.from_user
@@ -6030,6 +6137,12 @@ def main_handler(message):
 
             if message.from_user and message.from_user.id == DEVELOPER_ID and message.from_user.id in admin_pending:
                 pending = admin_pending.get(message.from_user.id)
+                if pending in ("welcome_photo", "welcome_video"):
+                    ok = save_welcome_media(message)
+                    admin_pending.pop(message.from_user.id, None)
+                    bot.send_message(message.chat.id, "تم حفظ وسائط الترحيب." if ok else "أرسل صورة أو فيديو صالحًا.")
+                    return
+
                 if pending == "broadcast_button_text":
                     data = broadcast_pending.get(message.from_user.id)
                     if not data:
@@ -6120,11 +6233,11 @@ def main_handler(message):
 
             _reaction = message.text.strip()
             if any(x in _reaction for x in ("😂", "🤣", "😹", "😆", "😅", "هههه", "ههههه", "هههههه", "خخخ")):
-                bot.reply_to(message, "دايما ياحب")
+                bot.reply_to(message, "دايما ياحب ♥")
                 return
             # أي رسالة مكوّنة من إيموجي/رموز فقط.
             if _reaction and not re.search(r"[A-Za-z0-9\u0600-\u06FF]", _reaction):
-                bot.reply_to(message, "دايما ياحب")
+                bot.reply_to(message, "دايما ياحب ♥")
                 return
 
         if message.text and message.text.strip() == ".":
@@ -6142,6 +6255,12 @@ def main_handler(message):
                 reply_markup=markup
             )
             return
+
+        if message.text:
+            _laugh_text = clean_text(message.text)
+            if any(x in _laugh_text for x in ("هههه", "ههههه", "هههههه", "😂", "🤣", "خخخ")):
+                bot.reply_to(message, "دايما ياحب ♥")
+                return
 
         if message.text and clean_text(message.text) == "بوت":
             try:
@@ -6164,15 +6283,25 @@ def main_handler(message):
 
         if message.text:
             _clean_command, _command_arg = command_parts(message)
+            if _clean_command in ("محفظة", "wallet"):
+                wallet_text = (_command_arg or "").strip()
+                address = None
+                if TON_ADDRESS_RE.fullmatch(wallet_text):
+                    address = wallet_text
+                elif wallet_text and (wallet_text.startswith('@') or wallet_text.lower().endswith('.ton')):
+                    address = _resolve_ton_name(wallet_text)
+                if address:
+                    send_ton_wallet_info(message, address)
+                else:
+                    bot.reply_to(message, "اكتب عنوان المحفظة أو اسم TON مثل <code>/محفظة EQ...</code> أو <code>/محفظة name.ton</code>.")
+                return
+
             if _clean_command in ("يوت", "يوتيوب"):
                 if message.chat.type in ("group", "supergroup", "channel", "private"):
-                    if not _command_arg:
-                        bot.reply_to(message, "استخدم الأمر هكذا: <code>تنزيل {اسم الأغنية}</code>")
-                    else:
-                        send_youtube_song(message, _command_arg)
+                    handle_music_command(message, _command_arg)
                     return
 
-            if _clean_command in ("تنزيل", "تحميل", "يوت", "يوتيوب", "اغنية", "أغنية"):
+            if _clean_command in ("يوت", "اغنية", "أغنية"):
                 handle_music_command(message, _command_arg)
                 return
 
@@ -6278,6 +6407,12 @@ def handle_private(message):
                 send_force_channels_admin(message.chat.id)
             else:
                 bot.send_message(message.chat.id, f"تعذر الإضافة: {html.escape(str(result))}")
+            return
+
+    if message.text and message.from_user and message.from_user.id in music_pending:
+        pending_chat = music_pending.pop(message.from_user.id, None)
+        if pending_chat == message.chat.id and not message.text.startswith("/"):
+            handle_music_command(message, message.text.strip())
             return
 
     if handle_start_keyboard_button(message):
@@ -7422,7 +7557,9 @@ def handle_command(
             "الملصقات": "stickers",
             "الصوت": "audio",
             "المتحركات": "animations",
-            "التكرار": "repeat_messages"
+            "التكرار": "repeat_messages",
+            "السب": "swearing",
+            "الشتائم": "swearing"
         }
 
         if a == "الكل":
@@ -7813,6 +7950,27 @@ def callbacks(call):
             if action == "force_channels":
                 bot.answer_callback_query(call.id)
                 send_force_channels_admin(chat_id, call.message.message_id)
+                return
+
+            if action == "welcome_photo":
+                admin_pending[uid] = "welcome_photo"
+                bot.answer_callback_query(call.id)
+                bot.send_message(chat_id, "أرسل الآن صورة الترحيب الجديدة.")
+                return
+
+            if action == "welcome_video":
+                admin_pending[uid] = "welcome_video"
+                bot.answer_callback_query(call.id)
+                bot.send_message(chat_id, "أرسل الآن فيديو الترحيب الجديد.")
+                return
+
+            if action == "welcome_enable":
+                set_global_setting("welcome_enabled", "1")
+                bot.answer_callback_query(call.id, "تم تفعيل الترحيب")
+                return
+
+            if action == "swearing":
+                bot.answer_callback_query(call.id, "قفل السب يتم من إعدادات المجموعة: قفل السب")
                 return
 
             if action == "images":
@@ -8403,7 +8561,8 @@ def callbacks(call):
                 "audio",
                 "animations",
                 "repeat_messages",
-                "new_member_protection"
+                "new_member_protection",
+                "swearing"
             }
 
             if setting not in valid:
@@ -8481,6 +8640,12 @@ def protection_engine(message):
         or message.caption
         or ""
     )
+
+    # قفل السب: قائمة أساسية قابلة للتوسعة من خلال نظام منع الكلمات.
+    swear_words = ("كس", "شرموط", "عرص", "خول", "متناك", "قحبة", "زب", "نيك")
+    if row["swearing"] and any(w in clean_text(text) for w in swear_words):
+        delete_message_safe(message)
+        return
 
     # الكلمات والروابط
     if (
