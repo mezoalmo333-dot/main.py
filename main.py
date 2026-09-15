@@ -913,6 +913,15 @@ def command_parts(message):
     argument = parts[1].strip() if len(parts) > 1 else ""
 
     # أوامر قصيرة
+    if command == "قفل" and argument and clean_text(argument) in ("التوجيه", "التوجيهات"):
+        command = "قفل_التوجيه"
+        argument = ""
+    elif command == "فتح" and argument and clean_text(argument) in ("التوجيه", "التوجيهات"):
+        command = "فتح_التوجيه"
+        argument = ""
+    elif command in ("ث", "تثبيت"):
+        command = "تثبيت"
+        argument = ""
     if command == "قفل" and argument and clean_text(argument) in ("الجروب", "المجموعه", "المجموعة"):
         command = "قفل_الجروب"
         argument = ""
@@ -1123,7 +1132,7 @@ def button(
 # =========================================================
 CURRENCY_CACHE_SECONDS = 60
 CURRENCY_HTTP_TIMEOUT = 7
-LOVELY_UPDATES_URL = "https://t.me/Ssource_MaX"
+LOVELY_UPDATES_URL = "https://t.me/LeaDeR_E"
 
 _currency_cache = {
     "usd_egp": None,
@@ -5471,7 +5480,6 @@ def bot_chat_membership_handler(message):
                 notify_group_event("added", message)
             elif new_status in ("left", "kicked") and old_status in ("member", "administrator", "creator"):
                 ensure_group(message.chat)
-                remove_group_from_stats_and_log(message.chat.id)
                 notify_group_event("removed", message)
         elif message.chat.type == "private":
             # فتح الخاص/إلغاء الحظر يُسجل كمستخدم.
@@ -5558,6 +5566,40 @@ def new_members_handler_legacy_original(message):
         pass
 
 
+def group_welcome_caption(message, user):
+    chat = message.chat
+    try:
+        members = bot.get_chat_member_count(chat.id)
+    except Exception:
+        members = "غير متاح"
+    try:
+        admins = len(bot.get_chat_administrators(chat.id))
+    except Exception:
+        admins = "غير متاح"
+    group_name = html.escape(chat.title or "بدون اسم")
+    group_username = f"@{chat.username}" if getattr(chat, "username", None) else "لا يوجد"
+    group_link = f"https://t.me/{chat.username}" if getattr(chat, "username", None) else "رابط خاص"
+    name = html.escape(full_name(user))
+    username = f"@{user.username}" if getattr(user, "username", None) else "لا يوجد"
+    now_local = datetime.now().strftime("%Y-%m-%d")
+    time_local = datetime.now().strftime("%H:%M")
+    return (
+        ".Add Me To Your Group .\n\n"
+        f"╭───────────────╮\n"
+        f"│ 👤 𝑵𝒂me: {name}\n"
+        f"│ 👥 𝑮𝒓𝒐𝒖𝒑: {group_name}\n"
+        f"│ 🔗 𝑳𝒊𝒏𝒌: {group_link}\n"
+        f"│ 📨 𝑼𝒔𝒆𝒓𝒏𝒂𝒎𝒆: {username}\n"
+        f"│ 🆔 𝑼𝒔𝒆𝒓 𝑰𝑫: <code>{user.id}</code>\n"
+        f"│ 📅 𝑫𝒂𝒕𝒆: {now_local}\n"
+        f"│ ⏰ 𝑻𝒊𝒎𝒆: {time_local}\n"
+        f"├───────────────\n"
+        f"│ 👥 𝑴𝒆𝒎𝒃𝒆𝒓𝒔: {members}\n"
+        f"│ 🛡 𝑨𝒅𝒎𝒊𝒏𝒔: {admins}\n"
+        f"╰───────────────╯"
+    )
+
+
 @bot.message_handler(
     content_types=["new_chat_members"]
 )
@@ -5599,11 +5641,7 @@ def new_members_handler(message):
         except Exception as e:
             print("[Welcome Owner Lookup]", repr(e))
 
-        safe_name = html.escape(full_name(u))
-        welcome_text = (
-            f"{tg_emoji(WELCOME_HELLO_EMOJI, '•')} <b>Hllo BoT ReeM</b>\n\n"
-            f"{tg_emoji(WELCOME_HELLO_EMOJI, '•')} <b>NaeM  ' <a href=\"tg://user?id={u.id}\">{safe_name}</a></b>"
-        )
+        welcome_text = group_welcome_caption(message, u)
 
         markup = types.InlineKeyboardMarkup(row_width=2)
         owner_url = f"tg://user?id={owner.id}" if owner else SOURCE_DEVELOPER_URL
@@ -6234,12 +6272,12 @@ def main_handler(message):
                 return
 
             _reaction = message.text.strip()
-            if any(x in _reaction for x in ("😂", "🤣", "😹", "😆", "😅", "هههه", "ههههه", "هههههه",)):
-                bot.reply_to(message, "مش تشوف اسمي ريم ولا ايش 🙄 =https://t.me/Ssource_MaX")
+            if any(x in _reaction for x in ("😂", "🤣", "😹", "😆", "😅", "هههه", "ههههه", "هههههه", "خخخ")):
+                bot.reply_to(message, "دايما ياحب ♥")
                 return
             # أي رسالة مكوّنة من إيموجي/رموز فقط.
             if _reaction and not re.search(r"[A-Za-z0-9\u0600-\u06FF]", _reaction):
-                bot.reply_to(message, "مش تشوف اسمي ريم ولا ايش 🙄=https://t.me/Ssource_MaX")
+                bot.reply_to(message, "دايما ياحب ♥")
                 return
 
         if message.text and message.text.strip() == ".":
@@ -6247,7 +6285,7 @@ def main_handler(message):
             markup = types.InlineKeyboardMarkup()
             btn = transparent_url_button(
                 "صلي علي النبي",
-                "https://t.me/Ssource_MaX"
+                "https://t.me/LeaDeR_E"
             )
             if btn:
                 markup.add(btn)
@@ -6260,11 +6298,11 @@ def main_handler(message):
 
         if message.text:
             _laugh_text = clean_text(message.text)
-            if any(x in _laugh_text for x in ("هههه", "ههههه", "هههههه", "😂", "🤣", )):
-                bot.reply_to(message, "مش تشوف اسمي ريم ولا ايش 🙄=https://t.me/Ssource_MaX")
+            if any(x in _laugh_text for x in ("هههه", "ههههه", "هههههه", "😂", "🤣", "خخخ")):
+                bot.reply_to(message, "دايما ياحب ♥")
                 return
 
-        if message.chat.type in ("group", "supergroup") and message.text and clean_text(message.text) == "بوت":
+        if message.text and clean_text(message.text) == "بوت":
             try:
                 me = bot.get_me()
                 bot_name = full_name(me)
@@ -6273,7 +6311,7 @@ def main_handler(message):
 
             bot.send_message(
                 message.chat.id,
-                "ريم اسمي "
+                "تاارا اسمي "
                 + html.escape(bot_name)
                 + " متشوف "
                 + tg_emoji(CE_BOT_REPLY, "🤖")
