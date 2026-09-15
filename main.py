@@ -127,6 +127,8 @@ def save_welcome_media(message):
         return False
     set_global_setting('welcome_media_type', media_type)
     set_global_setting('welcome_media_id', media_id)
+    # تشغيل الترحيب تلقائيًا بعد حفظ الوسائط الجديدة.
+    set_global_setting('welcome_enabled', '1')
     return True
 
 
@@ -3912,11 +3914,11 @@ def admin_panel_markup():
         button("صور البوت", callback_data="admin:images", style="primary", icon_custom_emoji_id=a)
     )
     markup.row(
-        button("تغيير صورة الترحيب", callback_data="admin:welcome_photo", style="primary", icon_custom_emoji_id=a),
-        button("تغيير فيديو الترحيب", callback_data="admin:welcome_video", style="primary", icon_custom_emoji_id=a)
+        button("إضافة صورة ترحيب", callback_data="admin:welcome_photo", style="primary", icon_custom_emoji_id=a),
+        button("إضافة فيديو ترحيب", callback_data="admin:welcome_video", style="primary", icon_custom_emoji_id=a)
     )
     markup.row(
-        button("تفعيل الترحيب", callback_data="admin:welcome_enable", style="danger", icon_custom_emoji_id=a)
+        button("تفعيل الترحيب", callback_data="admin:welcome_enable", style="primary", icon_custom_emoji_id=a)
     )
     markup.row(button("إغلاق", callback_data="admin:close", style="primary", icon_custom_emoji_id=a))
     return markup
@@ -5227,28 +5229,24 @@ def start_inline_markup(user_id):
 
 
 def start_keyboard_markup():
-    """لوحة الأوامر الداخلية الفعلية، بأزرار Inline بلون danger."""
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    a = ADMIN_UI_EMOJI
-    labels = [
-        ("السورس", "السورس"),
-        ("المطور", "المطور"), ("مطور السورس", "مطور السورس"),
-        ("يوت", "يوت"),
-        ("غنائي", "غنائي"), ("تويت", "تويت"),
-        ("قرآن", "قرآن"), ("حكمه", "حكمه"),
-        ("نكته", "نكته"), ("صراحه", "صراحه"),
-        ("اختار", "اختار"), ("اسأل", "اسأل"),
-        ("اقتباسات", "اقتباسات"),
-        ("انصحني", "انصحني"), ("صور", "صور"),
-        ("انمي", "انمي"), ("استوري", "استوري"),
-        ("صور بنات", "صور بنات"), ("صور شباب", "صور شباب"),
-        ("هيدرات", "هيدرات"),
-    ]
-    for i in range(0, len(labels), 2):
-        row = []
-        for text, value in labels[i:i+2]:
-            row.append(button(text, callback_data=f"kb:{value}", style="danger", icon_custom_emoji_id=a))
-        markup.row(*row)
+    """لوحة كيبورد فعلية مثل الصورة المرجعية."""
+    markup = types.ReplyKeyboardMarkup(
+        resize_keyboard=True,
+        row_width=2,
+        selective=False
+    )
+    markup.row("السورس")
+    markup.row("المطور", "مطور السورس")
+    markup.row("يوت")
+    markup.row("غنائي", "تويت")
+    markup.row("قرآن", "حكمه")
+    markup.row("نكته", "صراحه")
+    markup.row("اختار", "اسأل")
+    markup.row("اقتباسات")
+    markup.row("انصحني", "صور")
+    markup.row("انمي", "استوري")
+    markup.row("صور بنات", "صور شباب")
+    markup.row("هيدرات")
     return markup
 
 
@@ -5273,12 +5271,6 @@ def start_private(message):
             message.chat.id,
             welcome_text,
             reply_markup=markup
-        )
-        # لوحة الأوامر الداخلية منفصلة لأن Telegram لا يسمح بدمج ReplyKeyboard وInlineKeyboard.
-        bot.send_message(
-            message.chat.id,
-            "اختر الأمر من القائمة:",
-            reply_markup=start_keyboard_markup()
         )
         return sent
     except Exception as e:
@@ -7873,18 +7865,6 @@ def callbacks(call):
             if action in ("refresh", "open"):
                 bot.answer_callback_query(call.id)
                 send_admin_panel(chat_id, call.message.message_id)
-                return
-
-            if action.startswith("kb:"):
-                kb_value = action[3:]
-                fake_message = call.message
-                fake_message.text = kb_value
-                try:
-                    handled = handle_start_keyboard_button(fake_message)
-                except Exception as e:
-                    print("[Keyboard Callback Error]", repr(e))
-                    handled = False
-                bot.answer_callback_query(call.id)
                 return
 
             if action == "stats":
