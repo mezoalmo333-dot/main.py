@@ -2927,6 +2927,10 @@ def check_repeat(chat_id, user_id, text):
 
 
 def delete_message_safe(message):
+    # لا نحذف منشورات القنوات أو الرسائل المرسلة باسم قناة.
+    if getattr(message, "sender_chat", None) is not None:
+        if getattr(message.sender_chat, "type", "") == "channel":
+            return False
 
     try:
 
@@ -3513,6 +3517,19 @@ def send_saved_auto_reply(message, row):
     media_caption = row["reply_media_caption"] if "reply_media_caption" in row.keys() else ""
 
     try:
+        if media_type == "video" and media_file_id:
+            kwargs = {
+                "reply_markup": markup,
+                "reply_to_message_id": message.message_id
+            }
+            if media_caption:
+                kwargs["caption"] = media_caption
+            if entities:
+                kwargs["caption_entities"] = entities
+                kwargs["parse_mode"] = None
+            bot.send_video(message.chat.id, media_file_id, **kwargs)
+            return True
+
         if media_type == "photo" and media_file_id:
             kwargs = {
                 "reply_markup": markup,
@@ -5206,14 +5223,25 @@ def send_pinterest_image(message, query, label):
             entity = _custom_entity_for_suffix("Developer - @L1_D_R", MUTE_UI_EMOJI, "✨")
             bio = io.BytesIO(image_bytes)
             bio.name = "pinterest.jpg"
-            _original_send_photo(
-                message.chat.id,
-                bio,
-                caption=caption,
-                caption_entities=entity,
-                parse_mode=None,
-                reply_to_message_id=message.message_id
-            )
+            try:
+                bot.send_photo(
+                    message.chat.id,
+                    bio,
+                    caption=caption,
+                    caption_entities=entity,
+                    parse_mode=None,
+                    reply_to_message_id=message.message_id
+                )
+            except Exception:
+                bio.seek(0)
+                _original_send_photo(
+                    message.chat.id,
+                    bio,
+                    caption=caption,
+                    caption_entities=entity,
+                    parse_mode=None,
+                    reply_to_message_id=message.message_id
+                )
             return True
         except Exception as e:
             print("[Pinterest Image Send Error]", repr(e))
@@ -5948,6 +5976,10 @@ def broadcast_recipients(scope="all"):
     if scope in ("all", "private"):
         cursor.execute("SELECT user_id FROM bot_private_users")
         private_ids = {int(r["user_id"]) for r in cursor.fetchall()}
+        # ضم الأعضاء المسترجعين من النسخة الاحتياطية؛ الإرسال الخاص يعمل
+        # فقط إذا كان المستخدم قد بدأ البوت سابقًا، وإلا سيُسجل الفشل بدون إيقاف الإذاعة.
+        cursor.execute("SELECT DISTINCT user_id FROM group_users WHERE user_id > 0")
+        private_ids.update(int(r["user_id"]) for r in cursor.fetchall())
     else:
         private_ids = set()
     if scope in ("all", "groups"):
