@@ -35,7 +35,7 @@ from telegram.ext import (
 # CONFIGURATION
 # ============================================================
 
-BOT_TOKEN = "8919205589:AAEbGAaK0SDXoZfy4NTcSkcGOKD_jz0wLnY"
+BOT_TOKEN = "8746223128:AAGeoJ1ojWwd2TfI26wDMcQ__Q5FRvgyrsI"
 OWNER_ID = 8037399518
 
 SUBSCRIPTION_STARS = 300
