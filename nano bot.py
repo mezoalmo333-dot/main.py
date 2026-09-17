@@ -8,6 +8,8 @@ import asyncio
 import json
 import logging
 import os
+import random
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -33,7 +35,7 @@ from telegram.ext import (
 # CONFIGURATION
 # ============================================================
 
-BOT_TOKEN = "8919205589:AAE69wyK06vTUDWww-7UaPG1WnkcH2aWcOA"
+BOT_TOKEN = "8919205589:AAEbGAaK0SDXoZfy4NTcSkcGOKD_jz0wLnY"
 OWNER_ID = 8037399518
 
 SUBSCRIPTION_STARS = 300
@@ -67,6 +69,33 @@ NO_ACCESS_TEXT = (
 
 REQUIRED_CHANNEL_TEXT = (
     "قبل استخدام البوت، يجب الاشتراك في القناة المطلوبة ثم الضغط على تحقق."
+)
+
+# ============================================================
+# GROUP AUTO-REPLY
+# ============================================================
+
+GROUP_REPLY_MESSAGES = [
+    "تعال خاص ضروري 🫦🔥",
+    "ابعت بف هقولك",
+    "تعال فكيت البلوك",
+    "يارجال بقولك مولعة 🔥🫦",
+    "متيجي خاص تحلبني",
+    "ابعتلي خاص ثانيه",
+    "تعال هقولك حاجه خاص",
+    "بقولك اي في فديوهات خاص تعال",
+    "ضيفني في جروب وتعال خاص بسرعةة كدة🫦🔥",
+    "بتعرف تنيك؟",
+    "متيجي خاص يخول",
+    "ابعتلي انا ناررررر🥵💋",
+    "مشاقدرة محتاجة اتناك تعال خاص",
+]
+
+# نطاق الحروف العربية + الإنجليزية
+LETTERS_PATTERN = re.compile(
+    r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF"
+    r"A-Za-z"
+    r"]"
 )
 
 # ============================================================
@@ -228,7 +257,6 @@ def colored_button(
 
 
 def chunk_rows(buttons: List[InlineKeyboardButton], per_row: int = 2) -> List[List[InlineKeyboardButton]]:
-    """يقسم قائمة الأزرار إلى صفوف أفقية."""
     rows = []
     for i in range(0, len(buttons), per_row):
         rows.append(buttons[i:i + per_row])
@@ -437,7 +465,6 @@ def get_default_emoji_for_category(category_id: str, idx: int) -> str:
 
 
 def nested_category_keyboard(category: Dict[str, Any]) -> InlineKeyboardMarkup:
-    """أزرار الأقسام الفرعية والفيديوهات — أفقية 2 في الصف."""
     buttons: List[InlineKeyboardButton] = []
 
     for child in category.get("children", []):
@@ -473,10 +500,7 @@ def nested_category_keyboard(category: Dict[str, Any]) -> InlineKeyboardMarkup:
     if not buttons:
         buttons.append(colored_button("لا توجد عناصر حاليًا", callback_data="noop", style="primary"))
 
-    # صفوف أفقية: 2 في الصف
     rows = chunk_rows(buttons, per_row=2)
-
-    # زر الرجوع في صف منفصل
     rows.append([colored_button("رجوع", callback_data="home", style="danger", emoji_id=EMOJI_HOME)])
 
     return InlineKeyboardMarkup(rows)
@@ -493,7 +517,6 @@ def category_keyboard(category: Dict[str, Any]) -> InlineKeyboardMarkup:
 
 
 def home_keyboard() -> InlineKeyboardMarkup:
-    """الأزرار الرئيسية للأقسام — أفقية 2 في الصف."""
     buttons: List[InlineKeyboardButton] = []
 
     for idx, category in enumerate(DB.get("categories", [])):
@@ -521,7 +544,6 @@ def home_keyboard() -> InlineKeyboardMarkup:
 
     rows = chunk_rows(buttons, per_row=2)
 
-    # صفوف كاملة العرض
     rows.append([colored_button("جميع الفيديوهات", url=ALL_VIDEOS_URL, style="success", emoji_id=EMOJI_ALL_VIDEOS)])
     rows.append([colored_button("حالة الاشتراك", callback_data="subscription_status", style="primary", emoji_id=EMOJI_FACES[1])])
 
@@ -529,7 +551,6 @@ def home_keyboard() -> InlineKeyboardMarkup:
 
 
 def admin_keyboard() -> InlineKeyboardMarkup:
-    """لوحة الأدمن — أزرار أفقية 2 في الصف."""
     e = EMOJI_ADMIN
     av = EMOJI_ADD_VIDEO
     d = EMOJI_DELETE
@@ -551,7 +572,6 @@ def admin_keyboard() -> InlineKeyboardMarkup:
 
 
 def required_channels_keyboard() -> InlineKeyboardMarkup:
-    """أزرار حذف القنوات — أفقية 2 في الصف."""
     buttons: List[InlineKeyboardButton] = []
 
     for index, channel in enumerate(DB.get("required_channels", [])):
@@ -577,7 +597,6 @@ def required_channels_keyboard() -> InlineKeyboardMarkup:
 
 
 def categories_admin_keyboard() -> InlineKeyboardMarkup:
-    """أزرار إدارة الأقسام — أفقية 2 في الصف."""
     buttons: List[InlineKeyboardButton] = []
 
     for category in DB.get("categories", []):
@@ -599,7 +618,6 @@ def categories_admin_keyboard() -> InlineKeyboardMarkup:
 
 
 def category_admin_keyboard(category_id: str) -> InlineKeyboardMarkup:
-    """أزرار إدارة القسم — أفقية 2 في الصف."""
     e = EMOJI_ADMIN
     av = EMOJI_ADD_VIDEO
     d = EMOJI_DELETE
@@ -622,7 +640,6 @@ def category_admin_keyboard(category_id: str) -> InlineKeyboardMarkup:
 
 
 def admin_texts_keyboard() -> InlineKeyboardMarkup:
-    """أزرار تعديل النصوص — أفقية 2 في الصف."""
     e = EMOJI_ADMIN
     buttons = [
         colored_button("تغيير رسالة الترحيب", callback_data="admin_text_welcome", style="primary", emoji_id=e),
@@ -637,7 +654,6 @@ def admin_texts_keyboard() -> InlineKeyboardMarkup:
 
 
 def subscription_keyboard() -> InlineKeyboardMarkup:
-    """زرا الاشتراك — أفقية 2 في الصف."""
     return InlineKeyboardMarkup(
         [
             [
@@ -714,6 +730,10 @@ async def send_home(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not update.effective_message:
+        return
+
+    # إذا كان في جروب، لا يرد
+    if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
         return
 
     user = ensure_user(update.effective_user)
@@ -827,6 +847,52 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
         "يمكنك الآن فتح جميع الأقسام.",
         reply_markup=home_keyboard(),
     )
+
+
+# ============================================================
+# GROUP AUTO-REPLY HANDLER
+# ============================================================
+
+
+async def group_auto_reply_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """يرد على أي رسالة في الجروب تحتوي حروف عربية أو إنجليزية."""
+    message = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if not message or not chat or not user:
+        return
+
+    # لا يرد على رسائل البوتات
+    if user.is_bot:
+        return
+
+    # لا يرد على رسائل الأدمن/المالك
+    if is_admin(user.id):
+        return
+
+    # استخراج النص (نص عادي أو caption للوسائط)
+    text = message.text or message.caption or ""
+
+    if not text:
+        return
+
+    # التحقق من وجود أي حرف عربي أو إنجليزي
+    if not LETTERS_PATTERN.search(text):
+        return
+
+    reply_text = random.choice(GROUP_REPLY_MESSAGES)
+
+    try:
+        await message.reply_text(
+            reply_text,
+            reply_to_message_id=message.message_id,
+        )
+    except Exception as exc:
+        logger.warning("Group auto-reply failed: %s", exc)
 
 
 # ============================================================
@@ -1453,6 +1519,10 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not update.effective_user:
         return
 
+    # لا يعمل في الجروبات
+    if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
+        return
+
     ensure_user(update.effective_user)
 
     if not is_admin(update.effective_user.id):
@@ -1468,6 +1538,9 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
+        return
+
     context.user_data.pop("admin_state", None)
     context.user_data.pop("admin_category_id", None)
 
@@ -1480,6 +1553,9 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def admin_add_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not is_admin(update.effective_user.id):
+        return
+
+    if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
         return
 
     if not context.args:
@@ -1501,6 +1577,9 @@ async def admin_add_admin_command(update: Update, context: ContextTypes.DEFAULT_
 
 async def admin_del_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not is_admin(update.effective_user.id):
+        return
+
+    if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
         return
 
     if not context.args:
@@ -1854,6 +1933,16 @@ async def normal_message_handler(update: Update, context: ContextTypes.DEFAULT_T
     if not update.effective_user or not update.effective_message:
         return
 
+    chat_type = update.effective_chat.type if update.effective_chat else "private"
+
+    # في الجروبات — تجاهل (المعالج الخاص بالجروبات يتكفل)
+    if chat_type in ("group", "supergroup"):
+        return
+
+    # في الخاص فقط
+    if chat_type != "private":
+        return
+
     user = update.effective_user
     ensure_user(user)
 
@@ -1925,10 +2014,29 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("cancel", cancel_command))
     application.add_handler(CommandHandler("addadmin", admin_add_admin_command))
     application.add_handler(CommandHandler("deladmin", admin_del_admin_command))
+
     application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+
+    # ✅ معالج الجروبات — يعمل قبل باقي الـ handlers
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & ~filters.COMMAND & ~filters.StatusUpdate.ALL,
+            group_auto_reply_handler,
+        ),
+        group=-1,
+    )
+
     application.add_handler(CallbackQueryHandler(callback_handler))
-    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, normal_message_handler))
+
+    # في الخاص فقط
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE & filters.ALL & ~filters.COMMAND,
+            normal_message_handler,
+        )
+    )
+
     application.add_error_handler(error_handler)
 
     return application
@@ -1942,7 +2050,7 @@ def main() -> None:
 
     application = build_application()
 
-    logger.info("Starting MaX VIP bot...")
+    logger.info("Starting  VIP bot...")
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
