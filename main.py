@@ -1231,7 +1231,7 @@ def button(
 # =========================================================
 CURRENCY_CACHE_SECONDS = 5
 CURRENCY_HTTP_TIMEOUT = 7
-LOVELY_UPDATES_URL = "https://t.me/LeaDeR_E"
+LOVELY_UPDATES_URL = "https://t.me/Ssource_MaX"
 
 _currency_cache = {
     "usd_egp": None,
@@ -4044,7 +4044,7 @@ def continue_reply_setup(message):
         if step == "button_url":
             url = (message.text or "").strip()
             if not url or not re.match(r"^(?:https?|tg)://\S+$", url, re.I):
-                bot.reply_to(message, "❌ أرسل رابطًا صالحًا مثل: <code>https://t.me/LeaDeR_E</code>")
+                bot.reply_to(message, "❌ أرسل رابطًا صالحًا مثل: <code>https://t.me/Ssource_MaX</code>")
                 return True
             p["button_url"] = url
             p["step"] = "button_emoji"
@@ -5210,7 +5210,8 @@ def _delete_music_search(token):
 
 
 def download_youtube_song(query):
-    """بحث وتنزيل أغنية من YouTube بإعدادات حديثة وفallbacks متعددة."""
+    """تنزيل أغنية من YouTube؛ روابط نتائج البحث تُنزّل مباشرة بدون إعادة البحث."""
+    query = (query or "").strip()
     if not query:
         return None, "اكتب اسم الأغنية بعد أمر يوت."
 
@@ -5220,89 +5221,74 @@ def download_youtube_song(query):
 
     temp_dir = tempfile.mkdtemp(prefix="reemyt_")
     output = os.path.join(temp_dir, "%(title).80s.%(ext)s")
-
     base = {
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "socket_timeout": 25,
-        "retries": 4,
-        "fragment_retries": 4,
-        "file_access_retries": 3,
-        "extractor_retries": 3,
-        "outtmpl": output,
-        "windowsfilenames": True,
-        "nocheckcertificate": True,
-        "geo_bypass": True,
+        "quiet": True, "no_warnings": True, "noplaylist": True,
+        "socket_timeout": 35, "retries": 5, "fragment_retries": 5,
+        "file_access_retries": 3, "extractor_retries": 4,
+        "outtmpl": output, "windowsfilenames": True,
+        "nocheckcertificate": True, "geo_bypass": True,
         "concurrent_fragment_downloads": 4,
     }
     base.update(_youtube_runtime_options(yt_dlp))
-
-    # أكثر من محاولة لأن YouTube قد يرفض Client بعينه مؤقتًا.
     client_sets = [
         ["android_vr", "web_safari", "tv"],
         ["web_safari", "android_vr"],
         ["tv", "web_safari"],
     ]
+    is_direct_url = bool(re.match(r"https?://(?:www\.)?(?:youtube\.com|youtu\.be)/", query, re.I))
 
     try:
-        entry = None
+        webpage_url = query if is_direct_url else None
+        title = query
         last_error = None
-        for clients in client_sets:
-            try:
-                search_opts = dict(base)
-                search_opts["extract_flat"] = True
-                search_opts["extractor_args"] = {"youtube": {"player_client": clients}}
-                with yt_dlp.YoutubeDL(search_opts) as ydl:
-                    search_target = (
-                        query
-                        if re.match(r"https?://(?:www\\.)?(?:youtube\\.com|youtu\\.be)/", query, re.I)
-                        else "ytsearch1:" + query
-                    )
-                    search = ydl.extract_info(search_target, download=False)
-                entries = (search or {}).get("entries") or []
-                if entries:
-                    entry = entries[0]
-                    break
-            except Exception as e:
-                last_error = e
-                print("[YouTube Search Retry]", repr(e))
 
-        if not entry:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            if last_error:
-                msg = str(last_error).lower()
-                if "sign in" in msg or "not a bot" in msg or "confirm you're not" in msg or "429" in msg:
-                    return None, "يوتيوب رفض الاتصال مؤقتًا. يحتاج yt-dlp الحديث إلى EJS/Runtime أو cookies صالحة."
-            return None, "لم يتم العثور على الأغنية حاليًا."
+        if not is_direct_url:
+            for clients in client_sets:
+                try:
+                    opts = dict(base)
+                    opts["extract_flat"] = True
+                    opts["extractor_args"] = {"youtube": {"player_client": clients}}
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        data = ydl.extract_info("ytsearch1:" + query, download=False)
+                    entries = (data or {}).get("entries") or []
+                    if entries:
+                        entry = entries[0]
+                        webpage_url = entry.get("webpage_url") or entry.get("original_url") or entry.get("url")
+                        title = entry.get("title") or query
+                        if webpage_url:
+                            break
+                except Exception as e:
+                    last_error = e
+                    print("[YouTube Search Retry]", repr(e))
 
-        webpage_url = entry.get("webpage_url") or entry.get("original_url") or entry.get("url")
-        title = entry.get("title") or query
         if not webpage_url:
             shutil.rmtree(temp_dir, ignore_errors=True)
-            return None, "تم العثور على الأغنية لكن تعذر فتح رابطها."
+            msg = str(last_error).lower() if last_error else ""
+            if any(x in msg for x in ("sign in", "not a bot", "confirm you're not", "429", "too many requests", "login_required")):
+                return None, "يوتيوب رفض الاتصال مؤقتًا. تأكد من EJS/Runtime أو cookies صالحة."
+            return None, "لم يتم العثور على الأغنية حاليًا."
 
-        last_error = None
         for clients in client_sets:
             try:
-                download_opts = dict(base)
-                download_opts["format"] = "bestaudio/best"
-                download_opts["extractor_args"] = {"youtube": {"player_client": clients}}
-                with yt_dlp.YoutubeDL(download_opts) as ydl:
+                opts = dict(base)
+                opts["format"] = "bestaudio/best"
+                opts["extractor_args"] = {"youtube": {"player_client": clients}}
+                with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(webpage_url, download=True)
                     title = info.get("title") or title
+                last_error = None
                 break
             except Exception as e:
                 last_error = e
                 print("[YouTube Download Retry]", repr(e))
-        else:
-            raise last_error or RuntimeError("YouTube download failed")
+
+        if last_error is not None:
+            raise last_error
 
         files = [
-            os.path.join(temp_dir, f)
-            for f in os.listdir(temp_dir)
+            os.path.join(temp_dir, f) for f in os.listdir(temp_dir)
             if os.path.isfile(os.path.join(temp_dir, f))
-            and f.lower().endswith((".mp3", ".m4a", ".opus", ".webm", ".ogg", ".aac"))
+            and f.lower().endswith((".mp3", ".m4a", ".opus", ".webm", ".ogg", ".aac", ".wav"))
         ]
         if not files:
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -5314,15 +5300,12 @@ def download_youtube_song(query):
     except Exception as e:
         print("[YouTube Download Error]", repr(e))
         shutil.rmtree(temp_dir, ignore_errors=True)
-        message = str(e).lower()
-        if any(x in message for x in ("sign in", "not a bot", "confirm you're not", "http error 429", "too many requests", "login_required")):
-            return None, (
-                "يوتيوب رفض الطلب مؤقتًا. حدّث yt-dlp وثبّت EJS Runtime، "
-                "أو ضع cookies.txt صالحة ليوتيوب بجوار main.py."
-            )
-        if "timed out" in message or "timeout" in message:
+        msg = str(e).lower()
+        if any(x in msg for x in ("sign in", "not a bot", "confirm you're not", "http error 429", "too many requests", "login_required")):
+            return None, "يوتيوب رفض الطلب. تأكد من تحديث yt-dlp ووجود EJS Runtime أو cookies صالحة ليوتيوب."
+        if "timed out" in msg or "timeout" in msg:
             return None, "انتهت مهلة الاتصال بـ YouTube. جرّب مرة أخرى."
-        return None, "تعذر تنزيل الأغنية حاليًا. جرّب اسمًا آخر أو رابط YouTube مباشر."
+        return None, "تعذر تنزيل الأغنية حاليًا. جرّب نتيجة أخرى."
 
 
 def send_song_card(message, title, source_url=""):
@@ -5524,10 +5507,19 @@ def send_youtube_song(message, query, processing_message=None):
     if error:
         if processing_message:
             try:
-                bot.delete_message(message.chat.id, processing_message.message_id)
-            except Exception:
-                pass
-        bot.reply_to(message, error)
+                bot.edit_message_text(
+                    f"❌ {html.escape(str(error))}",
+                    message.chat.id,
+                    processing_message.message_id,
+                    parse_mode="HTML",
+                )
+                return True
+            except Exception as e:
+                print("[Music Error Message Edit]", repr(e))
+        try:
+            bot.send_message(message.chat.id, f"❌ {error}")
+        except Exception:
+            pass
         return True
 
     path, title, temp_dir = result
@@ -5600,12 +5592,25 @@ def send_youtube_song(message, query, processing_message=None):
 
     except Exception as e:
         print("[YouTube Send Error]", repr(e))
+        error_text = "تعذر إرسال الأغنية إلى Telegram بعد تجهيز الملف. جرّب أغنية أخرى."
         if processing_message:
             try:
-                bot.delete_message(message.chat.id, processing_message.message_id)
+                bot.edit_message_text(
+                    f"❌ {error_text}",
+                    message.chat.id,
+                    processing_message.message_id,
+                    parse_mode="HTML",
+                )
+            except Exception:
+                try:
+                    bot.send_message(message.chat.id, f"❌ {error_text}")
+                except Exception:
+                    pass
+        else:
+            try:
+                bot.send_message(message.chat.id, f"❌ {error_text}")
             except Exception:
                 pass
-        bot.reply_to(message, "تعذر إرسال الأغنية إلى Telegram بعد تجهيز الملف. جرّب أغنية أقصر.")
     finally:
         try:
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -9716,7 +9721,7 @@ def setup_default_force_channel():
     # قناة الاشتراك الإجباري الافتراضية هي قناة السورس.
     try:
         # إزالة الإعداد القديم الذي كان يشير لقناة LeaDeR_E فقط، ثم ضمان وجود السورس.
-        cursor.execute("DELETE FROM force_sub_channels WHERE username=? OR url=?", ("@LeaDeR_E", "https://t.me/LeaDeR_E"))
+        cursor.execute("DELETE FROM force_sub_channels WHERE username=? OR url=?", ("", "https://t.me/Ssource_MaX"))
         db.commit()
         cursor.execute("SELECT id FROM force_sub_channels WHERE username=? OR url=? LIMIT 1", ("@Ssource_• 𝗥 𝗲 𝗲 𝗺", SOURCE_CHANNEL_URL))
         if not cursor.fetchone():
