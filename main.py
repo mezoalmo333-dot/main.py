@@ -96,8 +96,16 @@ def _welcome_media():
         print('[Welcome Media Read Error]', repr(e))
     return None, None
 
+WELCOME_IMAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reem_welcome.jpg")
+
 def send_welcome_with_bot_photo(chat_id, caption, reply_markup=None, reply_to_message_id=None):
-    """إرسال الترحيب بصورة/فيديو مخصص، ثم صورة بروفايل البوت كاحتياط."""
+    """إرسال صورة المشروع أولًا، ثم الوسائط المحفوظة، ثم صورة البوت."""
+    if os.path.isfile(WELCOME_IMAGE_PATH):
+        try:
+            with open(WELCOME_IMAGE_PATH, "rb") as photo:
+                return bot.send_photo(chat_id, photo, caption=caption, parse_mode="HTML", reply_markup=reply_markup, reply_to_message_id=reply_to_message_id)
+        except Exception as e:
+            print("[Bundled Welcome Image Error]", repr(e))
     media_type, media_id = _welcome_media()
     try:
         if media_type == 'video':
@@ -650,6 +658,8 @@ db.commit()
 for c, d in {
     "title": "TEXT DEFAULT ''",
     "welcome": "INTEGER DEFAULT 1",
+    "forwarding": "INTEGER DEFAULT 0",
+    "id_enabled": "INTEGER DEFAULT 1",
     "links": "INTEGER DEFAULT 1",
     "photos": "INTEGER DEFAULT 0",
     "videos": "INTEGER DEFAULT 0",
@@ -919,6 +929,18 @@ def command_parts(message):
     elif command == "فتح" and argument and clean_text(argument) in ("التوجيه", "التوجيهات"):
         command = "فتح_التوجيه"
         argument = ""
+    elif command == "قفل" and argument and clean_text(argument) in ("الترحيب", "ترحيب"):
+        command = "قفل_الترحيب"
+        argument = ""
+    elif command == "فتح" and argument and clean_text(argument) in ("الترحيب", "ترحيب"):
+        command = "فتح_الترحيب"
+        argument = ""
+    elif command == "قفل" and argument and clean_text(argument) in ("الايدي", "ايدي", "الاي دي", "id"):
+        command = "قفل_الايدي"
+        argument = ""
+    elif command == "فتح" and argument and clean_text(argument) in ("الايدي", "ايدي", "الاي دي", "id"):
+        command = "فتح_الايدي"
+        argument = ""
     elif command in ("ث", "تثبيت"):
         command = "تثبيت"
         argument = ""
@@ -928,6 +950,12 @@ def command_parts(message):
     elif command == "فتح" and argument and clean_text(argument) in ("الجروب", "المجموعه", "المجموعة"):
         command = "فتح_الجروب"
         argument = ""
+
+    # حذف عدد محدد من الرسائل: حذف 10 / مسح 10
+    numeric_argument = argument.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")).strip()
+    if command in ("حذف", "مسح") and numeric_argument.isdigit() and int(numeric_argument) > 0:
+        command = "حذف_رسائل"
+        argument = numeric_argument
 
     # أوامر متعددة الكلمات للردود
     if command in ("اضف", "اضيف") and argument:
@@ -944,6 +972,16 @@ def command_parts(message):
         second = argument.split(maxsplit=1)[0]
         if clean_text(second) == "الردود":
             command = "قائمة_الردود"
+            argument = argument[len(second):].strip()
+
+    if command == "منشن" and argument:
+        second = argument.split(maxsplit=1)[0]
+        second_clean = clean_text(second)
+        if second_clean in ("المشرفين", "مشرفين"):
+            command = "منشن_المشرفين"
+            argument = argument[len(second):].strip()
+        elif second_clean in ("الجميع", "الكل"):
+            command = "منشن_الجميع"
             argument = argument[len(second):].strip()
 
     if command == "صورة" and argument:
@@ -971,8 +1009,11 @@ def command_parts(message):
         if second_clean == "تون":
             command = "تحليل_تون"
             argument = argument[len(second):].strip()
-        elif second_clean in ("دولار", "الدولار", "usd", "usdt"):
+        elif second_clean in ("دولار", "الدولار", "usd"):
             command = "تحليل_دولار"
+            argument = argument[len(second):].strip()
+        elif second_clean in ("usdt", "ustd"):
+            command = "تحليل_usdt"
             argument = argument[len(second):].strip()
 
     if command == "فك" and argument:
@@ -1036,6 +1077,16 @@ def set_group_setting(chat_id, column, value):
     db.commit()
 
 
+def is_forwarded_message(message):
+    return bool(
+        getattr(message, "forward_origin", None)
+        or getattr(message, "forward_from", None)
+        or getattr(message, "forward_from_chat", None)
+        or getattr(message, "forward_sender_name", None)
+        or getattr(message, "is_automatic_forward", False)
+    )
+
+
 def get_setting(chat_id, name, default=None):
     cursor.execute(
         "SELECT value FROM settings WHERE chat_id=? AND setting=?",
@@ -1071,6 +1122,41 @@ def full_name(user):
 
 def username_text(user):
     return "@" + user.username if user.username else "لا يوجد"
+
+
+def user_bio(user_id):
+    try:
+        chat = bot.get_chat(user_id)
+        return getattr(chat, "bio", None) or "لا يوجد"
+    except Exception:
+        return "لا يوجد"
+
+
+def react_heart(chat_id, message_id):
+    try:
+        payload = urllib.parse.urlencode({
+            "chat_id": str(chat_id),
+            "message_id": str(message_id),
+            "reaction": json.dumps([{"type": "emoji", "emoji": "❤"}], ensure_ascii=False),
+            "is_big": "false"
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction",
+            data=payload,
+            headers={"Content-Type": "application/x-www-form-urlencoded", "User-Agent": "ReemBot/1.0"}
+        )
+        with urllib.request.urlopen(request, timeout=8) as response:
+            return json.loads(response.read().decode("utf-8", "ignore")).get("ok", False)
+    except Exception as e:
+        print("[Heart Reaction Error]", repr(e))
+        return False
+
+
+def send_plain_emoji_message(chat_id, text, reply_to_message_id=None):
+    kwargs = {"parse_mode": None}
+    if reply_to_message_id is not None:
+        kwargs["reply_to_message_id"] = reply_to_message_id
+    return _original_send_message(chat_id, text, **kwargs)
 
 
 def mention(user, owner=False):
@@ -1130,7 +1216,7 @@ def button(
 # =========================================================
 # التحويل التلقائي للعملات ($ -> EGP + TON)
 # =========================================================
-CURRENCY_CACHE_SECONDS = 60
+CURRENCY_CACHE_SECONDS = 5
 CURRENCY_HTTP_TIMEOUT = 7
 LOVELY_UPDATES_URL = "https://t.me/LeaDeR_E"
 
@@ -1141,8 +1227,15 @@ _currency_cache = {
 }
 _currency_cache_lock = Lock()
 
+# سعر USDT/EGP من سوق العملات الرقمية، يتجدد كل عدة ثوانٍ.
+_usdt_cache = {
+    "usdt_egp": None,
+    "updated_at": 0
+}
+_usdt_cache_lock = Lock()
+
 # بيانات تحليل TON لمدة 24 ساعة
-TON_MARKET_CACHE_SECONDS = 60
+TON_MARKET_CACHE_SECONDS = 5
 _ton_market_cache = {
     "price_usd": None,
     "change_24h": None,
@@ -1270,6 +1363,37 @@ def get_currency_rates():
             )
 
     return None, None
+
+
+def get_live_usdt_egp():
+    """يجلب سعر USDT مقابل الجنيه المصري بشكل حي تقريبًا."""
+    current_time = time.time()
+
+    with _usdt_cache_lock:
+        if (
+            _usdt_cache["usdt_egp"] is not None
+            and current_time - _usdt_cache["updated_at"] < CURRENCY_CACHE_SECONDS
+        ):
+            return _usdt_cache["usdt_egp"]
+
+    try:
+        data = _http_json(
+            "https://api.coingecko.com/api/v3/simple/price"
+            "?ids=tether&vs_currencies=egp,usd"
+        )
+        rate = float((data.get("tether") or {}).get("egp"))
+        if rate <= 0:
+            raise ValueError("Invalid USDT/EGP rate")
+
+        with _usdt_cache_lock:
+            _usdt_cache["usdt_egp"] = rate
+            _usdt_cache["updated_at"] = current_time
+        return rate
+    except Exception as e:
+        print("[USDT/EGP Error]", e)
+
+    with _usdt_cache_lock:
+        return _usdt_cache["usdt_egp"]
 
 
 def get_ton_market_data():
@@ -1569,6 +1693,32 @@ def extract_usd_amount(text):
     return None
 
 
+def extract_usd_currency_amount(text):
+    """يعيد (المبلغ، العملة) لدعم USD وUSDT وUSTD."""
+    if not text:
+        return None, None
+    normalized = text.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩٫٬", "0123456789.,"))
+    number_pattern = r"([0-9]+(?:[.,][0-9]+)?)"
+    patterns = [
+        (rf"(?:USDT|USTD)\s*{number_pattern}", "USDT"),
+        (rf"{number_pattern}\s*(?:USDT|USTD)\b", "USDT"),
+        (rf"\$\s*{number_pattern}", "USD"),
+        (rf"{number_pattern}\s*\$", "USD"),
+        (rf"{number_pattern}\s*USD\b", "USD"),
+        (rf"{number_pattern}\s*دولار\b", "USD"),
+    ]
+    for pattern, currency in patterns:
+        m = re.search(pattern, normalized, re.IGNORECASE)
+        if m:
+            amount = normalize_money_number(m.group(1))
+            if amount is not None:
+                return amount, currency
+    if re.fullmatch(r"(?:USD|USDT|USTD|دولار|الدولار)", normalized.strip(), re.IGNORECASE):
+        token = normalized.strip().upper()
+        return 1.0, ("USDT" if token in ("USDT", "USTD") else "USD")
+    return None, None
+
+
 def format_money(value, decimals=2):
     if value >= 1000000:
         return f"{value:,.0f}"
@@ -1579,26 +1729,48 @@ def format_money(value, decimals=2):
     return f"{value:,.{decimals}f}"
 
 
-def send_currency_conversion(message, usd_amount):
+def send_currency_conversion(message, usd_amount, currency="USD"):
     usd_egp, ton_usd = get_currency_rates()
+    is_usdt = str(currency).upper() in ("USDT", "USTD")
+    usdt_egp = get_live_usdt_egp() if is_usdt else usd_egp
+
+    if is_usdt:
+        if usdt_egp is None or usdt_egp <= 0:
+            print("[Currency] Could not get live USDT/EGP rate.")
+            return False
+        egp_rate = usdt_egp
+    else:
+        egp_rate = usd_egp
 
     if (
-        usd_egp is None
+        egp_rate is None
         or ton_usd is None
-        or usd_egp <= 0
+        or egp_rate <= 0
         or ton_usd <= 0
     ):
         print("[Currency] Could not get live rates.")
         return False
 
-    egp_amount = usd_amount * usd_egp
+    egp_amount = usd_amount * egp_rate
+
+    # USDT/TON من نفس السوق الحي بدل افتراض أن USDT = USD دائمًا.
+    if is_usdt:
+        ton_egp = ton_usd * usd_egp if usd_egp and usd_egp > 0 else None
+        ton_amount = (egp_amount / ton_egp) if ton_egp and ton_egp > 0 else (usd_amount / ton_usd)
+        currency_label = "USDT"
+        title = "<b>USDT</b>"
+    else:
+        ton_amount = usd_amount / ton_usd
+        currency_label = "USD"
+        title = "<b>DoLLar</b>"
+
     price_emoji = tg_emoji(CE_TON_PRICE, "💎")
 
     text = (
-        "<b>DoLLar</b>\n"
-        f"{price_emoji} <b>{format_money(usd_amount, 4)} USD</b>\n"
+        f"{title}\n"
+        f"{price_emoji} <b>{format_money(usd_amount, 4)} {currency_label}</b>\n"
         f"{price_emoji} <b>{format_money(egp_amount, 2)} EGP</b>\n"
-        f"{price_emoji} <b>{format_money(usd_amount / ton_usd, 4)} TON</b>"
+        f"{price_emoji} <b>{format_money(ton_amount, 4)} TON</b>"
     )
 
     markup = types.InlineKeyboardMarkup()
@@ -1702,6 +1874,37 @@ def send_dollar_analysis(message):
         print("[Dollar Analysis Send Error]", e)
         return False
 
+def send_usdt_analysis(message):
+    """عرض سعر USDT الحي مقابل EGP وTON."""
+    usdt_egp = get_live_usdt_egp()
+    usd_egp, ton_usd = get_currency_rates()
+    if usdt_egp is None or ton_usd is None or usdt_egp <= 0 or ton_usd <= 0:
+        bot.reply_to(message, "تعذر جلب سعر USDT حاليًا، حاول مرة أخرى بعد قليل.")
+        return True
+
+    ton_egp = ton_usd * usd_egp if usd_egp and usd_egp > 0 else None
+    ton_amount = (1.0 / ton_egp) if ton_egp and ton_egp > 0 else (1.0 / ton_usd)
+    price_emoji = tg_emoji(CE_TON_PRICE, "💎")
+    analysis_emoji = tg_emoji(CE_TON_ANALYSIS, "🔹")
+    text = (
+        f"{analysis_emoji} <b>تحليل USDT</b>\n\n"
+        f"{price_emoji} <b>1 USDT = {format_money(usdt_egp, 4)} EGP</b>\n"
+        f"{price_emoji} <b>1 USDT = {format_money(ton_amount, 6)} TON</b>\n"
+        f"{price_emoji} <b>USDT/USD ≈ 1.0000</b>\n"
+        f"<i>السعر متجدد تلقائيًا من السوق.</i>"
+    )
+    markup = types.InlineKeyboardMarkup()
+    b = button("• 𝗥 𝗲 𝗲 𝗺", url=LOVELY_UPDATES_URL, style="primary")
+    if b is not None:
+        markup.add(b)
+    try:
+        bot.reply_to(message, text, reply_markup=markup)
+        return True
+    except Exception as e:
+        print("[USDT Analysis Send Error]", e)
+        return False
+
+
 def automatic_currency_conversion(message):
     """
     عند ظهور مبلغ بالدولار في الرسالة، يرسل التحويل تلقائيًا
@@ -1727,14 +1930,15 @@ def automatic_currency_conversion(message):
             ton_amount
         )
 
-    usd_amount = extract_usd_amount(text)
+    usd_amount, currency = extract_usd_currency_amount(text)
 
     if usd_amount is None:
         return False
 
     return send_currency_conversion(
         message,
-        usd_amount
+        usd_amount,
+        currency
     )
 
 
@@ -1760,46 +1964,34 @@ def format_clock_egypt():
         return time.strftime("%I:%M:%S %p")
 
 
-def show_member_card(message):
-    """أمر (ا): بطاقة العضو الحالية داخل المجموعة."""
-    if not message.from_user or message.chat.type not in ("group", "supergroup"):
+def show_member_card(message, target=None):
+    """بطاقة ID للأمرين: ايدي / ا. الزر لا يعمل إلا لصاحب الطلب."""
+    if not message or not message.from_user:
         return False
-
-    u = message.from_user
-    register_user(message, False)
-    cursor.execute(
-        "SELECT messages,joined_at FROM group_users WHERE chat_id=? AND user_id=? LIMIT 1",
-        (message.chat.id, u.id)
-    )
-    row = cursor.fetchone()
-    messages = int(row["messages"] or 0) if row else 0
-    joined_at = int(row["joined_at"] or 0) if row else now()
-    joined_text = format_egypt_time(joined_at)
-    username = username_text(u)
-
+    target = target or message.from_user
+    bio = user_bio(target.id)
     caption = (
-        f"<b>معلومات العضو</b>\n"
-        "\n"
-        f"الاسم: {mention(u)}\n"
-        f"اليوزر: <code>{html.escape(username)}</code>\n"
-        f"الايدي: <code>{u.id}</code>\n"
-        f"رسائله في الجروب: <code>{messages}</code>\n"
-        f"دخل الجروب: <code>{html.escape(joined_text)}</code>"
+        f"<b>معلومات الحساب</b>\n"
+        f"• <b>ID :</b> <code>{target.id}</code>\n"
+        f"• <b>USE :</b> {html.escape(username_text(target))}\n"
+        f"• <b>bio :</b> {html.escape(bio)}"
     )
-
+    markup = types.InlineKeyboardMarkup()
+    markup.add(button(
+        "تفاعل",
+        callback_data=f"profile_react:{message.from_user.id}:{message.chat.id}:{message.message_id}",
+        style="primary",
+        icon_custom_emoji_id=CE_REPLY_BUTTON
+    ))
     try:
-        photos = bot.get_user_profile_photos(u.id, limit=1)
+        photos = bot.get_user_profile_photos(target.id, limit=1)
         if photos.total_count:
-            bot.send_photo(
-                message.chat.id,
-                photos.photos[0][-1].file_id,
-                caption=caption
-            )
+            bot.send_photo(message.chat.id, photos.photos[0][-1].file_id, caption=caption, reply_markup=markup, reply_to_message_id=message.message_id)
         else:
-            bot.reply_to(message, caption)
+            bot.send_message(message.chat.id, caption, reply_markup=markup, reply_to_message_id=message.message_id)
     except Exception as e:
-        print("[Member Card Photo Error]", e)
-        bot.reply_to(message, caption)
+        print("[ID Card Error]", repr(e))
+        bot.send_message(message.chat.id, caption, reply_markup=markup, reply_to_message_id=message.message_id)
     return True
 
 
@@ -2330,7 +2522,7 @@ def admin_required(message):
 
         bot.reply_to(
             message,
-            "❌ هذا الأمر للأدمن فما فوق."
+            "⦉لست مشرفا⦊"
         )
 
         return False
@@ -2992,7 +3184,9 @@ def send_settings(message):
         ("animations", "المتحركات"),
         ("repeat_messages", "التكرار"),
         ("new_member_protection", "حماية الجدد"),
-        ("swearing", "قفل السب")
+        ("swearing", "قفل السب"),
+        ("forwarding", "التوجيه"),
+        ("id_enabled", "الايدي")
     ]
 
     for col, label in fields:
@@ -3229,18 +3423,17 @@ def moderator_panel(call, token):
         )
     )
 
-    bot.edit_message_text(
-        "🛡️ <b>اختيار صلاحيات المشرف</b>\n"
-        "\n"
+    text=(
+        "🛡️ <b>تعديل صلاحيات المشرف</b>\n\n"
         f"👤 الهدف: {mention(p['target'])}\n\n"
         "اختر الصلاحيات ثم اضغط تأكيد.\n"
-        "⚠️ صلاحية رفع المشرفين محجوزة "
-        "لنظام الرتب ولا تُمنح للمشرف.",
-
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=markup
+        "صلاحية رفع المشرفين لا تُمنح للمشرف."
     )
+    if getattr(call,"id",None) is None:
+        sent=bot.send_message(call.message.chat.id,text,reply_markup=markup,reply_to_message_id=getattr(call.message,"message_id",None))
+        p["panel_message_id"]=sent.message_id
+    else:
+        bot.edit_message_text(text,call.message.chat.id,call.message.message_id,reply_markup=markup)
 
 
 # =========================================================
@@ -4232,26 +4425,29 @@ def admin_stats_text():
 
 
 def admin_groups_text():
-
-    cursor.execute(
-        "SELECT chat_id,title FROM groups ORDER BY rowid DESC LIMIT 30"
-    )
-    rows = cursor.fetchall()
-
+    cursor.execute("SELECT chat_id,title FROM groups ORDER BY rowid DESC LIMIT 100")
+    rows=cursor.fetchall()
     if not rows:
-        return "👥 <b>المجموعات</b>\n\nلا توجد مجموعات مسجلة حتى الآن."
-
-    lines = [
-        "👥 <b>المجموعات المسجلة</b>",
-        ""
-    ]
-
-    for index, row in enumerate(rows, 1):
-        title = html.escape(row["title"] or "بدون اسم")
-        lines.append(
-            f"{index}. <b>{title}</b> — <code>{row['chat_id']}</code>"
-        )
-
+        return "المجموعات\n\nلا توجد مجموعات مسجلة حتى الآن."
+    lines=["المجموعات المسجلة",""]
+    for i,row in enumerate(rows,1):
+        title=html.escape(row["title"] or "بدون اسم")
+        link="لا يوجد رابط متاح"
+        try:
+            chat=bot.get_chat(int(row["chat_id"]))
+            if getattr(chat,"username",None):
+                link=f"https://t.me/{chat.username}"
+            else:
+                link=getattr(chat,"invite_link",None) or link
+                if link=="لا يوجد رابط متاح":
+                    try:
+                        if bot_is_admin(int(row["chat_id"])):
+                            link=bot.export_chat_invite_link(int(row["chat_id"]))
+                    except Exception:
+                        pass
+        except Exception as e:
+            print("[Admin Group Link]",row["chat_id"],e)
+        lines.append(f"{i}. <b>{title}</b>\nID: <code>{row['chat_id']}</code>\nالرابط: {html.escape(str(link))}")
     return "\n".join(lines)
 
 
@@ -4464,7 +4660,7 @@ def force_sub_markup(user_id, channels=None):
     check_style = "primary" if missing_ids else "success"
     markup.add(button(
         check_text,
-        callback_data="force_sub_check:all",
+        callback_data=f"force_sub_check:{user_id}:all",
         style=check_style,
         icon_custom_emoji_id=CE_FORCE_VERIFY
     ))
@@ -4968,6 +5164,11 @@ def send_youtube_song(message, query, processing_message=None):
             if not send_paths:
                 raise RuntimeError("Telegram upload size limit")
 
+        if processing_message:
+            try:
+                bot.edit_message_text("جاري الارسال...",message.chat.id,processing_message.message_id,parse_mode="HTML")
+            except Exception:
+                pass
         caption = (
             f"<b>Music Reem</b>\n\n"
             f"<b>{html.escape(title)}</b>\n\n"
@@ -5264,30 +5465,13 @@ def image_menu_markup():
 
 
 def start_inline_markup(user_id):
-    """أزرار الترحيب: ليدر + السورس بالأعلى، والإضافة بالأسفل."""
+    """أزرار Inline فقط: Dev + Reem، ثم Add Me."""
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.row(
-        button(
-            "Dev •",
-            url=SOURCE_DEVELOPER_URL,
-            style="primary",
-            icon_custom_emoji_id=WELCOME_DEV_EMOJI
-        ),
-        button(
-            "Source •",
-            url=SOURCE_CHANNEL_URL,
-            style="primary",
-            icon_custom_emoji_id=WELCOME_DEV_EMOJI
-        )
+        button("⦉ DeV ⦊", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI),
+        button("⦉ 𝗥 𝗲 𝗲 𝗺 ⦊", url=SOURCE_CHANNEL_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI)
     )
-    markup.row(
-        button(
-            ".Add Me To Your Group .",
-            url=ADD_TO_GROUP_URL,
-            style="danger",
-            icon_custom_emoji_id=CE_ADD_TO_GROUP_REQUESTED
-        )
-    )
+    markup.row(button("⦉  Add  Me To Your Group  ⦊", url=ADD_TO_GROUP_URL, style="primary", icon_custom_emoji_id=CE_ADD_TO_GROUP_REQUESTED))
     return markup
 
 
@@ -5316,50 +5500,30 @@ def start_keyboard_markup():
 # =========================================================
 # START الخاص
 # =========================================================
+def build_welcome_text(user, private=False, chat=None):
+    name = html.escape(full_name(user))
+    now_eg = datetime.now(timezone(timedelta(hours=3)))
+    day_name = {0:"الاثنين",1:"الثلاثاء",2:"الأربعاء",3:"الخميس",4:"الجمعة",5:"السبت",6:"الأحد"}[now_eg.weekday()]
+    date_text = now_eg.strftime("%Y-%m-%d")
+    time_text = now_eg.strftime("%H:%M:%S")
+    return (
+        f"{tg_emoji(CE_WELCOME_HELLO, '•')}︙نورت يا  -› ⦉ {name} ⦊\n"
+        f"{tg_emoji(CE_BOT_REPLY, '•')}︙اهلا بك انا بوت اسمي ريم\n"
+        f"{tg_emoji(CE_PROTECTION, '•')}︙وظيفتي حمايه المجموعات\n"
+        f"{tg_emoji(CE_WELCOME_INFO, '•')}︙لتفعيل البوت في مجموعتك اتبع الخطوات التاليه\n"
+        f"{tg_emoji(CE_ADD_TO_GROUP_REQUESTED, '•')}︙اضف البوت إلى مجموعتك\n"
+        f"{tg_emoji(CE_ADMIN, '•')}︙ارفعه » ادمن مشرف\n"
+        f"{tg_emoji(CE_SUCCESS, '•')}︙سيتم تفعيله تلقائيا\n"
+        f"{tg_emoji(CE_RANKS, '•')}︙سيتم ترقيتك مالك في البوت\n"
+        f"{tg_emoji(CE_WELCOME_INFO, '•')}︙اليوم ⋮ ⦉ {day_name} ⦊ الموافق ⋮ ⦉ {date_text} ⦊\n"
+        f"{tg_emoji(CE_START, '•')}︙الساعه ⋮ ⦉ {time_text} ⦊\n"
+        "ـــــــــــــــــــــــــــــــــــــــــــــ"
+    )
+
 def start_private(message):
     user = message.from_user
-    safe_name = html.escape(full_name(user))
     track_private_user(message, notify=True)
-
-    welcome_text = (
-        f"{tg_emoji(WELCOME_HELLO_EMOJI, '•')} <b>Hllo BoT ReeM</b>\n\n"
-        f"{tg_emoji(WELCOME_HELLO_EMOJI, '•')} <b><a href=\"tg://user?id={user.id}\">{safe_name}</a></b>"
-    )
-    markup = start_inline_markup(user.id)
-
-    # إرسال الترحيب بصورة الحساب الحالية للبوت.
-    # إذا كان للحساب صورة، نستخدم file_id مباشرة من Telegram لضمان ظهورها.
-    try:
-        sent = send_welcome_with_bot_photo(
-            message.chat.id,
-            welcome_text,
-            reply_markup=markup
-        )
-        try:
-            bot.send_message(
-                message.chat.id,
-                "اختر من لوحة الأوامر بالأسفل.",
-                reply_markup=start_keyboard_markup()
-            )
-        except Exception as keyboard_error:
-            print("[Start Keyboard Error]", repr(keyboard_error))
-        return sent
-    except Exception as e:
-        print("[Start Welcome Error]", repr(e))
-        sent = bot.send_message(
-            message.chat.id,
-            welcome_text,
-            reply_markup=markup
-        )
-        try:
-            bot.send_message(
-                message.chat.id,
-                "اختر من لوحة الأوامر بالأسفل.",
-                reply_markup=start_keyboard_markup()
-            )
-        except Exception as keyboard_error:
-            print("[Start Keyboard Fallback Error]", repr(keyboard_error))
-        return sent
+    return send_welcome_with_bot_photo(message.chat.id, build_welcome_text(user, private=True), reply_markup=start_inline_markup(user.id))
 
 
 # =========================================================
@@ -5638,37 +5802,7 @@ def new_members_handler_legacy_original(message):
 
 
 def group_welcome_caption(message, user):
-    chat = message.chat
-    try:
-        members = bot.get_chat_member_count(chat.id)
-    except Exception:
-        members = "غير متاح"
-    try:
-        admins = len(bot.get_chat_administrators(chat.id))
-    except Exception:
-        admins = "غير متاح"
-    group_name = html.escape(chat.title or "بدون اسم")
-    group_username = f"@{chat.username}" if getattr(chat, "username", None) else "لا يوجد"
-    group_link = f"https://t.me/{chat.username}" if getattr(chat, "username", None) else "رابط خاص"
-    name = html.escape(full_name(user))
-    username = f"@{user.username}" if getattr(user, "username", None) else "لا يوجد"
-    now_local = datetime.now().strftime("%Y-%m-%d")
-    time_local = datetime.now().strftime("%H:%M")
-    return (
-        ".Add Me To Your Group .\n\n"
-        f"╭───────────────╮\n"
-        f"│ 👤 𝑵𝒂me: {name}\n"
-        f"│ 👥 𝑮𝒓𝒐𝒖𝒑: {group_name}\n"
-        f"│ 🔗 𝑳𝒊𝒏𝒌: {group_link}\n"
-        f"│ 📨 𝑼𝒔𝒆𝒓𝒏𝒂𝒎𝒆: {username}\n"
-        f"│ 🆔 𝑼𝒔𝒆𝒓 𝑰𝑫: <code>{user.id}</code>\n"
-        f"│ 📅 𝑫𝒂𝒕𝒆: {now_local}\n"
-        f"│ ⏰ 𝑻𝒊𝒎𝒆: {time_local}\n"
-        f"├───────────────\n"
-        f"│ 👥 𝑴𝒆𝒎𝒃𝒆𝒓𝒔: {members}\n"
-        f"│ 🛡 𝑨𝒅𝒎𝒊𝒏𝒔: {admins}\n"
-        f"╰───────────────╯"
-    )
+    return build_welcome_text(user, private=False, chat=message.chat)
 
 
 @bot.message_handler(
@@ -5748,6 +5882,49 @@ def new_members_handler(message):
 
         except Exception as e:
             print("[Welcome Error]", repr(e))
+
+
+# =========================================================
+# المنشن الجماعي
+# =========================================================
+def _chunk_mentions(users):
+    chunk=[]; current=0
+    for user in users:
+        m=f'<a href="tg://user?id={user.id}">{html.escape(full_name(user))}</a>'
+        if chunk and current+len(m)+1>3500:
+            yield chunk; chunk=[]; current=0
+        chunk.append(m); current+=len(m)+1
+    if chunk: yield chunk
+
+def mention_admins_with_message(message, extra_text=""):
+    if not admin_required(message): return True
+    try:
+        users=[a.user for a in bot.get_chat_administrators(message.chat.id) if a.user and not getattr(a.user,"is_bot",False)]
+    except Exception:
+        bot.reply_to(message,"تعذر جلب المشرفين حاليًا."); return True
+    prefix=(extra_text or "").strip()
+    for chunk in _chunk_mentions(users):
+        bot.send_message(message.chat.id, ((prefix+"\n\n") if prefix else "")+" ".join(chunk), parse_mode="HTML")
+    return True
+
+def mention_everyone_with_message(message, extra_text=""):
+    if not admin_required(message): return True
+    cursor.execute("SELECT user_id,first_name,last_name,username FROM group_users WHERE chat_id=? AND user_id>0 ORDER BY last_seen DESC",(message.chat.id,))
+    rows=cursor.fetchall(); users=[]; seen=set()
+    for row in rows:
+        uid=int(row["user_id"])
+        if uid in seen: continue
+        seen.add(uid)
+        class U: pass
+        u=U(); u.id=uid; u.first_name=row["first_name"] or "مستخدم"; u.last_name=row["last_name"] or ""; u.username=row["username"] or ""
+        users.append(u)
+    if not users:
+        bot.reply_to(message,"لا يوجد أعضاء مسجلون لمنشنهم."); return True
+    prefix=(extra_text or "").strip()
+    for i,chunk in enumerate(_chunk_mentions(users)):
+        bot.send_message(message.chat.id, ((prefix+"\n\n") if prefix and i==0 else "")+" ".join(chunk), parse_mode="HTML")
+        time.sleep(0.2)
+    return True
 
 
 # =========================================================
@@ -5980,6 +6157,8 @@ def broadcast_recipients(scope="all"):
         # فقط إذا كان المستخدم قد بدأ البوت سابقًا، وإلا سيُسجل الفشل بدون إيقاف الإذاعة.
         cursor.execute("SELECT DISTINCT user_id FROM group_users WHERE user_id > 0")
         private_ids.update(int(r["user_id"]) for r in cursor.fetchall())
+        cursor.execute("SELECT user_id FROM global_bans")
+        private_ids.difference_update(int(r["user_id"]) for r in cursor.fetchall())
     else:
         private_ids = set()
     if scope in ("all", "groups"):
@@ -5995,36 +6174,39 @@ def broadcast_recipients(scope="all"):
     return sorted(private_ids | group_ids | channel_ids)
 
 
-def perform_broadcast(source_message, scope="all", reply_markup=None):
+def perform_broadcast(source_message, scope="all", reply_markup=None, progress_chat_id=None):
     recipients = broadcast_recipients(scope)
-    ok = 0
-    failed = 0
-    for target_id in recipients:
+    total = len(recipients)
+    ok = failed = 0
+    progress_message = None
+    if progress_chat_id is not None:
+        try:
+            progress_message = bot.send_message(progress_chat_id, f"جاري الارسال <b>{ok}</b>\n<b>{total}</b>")
+        except Exception:
+            pass
+    for index, target_id in enumerate(recipients, 1):
         if target_id == DEVELOPER_ID:
             continue
         try:
-            kwargs = {
-                "chat_id": target_id,
-                "from_chat_id": source_message.chat.id,
-                "message_id": source_message.message_id
-            }
+            kwargs={"chat_id":target_id,"from_chat_id":source_message.chat.id,"message_id":source_message.message_id}
             if reply_markup is not None:
-                kwargs["reply_markup"] = reply_markup
-            copied = bot.copy_message(**kwargs)
-            try:
-                if target_id < 0 and copied is not None:
-                    bot.pin_chat_message(
-                        target_id,
-                        copied.message_id,
-                        disable_notification=True
-                    )
-            except Exception as pin_error:
-                print("[Broadcast Pin]", scope, target_id, pin_error)
+                kwargs["reply_markup"]=reply_markup
+            bot.copy_message(**kwargs)
             ok += 1
             time.sleep(0.03)
         except Exception as e:
             failed += 1
             print("[Broadcast]", scope, target_id, e)
+        if progress_message and (index==1 or index%20==0 or index==total):
+            try:
+                bot.edit_message_text(f"جاري الارسال <b>{ok}</b>\n<b>{max(total-ok-failed,0)}</b>", progress_chat_id, progress_message.message_id)
+            except Exception:
+                pass
+    if progress_message:
+        try:
+            bot.edit_message_text(f"اكتملت الاذاعة\n<b>تم الارسال: {ok}</b>\n<b>فشل: {failed}</b>", progress_chat_id, progress_message.message_id)
+        except Exception:
+            pass
     return ok, failed
 
 
@@ -6217,6 +6399,12 @@ def main_handler(message):
                 if resolved and send_ton_wallet_info(message, resolved):
                     return
 
+        if message.from_user and message.from_user.is_bot and message.chat.type in ("group", "supergroup"):
+            try:
+                register_known_bot(message.chat.id, message.from_user)
+            except Exception as _bot_register_error:
+                print("[Known Bot Register Error]", repr(_bot_register_error))
+
         if (
             message.from_user
             and not message.from_user.is_bot
@@ -6357,19 +6545,8 @@ def main_handler(message):
                 return
 
         if message.text and message.text.strip() == ".":
-
-            markup = types.InlineKeyboardMarkup()
-            btn = transparent_url_button(
-                "صلي علي النبي",
-                "https://t.me/LeaDeR_E"
-            )
-            if btn:
-                markup.add(btn)
-            bot.send_message(
-                message.chat.id,
-                "صلي علي النبي",
-                reply_markup=markup
-            )
+            react_heart(message.chat.id, message.message_id)
+            send_plain_emoji_message(message.chat.id, "🤍 صلِّ على النبي 🤍", reply_to_message_id=message.message_id)
             return
 
         if message.text:
@@ -6378,20 +6555,9 @@ def main_handler(message):
                 bot.reply_to(message, "")
                 return
 
-        if message.text and clean_text(message.text) == "بوت":
-            try:
-                me = bot.get_me()
-                bot_name = full_name(me)
-            except Exception:
-                bot_name = BOT_USERNAME
-
-            bot.send_message(
-                message.chat.id,
-                "تاارا اسمي "
-                + html.escape(bot_name)
-                + " متشوف "
-                + tg_emoji(CE_BOT_REPLY, "🤖")
-            )
+        if message.text and clean_text(message.text) in ("بوت", "البوت"):
+            react_heart(message.chat.id, message.message_id)
+            send_plain_emoji_message(message.chat.id, "تاره اسمي ريم م تشوف ياعما 😂❤", reply_to_message_id=message.message_id)
             return
 
         if continue_reply_setup(message):
@@ -6551,15 +6717,8 @@ def handle_private(message):
         send_commands_menu(message)
         return
 
-    if command == "ايدي":
-
-        bot.send_message(
-            message.chat.id,
-            f"🆔 <b>الـ ID الخاص بك:</b>\n"
-            f"<code>{message.from_user.id}</code>"
-        )
-
-        return
+    if command in ("ايدي", "ا"):
+        return show_member_card(message)
 
     if command == "البوت":
 
@@ -6616,6 +6775,9 @@ def rank_action(
         chat_id,
         target.id
     )
+
+    if rank_level(actor_rank) < rank_level("moderator"):
+        return rank_command_error(message, "⦉لست مشرفا⦊")
 
     if not can_manage_rank(
         actor_rank,
@@ -6877,27 +7039,19 @@ def handle_command(
         return True
 
     # ايدي / معلوماتي
-    if command in (
-        "ايدي",
-        "معلوماتي"
-    ):
-
-        u = message.from_user
-
-        bot.reply_to(
-            message,
-            f"👤 {mention(u)}\n"
-            "\n"
-            f"🆔 <code>{u.id}</code>\n"
-            "\n"
-            f"👤 {html.escape(username_text(u))}"
-        )
-
-        return True
-
-    # معلومات العضو المختصرة: ا
-    if command in ("ا", "انا"):
+    if command in ("ايدي", "معلوماتي"):
+        if message.chat.type in ("group", "supergroup") and not group_setting(chat_id, "id_enabled"):
+            bot.reply_to(message, "الايدي مقفول حاليًا.")
+            return True
         return show_member_card(message)
+
+    # معلومات العضو: ا فقط. تم حذف أمر انا.
+    if command == "ا":
+        if message.chat.type in ("group", "supergroup") and not group_setting(chat_id, "id_enabled"):
+            bot.reply_to(message, "الايدي مقفول حاليًا.")
+            return True
+        target=get_target(message, argument) if message.chat.type in ("group", "supergroup") else None
+        return show_member_card(message, target or message.from_user)
 
     # الساعة
     if command in ("الساعة", "الساعه"):
@@ -6972,6 +7126,10 @@ def handle_command(
     # تحليل الدولار
     if command == "تحليل_دولار":
         return send_dollar_analysis(message)
+
+    # تحليل USDT
+    if command == "تحليل_usdt":
+        return send_usdt_analysis(message)
 
     # البوت
     if command == "البوت":
@@ -7128,6 +7286,48 @@ def handle_command(
         bot.reply_to(message, text)
         return True
 
+    # حذف عدد محدد من الرسائل
+    if command == "حذف_رسائل":
+        try:
+            count = int(argument)
+        except (TypeError, ValueError):
+            count = 0
+
+        if count < 1 or count > 1000:
+            bot.reply_to(message, "استخدم الأمر من 1 إلى 1000: <code>حذف 20</code>")
+            return True
+
+        if not admin_required(message):
+            return True
+
+        deleted = 0
+        current_id = int(message.message_id)
+        # نبدأ من رسالة الأمر نفسها حتى يكون العدد المحذوف مطابقًا للرقم المطلوب.
+        # نسمح ببعض الفراغات/الرسائل غير القابلة للحذف دون تجاوز العدد المطلوب.
+        scan_limit = max(count * 5, count + 20)
+        for msg_id in range(current_id, max(0, current_id - scan_limit), -1):
+            try:
+                bot.delete_message(chat_id, msg_id)
+                deleted += 1
+                if deleted >= count:
+                    break
+            except Exception:
+                continue
+
+        if deleted == count:
+            return True
+
+        # لا نرسل ردًا قبل محاولة العدد المطلوب؛ إن تعذر جزء منه نوضح العدد الفعلي.
+        try:
+            bot.send_message(
+                chat_id,
+                f"تم حذف <b>{deleted}</b> من أصل <b>{count}</b> رسالة.\n"
+                "تأكد أن البوت يملك صلاحية حذف الرسائل."
+            )
+        except Exception:
+            pass
+        return True
+
     # أوامر الإدارة
     admin_commands = {
         "حظر",
@@ -7140,6 +7340,7 @@ def handle_command(
         "تحذير",
         "تحذيرات",
         "مسح",
+        "حذف_رسائل",
         "الغاء",
         "قفل",
         "فتح",
@@ -7148,7 +7349,15 @@ def handle_command(
         "السجل",
         "الاعدادات",
         "قفل_الجروب",
-        "فتح_الجروب"
+        "فتح_الجروب",
+        "قفل_التوجيه",
+        "فتح_التوجيه",
+        "قفل_الترحيب",
+        "فتح_الترحيب",
+        "قفل_الايدي",
+        "فتح_الايدي",
+        "منشن_المشرفين",
+        "منشن_الجميع"
     }
 
     if (
@@ -7161,6 +7370,26 @@ def handle_command(
         chat_id,
         message.from_user.id
     )
+
+    if command in ("قفل_التوجيه", "فتح_التوجيه"):
+        state=command=="قفل_التوجيه"
+        set_group_setting(chat_id,"forwarding",state)
+        bot.reply_to(message,"تم قفل التوجيه." if state else "تم فتح التوجيه.")
+        return True
+    if command in ("قفل_الترحيب", "فتح_الترحيب"):
+        state=command=="فتح_الترحيب"
+        set_group_setting(chat_id,"welcome",state)
+        bot.reply_to(message,"تم فتح الترحيب." if state else "تم قفل الترحيب.")
+        return True
+    if command in ("قفل_الايدي", "فتح_الايدي"):
+        state=command=="فتح_الايدي"
+        set_group_setting(chat_id,"id_enabled",state)
+        bot.reply_to(message,"تم فتح الايدي." if state else "تم قفل الايدي.")
+        return True
+    if command=="منشن_المشرفين":
+        return mention_admins_with_message(message,argument)
+    if command=="منشن_الجميع":
+        return mention_everyone_with_message(message,argument)
 
     # حظر عام
     if command == "حظرعام":
@@ -7952,6 +8181,19 @@ def callbacks(call):
         chat_id = call.message.chat.id
         uid = call.from_user.id
 
+        # زر تفاعل بطاقة ID: لا يسمح به إلا صاحب الطلب.
+        if call.data.startswith("profile_react:"):
+            try:
+                _, owner_id, origin_chat_id, origin_message_id = call.data.split(":",3)
+                owner_id=int(owner_id); origin_chat_id=int(origin_chat_id); origin_message_id=int(origin_message_id)
+            except Exception:
+                bot.answer_callback_query(call.id,"تعذر تنفيذ التفاعل.",show_alert=True); return
+            if uid!=owner_id:
+                bot.answer_callback_query(call.id,"هذا الزر ليس لك.",show_alert=True); return
+            react_heart(origin_chat_id,origin_message_id)
+            bot.answer_callback_query(call.id,"تم التفاعل ❤")
+            return
+
         # لوحة الأدمن الخاصة بالمطور
         if call.data == "admin:open":
             if uid != DEVELOPER_ID or chat_id != DEVELOPER_ID:
@@ -8166,14 +8408,20 @@ def callbacks(call):
             source = data["message"]
             broadcast_pending.pop(uid, None)
             bot.answer_callback_query(call.id, "جاري الإرسال...")
-            ok, failed = perform_broadcast(source, data.get("scope", "all"))
+            ok, failed = perform_broadcast(source, data.get("scope", "all"), progress_chat_id=chat_id)
             bot.send_message(chat_id, f"تمت الإذاعة إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
             return
 
         # فحص الاشتراك الإجباري لجميع القنوات مرة واحدة.
         if call.data.startswith("force_sub_check:"):
             try:
-                target = call.data.split(":", 1)[1]
+                parts=call.data.split(":")
+                if len(parts)==3:
+                    bound_uid=int(parts[1]); target=parts[2]
+                    if bound_uid!=uid:
+                        bot.answer_callback_query(call.id,"هذا الزر ليس لك.",show_alert=True); return
+                else:
+                    target=parts[1]
                 if target == "all":
                     missing_now = force_sub_missing(uid)
                     if not missing_now:
@@ -8759,22 +9007,22 @@ def protection_engine(message):
         delete_message_safe(message)
         return
 
-    # الكلمات والروابط
-    if (
-        is_blacklisted(
-            chat_id,
-            text
-        )
-        or (
-            row["links"]
-            and contains_link(text)
-        )
-    ):
+    # التوجيه
+    if row["forwarding"] and is_forwarded_message(message):
+        delete_message_safe(message)
+        return
 
-        delete_message_safe(
-            message
-        )
+    if is_blacklisted(chat_id, text):
+        delete_message_safe(message)
+        try:
+            sender_name=html.escape(full_name(message.from_user))
+            bot.reply_to(message, f"عذرا يـ {sender_name} ممنوع {mention(message.from_user)} هنا !")
+        except Exception:
+            pass
+        return
 
+    if row["links"] and contains_link(text):
+        delete_message_safe(message)
         return
 
     # Flood
