@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import random
 import shutil
+import sys
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict, deque
 from threading import Thread, Lock
@@ -862,6 +863,18 @@ CREATE TABLE IF NOT EXISTS bot_images (
     file_id TEXT NOT NULL,
     caption TEXT DEFAULT '',
     added_at INTEGER DEFAULT 0
+)
+""")
+db.commit()
+
+# تفاعلات بطاقات ID: نحفظ كل مستخدم ضغط القلب مرة واحدة لكل بطاقة.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS profile_reactions (
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    created_at INTEGER DEFAULT 0,
+    PRIMARY KEY(chat_id,message_id,user_id)
 )
 """)
 db.commit()
@@ -1964,36 +1977,112 @@ def format_clock_egypt():
         return time.strftime("%I:%M:%S %p")
 
 
+def profile_reaction_count(chat_id, message_id):
+    try:
+        cursor.execute(
+            "SELECT COUNT(*) AS c FROM profile_reactions WHERE chat_id=? AND message_id=?",
+            (int(chat_id), int(message_id))
+        )
+        row = cursor.fetchone()
+        return int(row["c"] if row else 0)
+    except Exception as e:
+        print("[Profile Reaction Count Error]", repr(e))
+        return 0
+
+
+def add_profile_reaction(chat_id, message_id, user_id):
+    """يسجل القلب مرة واحدة لكل مستخدم على بطاقة ID ويعيد (العدد، هل تمت الإضافة)."""
+    try:
+        cursor.execute(
+            "INSERT OR IGNORE INTO profile_reactions(chat_id,message_id,user_id,created_at) VALUES(?,?,?,?)",
+            (int(chat_id), int(message_id), int(user_id), now())
+        )
+        added = cursor.rowcount > 0
+        db.commit()
+        return profile_reaction_count(chat_id, message_id), added
+    except Exception as e:
+        print("[Profile Reaction Add Error]", repr(e))
+        return profile_reaction_count(chat_id, message_id), False
+
+
+def profile_reaction_markup(chat_id, message_id):
+    count = profile_reaction_count(chat_id, message_id)
+    markup = types.InlineKeyboardMarkup()
+    markup.add(button(
+        f"❤ {count}",
+        callback_data=f"profile_react:{chat_id}:{message_id}",
+        style="danger"
+    ))
+    return markup
+
+
 def show_member_card(message, target=None):
-    """بطاقة ID للأمرين: ايدي / ا. الزر لا يعمل إلا لصاحب الطلب."""
+    """بطاقة ID للأمرين: ايدي / ا. بدون عنوان معلومات الحساب، مع زر قلب وعدّاد."""
     if not message or not message.from_user:
         return False
+
     target = target or message.from_user
     bio = user_bio(target.id)
+
+    # كما طلبت: لا نكتب "معلومات الحساب"، وتظهر البيانات فقط.
     caption = (
-        f"<b>معلومات الحساب</b>\n"
         f"• <b>ID :</b> <code>{target.id}</code>\n"
         f"• <b>USE :</b> {html.escape(username_text(target))}\n"
         f"• <b>bio :</b> {html.escape(bio)}"
     )
-    markup = types.InlineKeyboardMarkup()
-    markup.add(button(
-        "تفاعل",
-        callback_data=f"profile_react:{message.from_user.id}:{message.chat.id}:{message.message_id}",
-        style="primary",
-        icon_custom_emoji_id=CE_REPLY_BUTTON
-    ))
+
     try:
         photos = bot.get_user_profile_photos(target.id, limit=1)
         if photos.total_count:
-            bot.send_photo(message.chat.id, photos.photos[0][-1].file_id, caption=caption, reply_markup=markup, reply_to_message_id=message.message_id)
+            sent = bot.send_photo(
+                message.chat.id,
+                photos.photos[0][-1].file_id,
+                caption=caption,
+                reply_markup=profile_reaction_markup(message.chat.id, 0),
+                reply_to_message_id=message.message_id
+            )
         else:
-            bot.send_message(message.chat.id, caption, reply_markup=markup, reply_to_message_id=message.message_id)
+            sent = bot.send_message(
+                message.chat.id,
+                caption,
+                reply_markup=profile_reaction_markup(message.chat.id, 0),
+                reply_to_message_id=message.message_id
+            )
+
+        # زر القلب يجب أن يرتبط برسالة بطاقة الـID نفسها.
+        try:
+            bot.edit_message_reply_markup(
+                message.chat.id,
+                sent.message_id,
+                reply_markup=profile_reaction_markup(
+                    message.chat.id,
+                    sent.message_id
+                )
+            )
+        except Exception as e:
+            print("[ID Card Markup Update Error]", repr(e))
+        return True
+
     except Exception as e:
         print("[ID Card Error]", repr(e))
-        bot.send_message(message.chat.id, caption, reply_markup=markup, reply_to_message_id=message.message_id)
-    return True
-
+        try:
+            sent = bot.send_message(
+                message.chat.id,
+                caption,
+                reply_to_message_id=message.message_id
+            )
+            bot.edit_message_reply_markup(
+                message.chat.id,
+                sent.message_id,
+                reply_markup=profile_reaction_markup(
+                    message.chat.id,
+                    sent.message_id
+                )
+            )
+            return True
+        except Exception as e2:
+            print("[ID Card Fallback Error]", repr(e2))
+            return False
 
 def set_group_locked(chat_id, locked):
     """قفل/فتح إرسال الرسائل للأعضاء مع إبقاء المشرفين قادرين على الإدارة."""
@@ -3443,6 +3532,9 @@ reply_pending = {}
 admin_pending = {}
 music_pending = {}
 broadcast_pending = {}
+# نتائج بحث YouTube المؤقتة: token -> {user_id, chat_id, results, created_at}
+music_searches = {}
+music_search_lock = Lock()
 image_add_counts = defaultdict(int)
 image_add_timers = {}
 
@@ -4867,72 +4959,355 @@ def send_random_bot_image(message):
 # تحميل أغاني YouTube + مشغل المكالمة الصوتية
 # =========================================================
 
-def download_youtube_song(query):
-    """بحث ثم تنزيل أول نتيجة من YouTube مع مهلات حتى لا يعلق البوت."""
-    if not query:
-        return None, "اكتب اسم الأغنية بعد أمر تنزيل."
+def _youtube_runtime_options(yt_dlp):
+    """إعدادات YouTube الحديثة: EJS + أكثر من Player Client + cookies اختيارية."""
+    opts = {
+        # YouTube أصبح يعتمد على تحديات JavaScript؛ استخدم أي Runtime متاح.
+        "remote_components": ["ejs:github"],
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android_vr", "web_safari", "tv"]
+            }
+        },
+    }
 
+    # لو يوجد Deno/Node/QuickJS نفعّله تلقائيًا.
+    runtimes = []
+    for name, minimum in (("deno", None), ("node", None), ("qjs", None), ("quickjs", None)):
+        path = shutil.which(name)
+        if path:
+            runtime_name = "quickjs" if name == "qjs" else name
+            runtimes.append(f"{runtime_name}:{path}")
+            break
+    if runtimes:
+        opts["js_runtimes"] = runtimes
+
+    # دعم cookies.txt اختياريًا؛ ضع الملف بجوار main.py أو حدد YOUTUBE_COOKIES_FILE.
+    cookie_file = os.getenv("YOUTUBE_COOKIES_FILE", "")
+    if not cookie_file:
+        candidate = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
+        if os.path.isfile(candidate):
+            cookie_file = candidate
+    if cookie_file and os.path.isfile(cookie_file):
+        opts["cookiefile"] = cookie_file
+
+    return opts
+
+
+def _ensure_ytdlp():
+    """تحميل yt-dlp إذا لم يكن مثبتًا. لا يوقف البوت إذا فشل التثبيت."""
     try:
         import yt_dlp
+        return yt_dlp
     except Exception:
-        return None, "مكتبة yt-dlp غير مثبتة. ثبّتها ثم أعد تشغيل البوت."
+        pass
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-U", "yt-dlp[default]"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=180,
+            check=False,
+        )
+        import yt_dlp
+        return yt_dlp
+    except Exception as e:
+        print("[yt-dlp Install Error]", repr(e))
+        return None
+
+
+def search_youtube_songs(query, limit=8):
+    """
+    يبحث في YouTube ويعيد نتائج فقط بدون تنزيل.
+    كل نتيجة تحتوي title/url/duration/channel/thumbnail إن توفرت.
+    """
+    query = (query or "").strip()
+    if not query:
+        return [], "اكتب اسم الأغنية بعد يوت أو تنزيل."
+
+    yt_dlp = _ensure_ytdlp()
+    if yt_dlp is None:
+        return [], "تعذر تثبيت yt-dlp تلقائيًا. ثبّت yt-dlp[default] ثم أعد تشغيل البوت."
+
+    base = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "socket_timeout": 20,
+        "retries": 2,
+        "extractor_retries": 2,
+        "geo_bypass": True,
+        "extract_flat": True,
+    }
+    base.update(_youtube_runtime_options(yt_dlp))
+
+    client_sets = [
+        ["android_vr", "web_safari", "tv"],
+        ["web_safari", "android_vr"],
+        ["tv", "web_safari"],
+    ]
+
+    last_error = None
+    for clients in client_sets:
+        try:
+            opts = dict(base)
+            opts["extractor_args"] = {
+                "youtube": {"player_client": clients}
+            }
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                data = ydl.extract_info(
+                    "ytsearch%d:%s" % (max(1, min(int(limit), 10)), query),
+                    download=False
+                )
+
+            entries = []
+            for item in (data or {}).get("entries") or []:
+                if not item:
+                    continue
+                video_id = item.get("id")
+                url = (
+                    item.get("webpage_url")
+                    or item.get("original_url")
+                    or (
+                        f"https://www.youtube.com/watch?v={video_id}"
+                        if video_id else ""
+                    )
+                )
+                if not url:
+                    continue
+
+                duration = item.get("duration")
+                if duration:
+                    try:
+                        duration = int(duration)
+                        mm, ss = divmod(duration, 60)
+                        hh, mm = divmod(mm, 60)
+                        duration_text = (
+                            f"{hh}:{mm:02d}:{ss:02d}" if hh
+                            else f"{mm}:{ss:02d}"
+                        )
+                    except Exception:
+                        duration_text = ""
+                else:
+                    duration_text = ""
+
+                entries.append({
+                    "title": str(item.get("title") or "بدون عنوان").strip(),
+                    "url": url,
+                    "duration": duration_text,
+                    "channel": str(
+                        item.get("channel")
+                        or item.get("uploader")
+                        or ""
+                    ).strip(),
+                    "thumbnail": item.get("thumbnail") or ""
+                })
+
+                if len(entries) >= limit:
+                    break
+
+            if entries:
+                return entries, None
+
+        except Exception as e:
+            last_error = e
+            print("[YouTube Search Results Retry]", repr(e))
+
+    if last_error:
+        msg = str(last_error).lower()
+        if any(x in msg for x in (
+            "sign in", "not a bot", "confirm you're not",
+            "429", "too many requests", "login_required"
+        )):
+            return [], (
+                "يوتيوب رفض البحث مؤقتًا. حدّث yt-dlp وتأكد من "
+                "EJS/Runtime أو cookies.txt."
+            )
+
+    return [], "لم يتم العثور على نتائج حاليًا."
+
+
+def _music_result_label(item, number):
+    title = str(item.get("title") or "بدون عنوان").strip()
+    duration = str(item.get("duration") or "").strip()
+    # Telegram يفضل أزرارًا قصيرة؛ نقص العنوان الطويل بدل كسر شكل القائمة.
+    if len(title) > 52:
+        title = title[:49] + "..."
+    label = f"{number}. {title}"
+    if duration:
+        label += f"  • {duration}"
+    return label
+
+
+def send_youtube_search_results(message, query, results, token):
+    """
+    يعرض نتائج البحث كأزرار مثل القائمة الظاهرة في الصورة.
+    الضغط على أي نتيجة يبدأ التنزيل والإرسال تلقائيًا.
+    """
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for index, item in enumerate(results, 1):
+        markup.add(
+            button(
+                _music_result_label(item, index),
+                callback_data=f"songpick:{token}:{index-1}",
+                style="primary"
+            )
+        )
+
+    markup.add(
+        button(
+            "❌ إلغاء",
+            callback_data=f"songcancel:{token}",
+            style="danger"
+        )
+    )
+
+    lines = [
+        "<b>نتائج البحث 🎵</b>",
+        f"<b>البحث:</b> {html.escape(query)}",
+        "",
+        "اضغط على الأغنية المطلوبة وسيتم تنزيلها وإرسالها تلقائيًا."
+    ]
+    return bot.reply_to(
+        message,
+        "\n".join(lines),
+        reply_markup=markup
+    )
+
+
+def _store_music_search(user_id, chat_id, query, results):
+    token = secrets.token_hex(5)
+    with music_search_lock:
+        # تنظيف النتائج القديمة حتى لا يكبر الذاكرة.
+        now_ts = time.time()
+        for key, value in list(music_searches.items()):
+            if now_ts - value.get("created_at", now_ts) > 900:
+                music_searches.pop(key, None)
+        music_searches[token] = {
+            "user_id": int(user_id),
+            "chat_id": int(chat_id),
+            "query": query,
+            "results": results,
+            "created_at": now_ts
+        }
+    return token
+
+
+def _get_music_search(token):
+    with music_search_lock:
+        data = music_searches.get(token)
+        if not data:
+            return None
+        if time.time() - data.get("created_at", 0) > 900:
+            music_searches.pop(token, None)
+            return None
+        return data
+
+
+def _delete_music_search(token):
+    with music_search_lock:
+        return music_searches.pop(token, None)
+
+
+def download_youtube_song(query):
+    """بحث وتنزيل أغنية من YouTube بإعدادات حديثة وفallbacks متعددة."""
+    if not query:
+        return None, "اكتب اسم الأغنية بعد أمر يوت."
+
+    yt_dlp = _ensure_ytdlp()
+    if yt_dlp is None:
+        return None, "تعذر تثبيت yt-dlp تلقائيًا. ثبّت yt-dlp[default] ثم أعد تشغيل البوت."
 
     temp_dir = tempfile.mkdtemp(prefix="reemyt_")
     output = os.path.join(temp_dir, "%(title).80s.%(ext)s")
 
-    common = {
+    base = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "socket_timeout": 15,
-        "retries": 2,
-        "fragment_retries": 2,
-        "file_access_retries": 2,
-        "extractor_retries": 2,
+        "socket_timeout": 25,
+        "retries": 4,
+        "fragment_retries": 4,
+        "file_access_retries": 3,
+        "extractor_retries": 3,
         "outtmpl": output,
         "windowsfilenames": True,
         "nocheckcertificate": True,
+        "geo_bypass": True,
+        "concurrent_fragment_downloads": 4,
     }
+    base.update(_youtube_runtime_options(yt_dlp))
+
+    # أكثر من محاولة لأن YouTube قد يرفض Client بعينه مؤقتًا.
+    client_sets = [
+        ["android_vr", "web_safari", "tv"],
+        ["web_safari", "android_vr"],
+        ["tv", "web_safari"],
+    ]
 
     try:
-        # المرحلة الأولى: بحث فقط. هذا يمنع تنزيل الملف أثناء البحث نفسه.
-        search_opts = dict(common)
-        search_opts["extract_flat"] = True
-        with yt_dlp.YoutubeDL(search_opts) as ydl:
-            search = ydl.extract_info("ytsearch1:" + query, download=False)
+        entry = None
+        last_error = None
+        for clients in client_sets:
+            try:
+                search_opts = dict(base)
+                search_opts["extract_flat"] = True
+                search_opts["extractor_args"] = {"youtube": {"player_client": clients}}
+                with yt_dlp.YoutubeDL(search_opts) as ydl:
+                    search_target = (
+                        query
+                        if re.match(r"https?://(?:www\\.)?(?:youtube\\.com|youtu\\.be)/", query, re.I)
+                        else "ytsearch1:" + query
+                    )
+                    search = ydl.extract_info(search_target, download=False)
+                entries = (search or {}).get("entries") or []
+                if entries:
+                    entry = entries[0]
+                    break
+            except Exception as e:
+                last_error = e
+                print("[YouTube Search Retry]", repr(e))
 
-        entries = (search or {}).get("entries") or []
-        if not entries:
+        if not entry:
             shutil.rmtree(temp_dir, ignore_errors=True)
-            return None, "لم يتم العثور علي الاغنية"
+            if last_error:
+                msg = str(last_error).lower()
+                if "sign in" in msg or "not a bot" in msg or "confirm you're not" in msg or "429" in msg:
+                    return None, "يوتيوب رفض الاتصال مؤقتًا. يحتاج yt-dlp الحديث إلى EJS/Runtime أو cookies صالحة."
+            return None, "لم يتم العثور على الأغنية حاليًا."
 
-        entry = entries[0]
-        webpage_url = entry.get("webpage_url") or entry.get("url")
+        webpage_url = entry.get("webpage_url") or entry.get("original_url") or entry.get("url")
         title = entry.get("title") or query
         if not webpage_url:
             shutil.rmtree(temp_dir, ignore_errors=True)
-            return None, "تم العثور على النتيجة لكن تعذر الحصول على رابطها."
+            return None, "تم العثور على الأغنية لكن تعذر فتح رابطها."
 
-        # المرحلة الثانية: تنزيل الصوت فقط.
-        download_opts = dict(common)
-        download_opts["format"] = "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio"
-        download_opts["postprocessors"] = []
-
-        with yt_dlp.YoutubeDL(download_opts) as ydl:
-            info = ydl.extract_info(webpage_url, download=True)
-            title = info.get("title") or title
+        last_error = None
+        for clients in client_sets:
+            try:
+                download_opts = dict(base)
+                download_opts["format"] = "bestaudio/best"
+                download_opts["extractor_args"] = {"youtube": {"player_client": clients}}
+                with yt_dlp.YoutubeDL(download_opts) as ydl:
+                    info = ydl.extract_info(webpage_url, download=True)
+                    title = info.get("title") or title
+                break
+            except Exception as e:
+                last_error = e
+                print("[YouTube Download Retry]", repr(e))
+        else:
+            raise last_error or RuntimeError("YouTube download failed")
 
         files = [
             os.path.join(temp_dir, f)
             for f in os.listdir(temp_dir)
             if os.path.isfile(os.path.join(temp_dir, f))
-            and f.lower().endswith((".mp3", ".m4a", ".opus", ".webm", ".ogg"))
+            and f.lower().endswith((".mp3", ".m4a", ".opus", ".webm", ".ogg", ".aac"))
         ]
         if not files:
             shutil.rmtree(temp_dir, ignore_errors=True)
-            return None, "تم العثور على الأغنية لكن تعذر تجهيز الملف الصوتي."
+            return None, "تم العثور على الأغنية لكن لم يتم إنشاء الملف الصوتي."
 
-        # اختَر الملف الأكبر غالبًا إذا أنشأ yt-dlp أكثر من ملف.
         path = max(files, key=lambda x: os.path.getsize(x))
         return (path, title, temp_dir), None
 
@@ -4940,11 +5315,14 @@ def download_youtube_song(query):
         print("[YouTube Download Error]", repr(e))
         shutil.rmtree(temp_dir, ignore_errors=True)
         message = str(e).lower()
-        if "sign in" in message or "not a bot" in message or "confirm you're not" in message:
-            return None, "YouTube رفض الطلب حاليًا. جرّب أغنية أخرى بعد قليل."
+        if any(x in message for x in ("sign in", "not a bot", "confirm you're not", "http error 429", "too many requests", "login_required")):
+            return None, (
+                "يوتيوب رفض الطلب مؤقتًا. حدّث yt-dlp وثبّت EJS Runtime، "
+                "أو ضع cookies.txt صالحة ليوتيوب بجوار main.py."
+            )
         if "timed out" in message or "timeout" in message:
             return None, "انتهت مهلة الاتصال بـ YouTube. جرّب مرة أخرى."
-        return None, "تعذر البحث أو تنزيل الأغنية حاليًا. جرّب مرة أخرى."
+        return None, "تعذر تنزيل الأغنية حاليًا. جرّب اسمًا آخر أو رابط YouTube مباشر."
 
 
 def send_song_card(message, title, source_url=""):
@@ -5236,35 +5614,84 @@ def send_youtube_song(message, query, processing_message=None):
     return True
 
 def handle_music_command(message, query):
-    """الأمر: تنزيل {اسم الأغنية}. يبدأ فورًا في خيط مستقل حتى لا يتوقف البوت."""
+    """
+    الأمر: يوت / تنزيل + اسم الأغنية.
+    أولًا يعرض نتائج البحث، وبعد الضغط على نتيجة يبدأ التنزيل والإرسال تلقائيًا.
+    """
     query = (query or "").strip()
     if not query:
-        bot.reply_to(message, "استخدم الأمر: <code>يوت اسم الأغنية</code>")
+        bot.reply_to(
+            message,
+            "استخدم: <code>يوت اسم الأغنية</code>\n"
+            "أو: <code>تنزيل اسم الأغنية</code>"
+        )
         return True
 
-    processing = bot.reply_to(message, "جاري التنزيل...")
+    # البحث في خيط مستقل حتى لا يتوقف البوت أثناء انتظار YouTube.
+    processing = bot.reply_to(message, "🔎 جاري البحث عن الأغنية...")
 
     def worker():
         try:
-            # تحديث الرسالة بعد انتهاء البحث/التنزيل من دون تعطيل بقية البوت.
-            send_youtube_song(message, query, processing_message=processing)
+            results, error = search_youtube_songs(query, limit=8)
+            if error:
+                try:
+                    bot.edit_message_text(
+                        html.escape(error),
+                        message.chat.id,
+                        processing.message_id,
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    bot.send_message(message.chat.id, error)
+                return
+
+            token = _store_music_search(
+                message.from_user.id if message.from_user else 0,
+                message.chat.id,
+                query,
+                results
+            )
+
+            try:
+                bot.delete_message(
+                    message.chat.id,
+                    processing.message_id
+                )
+            except Exception:
+                pass
+
+            send_youtube_search_results(
+                message,
+                query,
+                results,
+                token
+            )
+
         except Exception as e:
-            print("[YouTube Worker Error]", repr(e))
+            print("[YouTube Search Worker Error]", repr(e))
             try:
                 bot.edit_message_text(
-                    "تعذر تنزيل الأغنية حاليًا. جرّب مرة أخرى.",
+                    "تعذر البحث عن الأغنية حاليًا. جرّب مرة أخرى.",
                     message.chat.id,
                     processing.message_id,
                     parse_mode="HTML"
                 )
             except Exception:
                 try:
-                    bot.send_message(message.chat.id, "تعذر تنزيل الأغنية حاليًا. جرّب مرة أخرى.")
+                    bot.send_message(
+                        message.chat.id,
+                        "تعذر البحث عن الأغنية حاليًا. جرّب مرة أخرى."
+                    )
                 except Exception:
                     pass
 
-    Thread(target=worker, daemon=True, name="YouTubeDownload").start()
+    Thread(
+        target=worker,
+        daemon=True,
+        name="YouTubeSearch"
+    ).start()
     return True
+
 
 
 def send_cat_question(message):
@@ -6535,6 +6962,27 @@ def main_handler(message):
                 send_single_adhkar(message)
                 return
 
+        # النقطة لها أولوية كاملة؛ لا تجعلها قاعدة "الرسائل الرمزية فقط"
+        # تبتلعها قبل الوصول إلى الرد والتفاعل.
+        if message.text and message.text.strip() == ".":
+            reacted = react_heart(message.chat.id, message.message_id)
+            try:
+                send_plain_emoji_message(
+                    message.chat.id,
+                    "🤍 صلِّ على النبي 🤍",
+                    reply_to_message_id=message.message_id
+                )
+            except Exception as e:
+                print("[Dot Reply Error]", repr(e))
+                try:
+                    bot.reply_to(message, "🤍 صلِّ على النبي 🤍")
+                except Exception:
+                    pass
+            if not reacted:
+                print("[Dot Reaction] تعذر إضافة تفاعل ❤️، تم إرسال الرد بدلًا منه.")
+            return
+
+        if message.text:
             _reaction = message.text.strip()
             if any(x in _reaction for x in ("😂", "🤣", "😹", "😆", "😅", "هههه", "ههههه", "هههههه", "خخخ")):
                 bot.reply_to(message, "")
@@ -6543,11 +6991,6 @@ def main_handler(message):
             if _reaction and not re.search(r"[A-Za-z0-9\u0600-\u06FF]", _reaction):
                 bot.reply_to(message, "")
                 return
-
-        if message.text and message.text.strip() == ".":
-            react_heart(message.chat.id, message.message_id)
-            send_plain_emoji_message(message.chat.id, "🤍 صلِّ على النبي 🤍", reply_to_message_id=message.message_id)
-            return
 
         if message.text:
             _laugh_text = clean_text(message.text)
@@ -6578,14 +7021,22 @@ def main_handler(message):
                     bot.reply_to(message, "اكتب عنوان المحفظة أو اسم TON مثل <code>/محفظة EQ...</code> أو <code>/محفظة name.ton</code>.")
                 return
 
-            if _clean_command in ("يوت", "يوتيوب"):
+            if _clean_command in ("يوت", "يوتيوب", "اغنية", "أغنية"):
                 if message.chat.type in ("group", "supergroup", "channel", "private"):
                     handle_music_command(message, _command_arg)
                     return
 
-            if _clean_command in ("يوت", "اغنية", "أغنية"):
-                handle_music_command(message, _command_arg)
-                return
+            # "تنزيل" مستخدم أيضًا للرتب؛ إذا لم يكن المقصود "تنزيل مشرف/ادمن..."
+            # اعتبره أمر تنزيل أغنية.
+            if _clean_command == "تنزيل":
+                _rank_words = {
+                    "مشرف", "ادمن", "ادمـن", "مدير",
+                    "حيوان", "مساعد المالك", "مطور اساسي", "مطور أساسي"
+                }
+                if clean_text(_command_arg) not in {clean_text(x) for x in _rank_words}:
+                    if message.chat.type in ("group", "supergroup", "channel", "private"):
+                        handle_music_command(message, _command_arg)
+                        return
 
             if _clean_command in ("صورة", "صور", "صوره"):
                 send_pinterest_image(message, "beautiful aesthetic photography", "صور")
@@ -6716,6 +7167,19 @@ def handle_private(message):
     if command == "الاوامر":
         send_commands_menu(message)
         return
+
+    if command in ("يوت", "يوتيوب", "اغنية", "أغنية"):
+        handle_music_command(message, argument)
+        return
+
+    if command == "تنزيل":
+        _rank_words = {
+            "مشرف", "ادمن", "ادمـن", "مدير",
+            "حيوان", "مساعد المالك", "مطور اساسي", "مطور أساسي"
+        }
+        if clean_text(argument) not in {clean_text(x) for x in _rank_words}:
+            handle_music_command(message, argument)
+            return
 
     if command in ("ايدي", "ا"):
         return show_member_card(message)
@@ -7286,26 +7750,56 @@ def handle_command(
         bot.reply_to(message, text)
         return True
 
-    # حذف عدد محدد من الرسائل
-    if command == "حذف_رسائل":
+    # حذف/مسح الرسائل المحددة
+    # - "حذف 10" أو "مسح 10": يحذف 10 رسائل سابقة من المجموعة، وليس رسائل البوت فقط.
+    # - "حذف" أو "مسح" بالرد على رسالة: يحذف الرسالة التي تم الرد عليها فقط.
+    # - رسالة الأمر نفسها لا تُحسب ضمن العدد المطلوب، ثم تُحذف تلقائيًا بعد التنفيذ.
+    if command in ("حذف_رسائل", "حذف", "مسح") and (
+        command == "حذف_رسائل"
+        or (argument and clean_text(argument).isdigit())
+        or (command in ("حذف", "مسح") and not argument and getattr(message, "reply_to_message", None))
+    ):
+        if not admin_required(message):
+            return True
+
+        reply_target = getattr(message, "reply_to_message", None)
+        numeric = (argument or "").translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")).strip()
+
+        # حذف رسالة محددة بالرد عليها.
+        if not numeric and reply_target is not None:
+            try:
+                bot.delete_message(chat_id, reply_target.message_id)
+                try:
+                    bot.delete_message(chat_id, message.message_id)
+                except Exception:
+                    pass
+                return True
+            except Exception as e:
+                print("[Delete Replied Message Error]", repr(e))
+                bot.reply_to(message, "❌ تعذر حذف الرسالة المحددة. تأكد أن البوت يملك صلاحية حذف الرسائل.")
+                return True
+
         try:
-            count = int(argument)
+            count = int(numeric)
         except (TypeError, ValueError):
             count = 0
 
         if count < 1 or count > 1000:
-            bot.reply_to(message, "استخدم الأمر من 1 إلى 1000: <code>حذف 20</code>")
-            return True
-
-        if not admin_required(message):
+            bot.reply_to(message, "استخدم الأمر من 1 إلى 1000: <code>حذف 20</code> أو <code>مسح 20</code>")
             return True
 
         deleted = 0
         current_id = int(message.message_id)
-        # نبدأ من رسالة الأمر نفسها حتى يكون العدد المحذوف مطابقًا للرقم المطلوب.
-        # نسمح ببعض الفراغات/الرسائل غير القابلة للحذف دون تجاوز العدد المطلوب.
-        scan_limit = max(count * 5, count + 20)
-        for msg_id in range(current_id, max(0, current_id - scan_limit), -1):
+
+        # نبدأ من الرسالة السابقة للأمر، لذلك "حذف 10" يعني 10 رسائل فعلية
+        # قبل الأمر، سواء كانت من المستخدم أو من البوت أو من عضو آخر.
+        # Telegram لا يوفر API لقراءة تاريخ المجموعة، لذلك نمر على message_id
+        # المتتالية ونحذف كل ما يسمح به Bot API.
+        scan_limit = max(count * 8, count + 100)
+        start_id = current_id - 1
+        end_id = max(0, current_id - scan_limit)
+
+        for msg_id in range(start_id, end_id, -1):
             try:
                 bot.delete_message(chat_id, msg_id)
                 deleted += 1
@@ -7314,15 +7808,21 @@ def handle_command(
             except Exception:
                 continue
 
+        # احذف رسالة الأمر نفسها بعد محاولة الوصول للعدد المطلوب، حتى لا تبقى
+        # "حذف 10" في المجموعة. لا نحسبها ضمن العشر رسائل.
+        try:
+            bot.delete_message(chat_id, message.message_id)
+        except Exception:
+            pass
+
         if deleted == count:
             return True
 
-        # لا نرسل ردًا قبل محاولة العدد المطلوب؛ إن تعذر جزء منه نوضح العدد الفعلي.
         try:
             bot.send_message(
                 chat_id,
                 f"تم حذف <b>{deleted}</b> من أصل <b>{count}</b> رسالة.\n"
-                "تأكد أن البوت يملك صلاحية حذف الرسائل."
+                "قد تكون بعض الرسائل قديمة أو غير قابلة للحذف بواسطة Telegram، وتأكد أن البوت يملك صلاحية حذف الرسائل."
             )
         except Exception:
             pass
@@ -8181,17 +8681,120 @@ def callbacks(call):
         chat_id = call.message.chat.id
         uid = call.from_user.id
 
-        # زر تفاعل بطاقة ID: لا يسمح به إلا صاحب الطلب.
+        # نتائج بحث YouTube: الزر يبدأ التنزيل والإرسال تلقائيًا.
+        if call.data.startswith("songcancel:"):
+            token = call.data.split(":", 1)[1]
+            data = _get_music_search(token)
+            if not data:
+                bot.answer_callback_query(call.id, "انتهت نتائج البحث.", show_alert=True)
+                return
+            if uid != data["user_id"]:
+                bot.answer_callback_query(call.id, "هذه النتائج ليست لك.", show_alert=True)
+                return
+            _delete_music_search(token)
+            bot.answer_callback_query(call.id, "تم الإلغاء")
+            try:
+                bot.edit_message_text(
+                    "❌ تم إلغاء نتائج البحث.",
+                    chat_id,
+                    call.message.message_id
+                )
+            except Exception:
+                pass
+            return
+
+        if call.data.startswith("songpick:"):
+            try:
+                _, token, index_text = call.data.split(":", 2)
+                index = int(index_text)
+            except Exception:
+                bot.answer_callback_query(call.id, "بيانات النتيجة غير صحيحة.", show_alert=True)
+                return
+
+            data = _get_music_search(token)
+            if not data:
+                bot.answer_callback_query(call.id, "انتهت نتائج البحث. اكتب الأمر مرة أخرى.", show_alert=True)
+                return
+
+            if uid != data["user_id"]:
+                bot.answer_callback_query(
+                    call.id,
+                    "هذه النتائج خاصة بالشخص الذي طلب البحث.",
+                    show_alert=True
+                )
+                return
+
+            results = data.get("results") or []
+            if index < 0 or index >= len(results):
+                bot.answer_callback_query(call.id, "هذه النتيجة غير موجودة.", show_alert=True)
+                return
+
+            item = results[index]
+            _delete_music_search(token)
+
+            bot.answer_callback_query(call.id, "جاري التنزيل...")
+            try:
+                bot.edit_message_text(
+                    f"🔹 جاري التنزيل...\n\n<b>{html.escape(item.get('title') or 'الأغنية')}</b>",
+                    chat_id,
+                    call.message.message_id,
+                    parse_mode="HTML",
+                    reply_markup=None
+                )
+            except Exception as e:
+                print("[Music Search Message Edit]", repr(e))
+
+            # استخدام URL النتيجة مباشرة بدل إعادة البحث باسم الأغنية.
+            def selected_worker():
+                try:
+                    send_youtube_song(
+                        call.message,
+                        item.get("url") or item.get("title") or data["query"],
+                        processing_message=call.message
+                    )
+                except Exception as e:
+                    print("[Selected Song Worker Error]", repr(e))
+                    try:
+                        bot.edit_message_text(
+                            "تعذر تنزيل الأغنية حاليًا. جرّب نتيجة أخرى.",
+                            chat_id,
+                            call.message.message_id,
+                            parse_mode="HTML"
+                        )
+                    except Exception:
+                        pass
+
+            Thread(
+                target=selected_worker,
+                daemon=True,
+                name="YouTubeSelectedDownload"
+            ).start()
+            return
+
+        # قلب بطاقة ID: أي عضو يمكنه الضغط، ويُحسب كل شخص مرة واحدة لكل بطاقة.
         if call.data.startswith("profile_react:"):
             try:
-                _, owner_id, origin_chat_id, origin_message_id = call.data.split(":",3)
-                owner_id=int(owner_id); origin_chat_id=int(origin_chat_id); origin_message_id=int(origin_message_id)
+                _, reaction_chat_id, reaction_message_id = call.data.split(":", 2)
+                reaction_chat_id = int(reaction_chat_id)
+                reaction_message_id = int(reaction_message_id)
             except Exception:
-                bot.answer_callback_query(call.id,"تعذر تنفيذ التفاعل.",show_alert=True); return
-            if uid!=owner_id:
-                bot.answer_callback_query(call.id,"هذا الزر ليس لك.",show_alert=True); return
-            react_heart(origin_chat_id,origin_message_id)
-            bot.answer_callback_query(call.id,"تم التفاعل ❤")
+                bot.answer_callback_query(call.id, "تعذر تنفيذ التفاعل.", show_alert=True)
+                return
+
+            count, added = add_profile_reaction(reaction_chat_id, reaction_message_id, uid)
+            try:
+                bot.edit_message_reply_markup(
+                    reaction_chat_id,
+                    reaction_message_id,
+                    reply_markup=profile_reaction_markup(reaction_chat_id, reaction_message_id)
+                )
+            except Exception as e:
+                print("[Profile Reaction Markup Error]", repr(e))
+
+            if added:
+                bot.answer_callback_query(call.id, f"❤ تم تسجيل تفاعلك — {count}")
+            else:
+                bot.answer_callback_query(call.id, f"❤ أنت ضغطت بالفعل — {count}")
             return
 
         # لوحة الأدمن الخاصة بالمطور
