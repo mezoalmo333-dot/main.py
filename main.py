@@ -2186,11 +2186,13 @@ def handle_transfer_code_request(message, phone, amount):
     amount_text = str(amount).rstrip("0").rstrip(".") if isinstance(amount, float) else str(amount)
     if not re.fullmatch(r"01\d{9}", phone) or float(amount) <= 0:
         return False
-    # Vodafone لديه صيغة مباشرة؛ باقي الشركات تعتمد على قائمة التحويل الرسمية.
+    # أكواد التحويل الرسمية لكل شبكة.
+    # أورنچ كاش يدعم صيغة التحويل المباشر، لكنها تتطلب الرقم السري للمحفظة،
+    # لذلك نضع PIN كعنصر نائب ولا نطلب أو نحفظ الرقم السري داخل البوت.
     codes = [
-        ("Etsleat", "*777*1#"),
         ("Vodafone", f"*9*7*{phone}*{amount_text}#"),
-        ("Orange", "#7115#"),
+        ("Orange", f"#7115*5*7*{phone}*{amount_text}*PIN#"),
+        ("Etsleat", "*777*1#"),
         ("WE", "*7*2#"),
     ]
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -2200,7 +2202,7 @@ def handle_transfer_code_request(message, phone, amount):
             markup.add(btn)
     bot.reply_to(
         message,
-        f"‹ أكواد التحويل ›\nالرقم: <code>{phone}</code>\nالمبلغ: <code>{amount_text}</code>\n\nVodafone يمكنه استخدام الكود المباشر، بينما Etsleat / Orange / WE يفتحون قائمة التحويل الرسمية.",
+        f"‹ أكواد التحويل ›\nالرقم: <code>{phone}</code>\nالمبلغ: <code>{amount_text}</code>\n\nOrange: الكود المباشر يتطلب PIN المحفظة؛ استبدل <code>PIN</code> بالرقم السري الخاص بك قبل استخدامه. باقي الأكواد تعمل حسب قائمة التحويل الخاصة بكل محفظة.",
         reply_markup=markup
     )
     return True
@@ -2234,7 +2236,7 @@ def handle_extra_utilities(message):
         return send_star_price(message, star_amount)
 
     # هدايا Telegram: NFT وغير NFT بروابط Telegram العامة.
-    if re.search(r"https?://t\.me/(?:nft|gift|giftcode)/", raw, re.I):
+    if re.search(r"https?://t\.me/(?:nft|gift|giftcode|collectible)/", raw, re.I):
         return send_gift_price(message, raw)
     return False
 
@@ -6457,82 +6459,173 @@ def send_youtube_song(message, query, processing_message=None):
     return True
 
 def handle_music_command(message, query):
-    """
-    الأمر: يوت + اسم الأغنية.
-    يبحث في YouTube ويعرض النتائج، وبعد اختيار نتيجة ينزلها ويرسلها كرسالة صوتية OGG/Opus.
-    """
+    """يوت + اسم الأغنية: يبحث تلقائيًا عن أول نتيجة مناسبة ويرسلها كرسالة صوتية."""
     query = (query or "").strip()
     if not query:
-        bot.reply_to(
-            message,
-            "استخدم: <code>يوت اسم الأغنية</code>\n"
-            "أو: <code>تنزيل اسم الأغنية</code>"
-        )
+        bot.reply_to(message, "استخدم: <code>يوت اسم الأغنية</code>")
         return True
 
-    # البحث في خيط مستقل حتى لا يتوقف البوت أثناء انتظار YouTube.
-    processing = bot.reply_to(message, "🔎 جاري البحث عن الأغنية...")
+    processing = bot.reply_to(message, "جاري البحث عن الأغنية في YouTube...")
 
     def worker():
         try:
-            results, error = search_youtube_songs(query, limit=8)
-            if error:
-                try:
-                    bot.edit_message_text(
-                        html.escape(error),
-                        message.chat.id,
-                        processing.message_id,
-                        parse_mode="HTML"
-                    )
-                except Exception:
-                    bot.send_message(message.chat.id, error)
-                return
-
-            token = _store_music_search(
-                message.from_user.id if message.from_user else 0,
-                message.chat.id,
-                query,
-                results
-            )
-
-            try:
-                bot.delete_message(
-                    message.chat.id,
-                    processing.message_id
-                )
-            except Exception:
-                pass
-
-            send_youtube_search_results(
+            results, error = search_youtube_songs(query, limit=1)
+            if error or not results:
+                raise RuntimeError(error or "لم يتم العثور على الأغنية.")
+            item = results[0]
+            send_youtube_song(
                 message,
-                query,
-                results,
-                token
+                item.get("url") or query,
+                processing_message=processing
             )
-
         except Exception as e:
-            print("[YouTube Search Worker Error]", repr(e))
+            print("[Direct YouTube Music Error]", repr(e))
             try:
                 bot.edit_message_text(
-                    "تعذر البحث عن الأغنية حاليًا. جرّب مرة أخرى.",
+                    f"تعذر تنزيل الأغنية حاليًا: {html.escape(str(e))}",
                     message.chat.id,
                     processing.message_id,
                     parse_mode="HTML"
                 )
             except Exception:
                 try:
-                    bot.send_message(
-                        message.chat.id,
-                        "تعذر البحث عن الأغنية حاليًا. جرّب مرة أخرى."
-                    )
+                    bot.send_message(message.chat.id, "تعذر تنزيل الأغنية حاليًا. جرّب اسمًا آخر.")
                 except Exception:
                     pass
 
-    Thread(
-        target=worker,
-        daemon=True,
-        name="YouTubeSearch"
-    ).start()
+    Thread(target=worker, daemon=True, name="YouTubeDirectMusic").start()
+    return True
+
+
+def download_youtube_video(query):
+    """يبحث في YouTube وينزل أول نتيجة كفيديو مناسب لـ Telegram."""
+    query = (query or "").strip()
+    if not query:
+        return None, "اكتب اسم الفيديو بعد فيد."
+    yt_dlp = _ensure_ytdlp()
+    if yt_dlp is None:
+        return None, "تعذر تشغيل yt-dlp."
+
+    temp_dir = tempfile.mkdtemp(prefix="reemvideo_")
+    output = os.path.join(temp_dir, "%(id)s.%(ext)s")
+    base = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "socket_timeout": 40,
+        "retries": 4,
+        "fragment_retries": 4,
+        "extractor_retries": 3,
+        "file_access_retries": 3,
+        "outtmpl": output,
+        "geo_bypass": True,
+        "format": "bv*[height<=720]+ba/b[height<=720]/b",
+        "merge_output_format": "mp4",
+        "max_filesize": 49 * 1024 * 1024,
+    }
+    base.update(_youtube_runtime_options(yt_dlp, use_cookies=True))
+
+    try:
+        url = query
+        title = query
+        if not re.match(r"https?://(?:www\.)?(?:youtube\.com|youtu\.be)/", query, re.I):
+            found = None
+            for clients in (["web_embedded"], ["tv"], ["web_safari"], None):
+                try:
+                    opts = dict(base)
+                    opts["extract_flat"] = True
+                    if clients:
+                        opts["extractor_args"] = {"youtube": {"player_client": clients}}
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        data = ydl.extract_info("ytsearch1:" + query, download=False)
+                    entry = next((x for x in (data or {}).get("entries") or [] if x), None)
+                    if entry:
+                        vid = entry.get("id")
+                        url = entry.get("webpage_url") or (f"https://www.youtube.com/watch?v={vid}" if vid else "")
+                        title = entry.get("title") or query
+                        if url:
+                            found = True
+                            break
+                except Exception as exc:
+                    print("[Video Search Retry]", repr(exc))
+            if not found or not url:
+                fallback = _web_youtube_search(query, limit=1)
+                if fallback:
+                    url = fallback[0].get("url") or ""
+                    title = fallback[0].get("title") or query
+                if not url:
+                    raise RuntimeError("لم يتم العثور على فيديو في YouTube.")
+
+        opts = dict(base)
+        opts["outtmpl"] = output
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            title = str(info.get("title") or title).strip()
+            requested = info.get("requested_downloads") or []
+            candidates = [x.get("filepath") for x in requested if x.get("filepath")]
+            candidates += [str(x) for x in __import__("glob").glob(os.path.join(temp_dir, "*"))]
+            video_path = next((x for x in candidates if os.path.isfile(x) and os.path.getsize(x) > 1024), None)
+            if not video_path:
+                raise RuntimeError("تم التنزيل لكن لم يتم العثور على ملف الفيديو.")
+            if os.path.getsize(video_path) > 49 * 1024 * 1024:
+                raise RuntimeError("الفيديو أكبر من الحد الذي يمكن إرساله إلى Telegram.")
+            return (video_path, title, temp_dir), None
+    except Exception as e:
+        print("[YouTube Video Download Error]", repr(e))
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return None, str(e)
+
+
+def handle_video_command(message, query):
+    """فيد + اسم: يبحث تلقائيًا في YouTube ويرسل فيديو بدل الصوت."""
+    query = (query or "").strip()
+    if not query:
+        bot.reply_to(message, "استخدم: <code>فيد اسم الأغنية أو الفيلم</code>")
+        return True
+    processing = bot.reply_to(message, "جاري البحث عن الفيديو في YouTube...")
+
+    def worker():
+        result, error = download_youtube_video(query)
+        if error:
+            try:
+                bot.edit_message_text(
+                    f"تعذر تنزيل الفيديو: {html.escape(str(error))}",
+                    message.chat.id,
+                    processing.message_id,
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+            return
+        path, title, temp_dir = result
+        try:
+            try:
+                bot.edit_message_text("جاري إرسال الفيديو...", message.chat.id, processing.message_id)
+            except Exception:
+                pass
+            with open(path, "rb") as video_file:
+                bot.send_video(
+                    message.chat.id,
+                    video_file,
+                    caption=f'<b>{html.escape(title)}</b>\n\n• <b>DeV</b> | <a href="{SOURCE_DEVELOPER_URL}">@L1_D_R</a>',
+                    parse_mode="HTML",
+                    supports_streaming=True,
+                    reply_to_message_id=message.message_id,
+                )
+            try:
+                bot.delete_message(message.chat.id, processing.message_id)
+            except Exception:
+                pass
+        except Exception as e:
+            print("[YouTube Video Send Error]", repr(e))
+            try:
+                bot.edit_message_text("تعذر إرسال الفيديو إلى Telegram. جرّب نتيجة أخرى.", message.chat.id, processing.message_id)
+            except Exception:
+                pass
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    Thread(target=worker, daemon=True, name="YouTubeDirectVideo").start()
     return True
 
 
@@ -7252,7 +7345,7 @@ def handle_start_keyboard_button(message):
         return True
 
     if raw == "يوت":
-        bot.send_message(message.chat.id, "أرسل الآن اسم الأغنية، وسأبحث عنها في YouTube وأرسلها صوتية.")
+        bot.send_message(message.chat.id, "أرسل الآن اسم الأغنية، وسأبحث عنها في YouTube وأرسلها صوتية تلقائيًا.")
         music_pending[message.from_user.id] = message.chat.id
         return True
 
@@ -8484,6 +8577,11 @@ def main_handler(message):
                 handle_social_download(message, _command_arg)
                 return
 
+            if _clean_command in ("فيد", "فيديو", "فديو"):
+                if message.chat.type in ("group", "supergroup", "channel", "private"):
+                    handle_video_command(message, _command_arg)
+                    return
+
             if _clean_command in ("يوت", "يوتيوب", "اغنية", "أغنية"):
                 if message.chat.type in ("group", "supergroup", "channel", "private"):
                     handle_music_command(message, _command_arg)
@@ -8522,12 +8620,17 @@ def main_handler(message):
                 if resolved_fragment_wallet:
                     if send_ton_wallet_info(message, resolved_fragment_wallet, fragment_username=fragment_user):
                         return
-            if 'fragment.com/username/' in wallet_text.lower() or 'fragment.com/user/' in wallet_text.lower():
-                fragment_user = _extract_fragment_username(wallet_text)
-                if fragment_user:
-                    resolved_fragment_wallet = _resolve_fragment_username(fragment_user)
-                    if resolved_fragment_wallet and send_ton_wallet_info(message, resolved_fragment_wallet, fragment_username=fragment_user):
-                        return
+                else:
+                    mk = types.InlineKeyboardMarkup(row_width=1)
+                    b = transparent_url_button("R e e m", SOURCE_CHANNEL_URL, CE_DEV_BUTTON)
+                    if b:
+                        mk.add(b)
+                    bot.reply_to(
+                        message,
+                        "<blockquote>اليوزر مش منصة ياروحي</blockquote>",
+                        reply_markup=mk
+                    )
+                    return
 
         if handle_extra_utilities(message):
             return
@@ -9033,7 +9136,7 @@ def send_secret_whisper(message, session, secret_text):
     mk.add(button("‹ فتح الهمسة ›", callback_data=f"whisperopen:{token}", style="primary"))
     bot.send_message(
         int(session["group_chat_id"]),
-        f"‹ ︙وصلتك همسه سرية يـ <a href=\"tg://user?id={target_id}\">{target_name}</a>",
+        f"وصلتك همسة يا <a href=\"tg://user?id={target_id}\">{target_name}</a>",
         reply_markup=mk
     )
     return True
@@ -9089,11 +9192,11 @@ def handle_command(
         start_url = f"https://t.me/{BOT_USERNAME}?start=prox{token}"
         target_name = html.escape(full_name(target))
         mk = types.InlineKeyboardMarkup(row_width=1)
-        mk.add(button("‹ ︙اضغط لي ارسال همستك السرية ›", url=start_url, style="primary"))
+        mk.add(button("‹ دخول للبوت وكتابة الهمسة ›", url=start_url, style="primary"))
         bot.reply_to(
             message,
-            f"‹ ︙تم تحديد الهمسه الى <a href=\"tg://user?id={target.id}\">{target_name}</a>\n"
-            f"‹ ︙اضغط لي ارسال همستك السرية",
+            f"‹ ︙تم تحديد الهمسه لـ <a href=\"tg://user?id={target.id}\">{target_name}</a>\n"
+            f"‹ ︙اضغط الزر لكتابة الهمسة",
             reply_markup=mk
         )
         return True
@@ -10307,7 +10410,7 @@ def callbacks(call):
             secret_text = str(whisper["text"])
             _get_thread_db().execute("UPDATE whisper_messages SET revealed=1 WHERE token=?", (token,))
             _get_thread_db().commit()
-            # answer_callback_query يظهر التنبيه لصاحب الضغط فقط.
+            # تنبيه callback يظهر لصاحب الضغط فقط، ولا يرسل النص كرسالة للمجموعة.
             bot.answer_callback_query(call.id, secret_text[:195], show_alert=True)
             return
 
@@ -11503,8 +11606,8 @@ def run_bot_forever():
             ):
                 conflict_count += 1
                 print(
-                    "[ايوا ياليدر ياريقققق"
-                    "يعمل ياليدر آخر"
+                    "[POLLING 409] يوجد تشغيل آخر لنفس البوت بنفس التوكن. "
+                    "أغلق النسخة الأخرى أو غيّر التوكن من BotFather."
                 )
                 time.sleep(min(30, 5 + conflict_count * 3))
             else:
