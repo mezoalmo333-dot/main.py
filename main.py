@@ -31,7 +31,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "8878742478:AAH8GEda3431adptHolRakROxX_VAZea7
 
 DEVELOPER_ID = 8037399518
 BOT_USERNAME = "v_u_kbot"
-BOT_DISPLAY_NAME = "R e e m ✨"
+BOT_DISPLAY_NAME = "@v_u_kbot"
 DB_NAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "protection_bot.db")
 
 # =========================================================
@@ -3366,7 +3366,6 @@ COMMAND_BUTTONS = {
     "ton": ["1ton", "1تون", "تحليل تون", "تحليل دولار", "محفظة"],
     "music": ["يوت", "يوتيوب", "اغنية", "تنزيل {اسم الأغنية}"],
     "images": ["صور"],
-    "games": ["انشاء", "حسابي", "فلوسي", "حول {رقم}", "راتب", "بخشيش", "كنز", "استثمار {رقم}", "مضاربه {رقم}", "حظ {رقم}", "سرقه", "هجوم {رقم}", "قرض", "تسديد القرض", "قروضي", "متجر البنك", "شراء {اسم}", "بيع {اسم}", "مشترياتي", "بيع مشترياتي", "زواج {مهر}", "زواجي", "طالق", "توب الفلوس", "توب الحراميه", "توب المتزوجين", "قائمه اكشطها", "اكشط {رقم}", "ميدالياتي"],
 }
 
 COMMAND_BUTTONS["all"] = list(dict.fromkeys(
@@ -3377,7 +3376,7 @@ COMMAND_CATEGORY_TITLES = {
     "groups": "أوامر المجموعات", "protection": "أوامر الحماية", "locks": "أوامر القفل",
     "unlocks": "أوامر الفتح", "admin": "أوامر الإدارة", "ranks": "أوامر الرتب",
     "replies": "أوامر الردود", "ton": "أوامر TON", "music": "أوامر الأغاني",
-    "images": "أوامر الصور", "games": "أوامر الألعاب",
+    "images": "أوامر الصور",
 }
 
 def command_buttons_markup(category, viewer_id=None, chat_id=None):
@@ -3429,7 +3428,6 @@ def commands_menu_markup(viewer_id=None, chat_id=None):
         button("أوامر الصور", callback_data=f"cmdcat:{token}:images", style="primary", icon_custom_emoji_id=CE_COMMANDS),
         button("أوامر الردود", callback_data=f"cmdcat:{token}:replies", style="primary", icon_custom_emoji_id=CE_COMMANDS)
     )
-    markup.row(button("أوامر الألعاب", callback_data=f"cmdcat:{token}:games", style="primary", icon_custom_emoji_id="5215420556089776398"))
     markup.row(button("كل الأوامر", callback_data=f"cmdcat:{token}:all", style="primary", icon_custom_emoji_id=CE_COMMANDS))
     return markup
 
@@ -3447,22 +3445,26 @@ def command_category_text(category, viewer_id=None, chat_id=None):
         "ton": "💎 <b>أوامر TON</b>\n\n<code>1ton</code> أو <code>1تون</code> — سعر TON\n<code>تحليل تون</code> — تحليل آخر 24 ساعة\n<code>تحليل دولار</code> — سعر الدولار مقابل الجنيه",
         "music": "🎵 <b>أوامر الأغاني</b>\n\n<code>تنزيل {اسم الأغنية}</code> — يبحث في YouTube ويرسل الأغنية كملف صوتي.",
         "images": "أوامر الصور\n\n<code>صور</code> — إرسال صورة من الصور التي أضافها المطور.",
-        "games": "<b>أوامر الألعاب والعملات</b>\n\n<code>انشاء</code> — فتح حساب بنكي جديد و1,000 هدية\n<code>حسابي</code> أو <code>فلوسي</code> — عرض بطاقة حسابك ورصيدك\n<code>حول {رقم}</code> — تحويل أموال لشخص بالرد\n<code>راتب</code> • <code>بخشيش</code> • <code>كنز</code>\n<code>استثمار {رقم}</code> • <code>مضاربه {رقم}</code> • <code>حظ {رقم}</code>\n<code>سرقه</code> • <code>هجوم {رقم}</code> بالرد\n<code>قرض</code> • <code>تسديد القرض</code> • <code>قروضي</code>\n<code>متجر البنك</code> • <code>شراء {اسم}</code> • <code>بيع {اسم}</code>\n<code>مشترياتي</code> • <code>بيع مشترياتي</code>\n<code>زواج {مهر}</code> • <code>زواجي</code> • <code>طالق</code>\n<code>توب الفلوس</code> • <code>توب الحراميه</code> • <code>توب المتزوجين</code>\n<code>قائمه اكشطها</code> • <code>اكشط {رقم}</code> • <code>ميدالياتي</code>",
     }
     return texts.get(category, "📚 <b>قائمة أوامر البوت</b>")
 
 
 def format_commands_as_quotes(text):
-    """تحويل سطور الأوامر إلى رسائل مقتبسة بدل أزرار الأوامر."""
+    """عرض الأوامر كنصوص مقتبسة متتالية بدون أسطر فارغة بينها."""
     if not text:
         return text
     output = []
-    for line in text.split("\n"):
+    for line in text.splitlines():
         stripped = line.strip()
+        if not stripped:
+            continue
         if "<code>" in stripped and "</code>" in stripped:
-            output.append(f"<blockquote>{stripped}</blockquote>")
+            # لو السطر يحتوي أكثر من أمر مفصولًا بـ • نفصلها إلى أسطر مقتبسة.
+            parts = [part.strip() for part in re.split(r"\s*•\s*", stripped) if part.strip()]
+            for part in parts:
+                output.append(f"<blockquote>{part}</blockquote>")
         else:
-            output.append(line)
+            output.append(stripped)
     return "\n".join(output)
 
 
@@ -3636,6 +3638,7 @@ reply_pending = {}
 admin_pending = {}
 music_pending = {}
 broadcast_pending = {}
+updates_broadcast_pending = {}
 # نتائج بحث YouTube المؤقتة: token -> {user_id, chat_id, results, created_at}
 music_searches = {}
 music_search_lock = Lock()
@@ -4300,8 +4303,9 @@ def admin_panel_markup():
     )
     markup.row(
         button("الإذاعة", callback_data="admin:broadcast", style="primary", icon_custom_emoji_id=a),
-        button("السجل", callback_data="admin:actions", style="primary", icon_custom_emoji_id=a)
+        button("إذاعة تحديثات البوت", callback_data="admin:updates_broadcast", style="primary", icon_custom_emoji_id=a)
     )
+    markup.row(button("السجل", callback_data="admin:actions", style="primary", icon_custom_emoji_id=a))
     markup.row(
         button("تصدير الأعضاء", callback_data="admin:export", style="primary", icon_custom_emoji_id=a),
         button("استرجاع الأعضاء", callback_data="admin:restore", style="primary", icon_custom_emoji_id=a)
@@ -4341,8 +4345,9 @@ def admin_control_markup():
     )
     markup.row(
         button("الإذاعة", callback_data="admin:broadcast", icon_custom_emoji_id=CE_REPLY_BUTTON),
-        button("إضافة رد عام", callback_data="admin:global_reply", icon_custom_emoji_id=CE_REPLY_BUTTON)
+        button("إذاعة تحديثات البوت", callback_data="admin:updates_broadcast", icon_custom_emoji_id=CE_REPLY_BUTTON)
     )
+    markup.row(button("إضافة رد عام", callback_data="admin:global_reply", icon_custom_emoji_id=CE_REPLY_BUTTON))
     markup.row(
         button("الاشتراك الإجباري", callback_data="admin:force_channels", icon_custom_emoji_id=CE_FORCE_SUB),
         button("السجل", callback_data="admin:actions", icon_custom_emoji_id=CE_COMMANDS)
@@ -4806,7 +4811,7 @@ def ensure_default_force_channel():
                 username,
                 getattr(chat, "title", "") or "Ssource_MaX",
                 url,
-                "updatedR e e m",
+                "Update Bot",
                 CE_FORCE_SUB
             )
         )
@@ -5096,6 +5101,7 @@ YOUTUBE_COOKIES = """# Netscape HTTP Cookie File
 .youtube.com	TRUE	/	TRUE	1802154633	__Secure-ROLLOUT_TOKEN	CIHe4sDo2eaE-wEQoozup_2clgMYvNLauv2clgM%3D
 .youtube.com	TRUE	/	TRUE	1820730593	__Secure-YEC	CgtSMXpxX3Z4cEtOSSji9fXTBjIKCgJERRIEEgAgV2LgAgrdAjE3LllURT1PcnJ3OUxQYkNZMXRjanpzZTRrMUw5Yjl0UmZKRTZiMjJzdkJLaE84N0lScjI5eHlRVHZFdm5RaGNyMWxXdHZ6T0lJckZTSXFTaFhubUNsLWVaRjFhY2hHVzJmMFdnNlpMTXFGZHRCeTNwUmQtR2UtWHYzU2V2Y0wzN1licWpKUnc1MEwxMzRvR2VGeW0tRkxPbnlpeVE2T3dxX3JQQWRJbGMtLVJPX3RLVXZJaWRfRndrR3VvSUVJeF9sWDFvWUg0cTJRNTlTRzVieHlhVjFDeDVSR01HVjdGNDhncFJ4RUJwZ2tEMzZ3elFDdGRDRFpqaXRwZXV5dTRYVzNOZ3pHakZxdUJRVEQ5SmV1OTh4WkhWek5vMXdueDhqWlVUZGVWQkFSTkQxdk1hVGZfYTVDdHU2aWZvSTh1VUZJZm4yYURZSTF3c2x6VV9JMlRjczBJZ09TVVE%3D
 .youtube.com	TRUE	/	TRUE	1820730594	__Secure-YENID	17.YTE=Orrw9LPbCY1tcjzse4k1L9b9tRfJE6b22svBKhO87IRr29xyQTvEvnQhcr1lWtvzOIIrFSIqShXnmCl-eZF1achGW2f0Wg6ZLMqFdtBy3pRd-Ge-Xv3SevcL37YbqjJRw50L134oGeFym-FLOnyiyQ6Owq_rPAdIlc--RO_tKUvIid_FwkGuoIEIx_lX1oYH4q2Q59SG5bxyaV1Cx5RGMGV7F48gpRxEBpgkD36wzQCtdCDZjitpeuyu4XW3NgzGjFquBQTD9Jeu98xZHVzNo1wnx8jZUTdeVBARND1vMaTf_a5Ctu6ifoI8uUFIfn2aDYI1wslzU_I2Tcs0IgOSUQ
+
 """.strip()
 
 _cookie_runtime_file = None
@@ -6284,7 +6290,7 @@ def image_menu_markup():
 
 def start_inline_markup(user_id):
     markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.row(button("‹ Updates BoT @v_u_kbot ›", url=SOURCE_CHANNEL_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
+    markup.row(button("​​‹  Update BoT ​ ​›", url=SOURCE_CHANNEL_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
     markup.row(
         button("‹ LeAaDeR ›", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI),
         button("‹ DeV ›", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI)
@@ -6859,6 +6865,34 @@ def perform_broadcast(source_message, scope="all", reply_markup=None, progress_c
     return ok, failed
 
 
+
+def updates_broadcast_markup(buttons):
+    """إنشاء أزرار روابط شفافة لتحديثات البوت؛ يدعم عددًا كبيرًا من الأزرار."""
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for item in buttons[:30]:
+        b = transparent_url_button(item.get("text", "زر"), item.get("url", ""), item.get("emoji_id") or None)
+        if b:
+            markup.row(b)
+    return markup
+
+
+def start_updates_broadcast(message):
+    """إذاعة تحديثات منفصلة عن الإذاعة العامة، مع أكثر من 15 زر رابط."""
+    if not message.from_user or message.from_user.id != DEVELOPER_ID:
+        return False
+    updates_broadcast_pending[message.from_user.id] = {
+        "message": None,
+        "buttons": [],
+        "step": "message"
+    }
+    admin_pending[message.from_user.id] = "updates_broadcast_message"
+    bot.send_message(
+        message.chat.id,
+        "أرسل رسالة تحديث البوت الآن بأي نوع يدعمه Telegram.\n"
+        "بعدها سأجمع أزرار الروابط واحدًا واحدًا. يمكنك إضافة أكثر من 15 زر، وحتى 30 زرًا."
+    )
+    return True
+
 def start_broadcast(message):
     admin_pending[message.from_user.id] = "broadcast_message"
     bot.send_message(
@@ -7154,6 +7188,73 @@ def main_handler(message):
                 _missing_private = force_sub_missing(message.from_user.id)
                 if _missing_private:
                     send_force_sub_prompt(message, _missing_private)
+                    return
+
+            # إذاعة تحديثات البوت المنفصلة عن الإذاعة العامة.
+            if message.from_user and message.from_user.id == DEVELOPER_ID and message.from_user.id in updates_broadcast_pending:
+                state = updates_broadcast_pending.get(message.from_user.id) or {}
+                pending = admin_pending.get(message.from_user.id, "")
+                if pending == "updates_broadcast_message" and state.get("message") is None:
+                    state["message"] = message
+                    state["step"] = "button_text"
+                    admin_pending[message.from_user.id] = "updates_broadcast_button_text"
+                    bot.send_message(
+                        message.chat.id,
+                        "تم حفظ التحديث. أرسل الآن اسم أول زر.\n"
+                        "يمكنك إرسال Premium Emoji مع اسم الزر وسيتم التقاطه تلقائيًا.\n"
+                        "ولإنهاء الأزرار اكتب: تم"
+                    )
+                    return
+
+                if pending == "updates_broadcast_button_text":
+                    raw = (message.text or "").strip()
+                    if clean_text(raw) in ("تم", "انهاء", "إنهاء"):
+                        buttons = state.get("buttons", [])
+                        if len(buttons) < 16:
+                            bot.send_message(message.chat.id, "لازم تضيف 16 زرًا على الأقل في إذاعة التحديثات. أرسل اسم الزر التالي.")
+                            return
+                        source = state.get("message")
+                        markup = updates_broadcast_markup(buttons)
+                        admin_pending.pop(message.from_user.id, None)
+                        updates_broadcast_pending.pop(message.from_user.id, None)
+                        bot.send_message(message.chat.id, "جاري إذاعة تحديثات البوت...")
+                        ok, failed = perform_broadcast(source, "all", markup if markup.keyboard else None, progress_chat_id=message.chat.id)
+                        bot.send_message(message.chat.id, f"تمت إذاعة التحديثات إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
+                        return
+                    if not raw:
+                        bot.send_message(message.chat.id, "أرسل اسم الزر أو اكتب تم لإنهاء الأزرار.")
+                        return
+                    state["draft_text"] = strip_non_custom_emoji(raw).strip()
+                    state["draft_emoji_id"] = extract_custom_emoji_id(message) or ""
+                    admin_pending[message.from_user.id] = "updates_broadcast_button_url"
+                    bot.send_message(message.chat.id, "أرسل رابط الزر الآن (http:// أو https:// أو tg://).")
+                    return
+
+                if pending == "updates_broadcast_button_url":
+                    state = updates_broadcast_pending.get(message.from_user.id) or {}
+                    url = (message.text or "").strip()
+                    if not re.match(r"^(?:https?|tg)://\\S+$", url, re.I):
+                        bot.send_message(message.chat.id, "الرابط غير صالح. أرسل الرابط كاملًا.")
+                        return
+                    buttons = state.setdefault("buttons", [])
+                    buttons.append({
+                        "text": state.get("draft_text", "زر"),
+                        "url": url,
+                        "emoji_id": state.get("draft_emoji_id", "")
+                    })
+                    state.pop("draft_text", None)
+                    state.pop("draft_emoji_id", None)
+                    if len(buttons) >= 30:
+                        source = state.get("message")
+                        markup = updates_broadcast_markup(buttons)
+                        admin_pending.pop(message.from_user.id, None)
+                        updates_broadcast_pending.pop(message.from_user.id, None)
+                        bot.send_message(message.chat.id, "تم الوصول إلى الحد الأقصى 30 زرًا. جاري إذاعة التحديثات...")
+                        ok, failed = perform_broadcast(source, "all", markup if markup.keyboard else None, progress_chat_id=message.chat.id)
+                        bot.send_message(message.chat.id, f"تمت إذاعة التحديثات إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
+                        return
+                    admin_pending[message.from_user.id] = "updates_broadcast_button_text"
+                    bot.send_message(message.chat.id, f"تمت إضافة الزر رقم <b>{len(buttons)}</b>. أرسل اسم الزر التالي أو اكتب تم.")
                     return
 
             if message.from_user and message.from_user.id == DEVELOPER_ID and str(admin_pending.get(message.from_user.id, "")).startswith("broadcast_message:"):
@@ -9187,6 +9288,11 @@ def callbacks(call):
 
             if action == "actions":
                 send_admin_section(call, admin_actions_text())
+                return
+
+            if action == "updates_broadcast":
+                bot.answer_callback_query(call.id)
+                start_updates_broadcast(call.message)
                 return
 
             if action == "broadcast":
