@@ -2743,13 +2743,12 @@ def target_is_admin(chat_id, user_id):
 
 
 def get_rank(chat_id, user_id):
-    # المطور هو مالك البوت، وتكون رتبته "المالك" في كل مجموعة.
-    if is_developer(user_id):
-        return "owner"
+    """ترجع رتبة نظام البوت فقط.
 
-    if is_creator(chat_id, user_id):
-        return "owner"
-
+    مهم: مشرف Telegram لا يتحول تلقائيًا إلى رتبة ``admin`` داخل
+    قاعدة بيانات البوت. صلاحيات مشرف Telegram للمجموعة تُحسب بشكل
+    منفصل عبر ``get_group_access_rank``.
+    """
     cursor.execute(
         """
         SELECT rank
@@ -2760,8 +2759,29 @@ def get_rank(chat_id, user_id):
     )
 
     row = cursor.fetchone()
-
     return row["rank"] if row else "member"
+
+
+def get_group_access_rank(chat_id, user_id):
+    """رتبة الصلاحيات الفعلية لأوامر المجموعة فقط.
+
+    - مالك البوت: صلاحيات كاملة داخل المجموعة.
+    - مالك المجموعة/مشرف Telegram: صلاحيات إدارة المجموعة.
+    - الرتب المحفوظة داخل البوت تبقى كما هي ولا يتم إنشاء رتبة جديدة.
+    """
+    stored_rank = get_rank(chat_id, user_id)
+
+    if is_developer(user_id):
+        return "owner"
+
+    if is_creator(chat_id, user_id):
+        return "owner"
+
+    member = get_member(chat_id, user_id)
+    if member and getattr(member, "status", "") == "administrator":
+        return "admin" if rank_level(stored_rank) < rank_level("admin") else stored_rank
+
+    return stored_rank
 
 
 def rank_level(rank):
@@ -2839,6 +2859,15 @@ def can_manage_rank(actor_rank, target_rank, action):
         return target_rank != "assistant_owner"
 
     if actor_rank == "manager":
+        return target_rank in (
+            "admin",
+            "moderator",
+            "animal"
+        )
+
+    # كل أدمن Telegram / رتبة أدمن يملك صلاحيات إدارة المشرفين
+    # والرتب الأدنى، لكن لا يستطيع تعديل المدير أو مساعد المالك.
+    if actor_rank == "admin":
         return target_rank in (
             "admin",
             "moderator",
@@ -2980,12 +3009,12 @@ def target_protected(message, target):
     if not target:
         return True
 
-    tr = get_rank(
+    tr = get_group_access_rank(
         message.chat.id,
         target.id
     )
 
-    ar = get_rank(
+    ar = get_group_access_rank(
         message.chat.id,
         message.from_user.id
     )
@@ -3006,7 +3035,7 @@ def admin_required(message):
     ):
         return False
 
-    ar = get_rank(
+    ar = get_group_access_rank(
         message.chat.id,
         message.from_user.id
     )
@@ -3099,6 +3128,14 @@ def get_target(message, argument=""):
             )
 
             return m.user if m else None
+
+        # fallback: لو اليوزر غير مسجل في قاعدة البيانات، نحاول جلبه مباشرة من Telegram.
+        try:
+            chat_obj = bot.get_chat("@" + username)
+            m = get_member(message.chat.id, chat_obj.id)
+            return m.user if m else None
+        except Exception:
+            pass
 
     # بدون هدف صريح: استخدم المستخدم الذي تم الرد عليه.
     if (
@@ -8016,9 +8053,23 @@ def broadcast_scope_markup():
 def broadcast_button_choice(uid):
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.row(
-        button("زر شفاف", callback_data=f"broadcast_btn_yes:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI),
+        button("إضافة زر", callback_data=f"broadcast_btn_yes:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI),
         button("إرسال الآن", callback_data=f"broadcast_btn_no:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI)
     )
+    return markup
+
+
+def broadcast_buttons_more_choice(uid, count):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    if count < 30:
+        markup.row(
+            button("إضافة زر آخر", callback_data=f"broadcast_btn_yes:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI),
+            button("إرسال الآن", callback_data=f"broadcast_btn_finish:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI)
+        )
+    else:
+        markup.row(
+            button("إرسال الآن", callback_data=f"broadcast_btn_finish:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI)
+        )
     return markup
 
 
@@ -8373,7 +8424,7 @@ def main_handler(message):
 
             if message.from_user and message.from_user.id == DEVELOPER_ID and str(admin_pending.get(message.from_user.id, "")).startswith("broadcast_message:"):
                 pending_scope = str(admin_pending.pop(message.from_user.id)).split(":", 1)[1]
-                broadcast_pending[message.from_user.id] = {"message": message, "scope": pending_scope}
+                broadcast_pending[message.from_user.id] = {"message": message, "scope": pending_scope, "buttons": []}
                 bot.send_message(
                     message.chat.id,
                     "تم تجهيز رسالة الإذاعة. هل تريد إضافة زر شفاف؟",
@@ -8441,16 +8492,36 @@ def main_handler(message):
                     emoji_id = extract_custom_emoji_id(message)
                     if raw and clean_text(raw) in ("تخطي", "بدون", "لا"):
                         emoji_id = ""
-                    data["button_emoji_id"] = emoji_id or ""
+
+                    buttons = data.setdefault("buttons", [])
+                    buttons.append({
+                        "text": data.get("button_text", "زر"),
+                        "url": data.get("button_url", ""),
+                        "emoji_id": emoji_id or ""
+                    })
+                    data.pop("button_text", None)
+                    data.pop("button_url", None)
+                    data.pop("button_emoji_id", None)
+
                     admin_pending.pop(message.from_user.id, None)
-                    source = data["message"]
-                    b = transparent_url_button(data.get("button_text", "زر"), data.get("button_url", ""), data.get("button_emoji_id") or None)
-                    markup = types.InlineKeyboardMarkup()
-                    if b:
-                        markup.add(b)
-                    ok, failed = perform_broadcast(source, data.get("scope", "all"), markup if markup.keyboard else None)
-                    broadcast_pending.pop(message.from_user.id, None)
-                    bot.send_message(message.chat.id, f"تمت الإذاعة إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
+                    count = len(buttons)
+                    if count >= 30:
+                        source = data["message"]
+                        markup = types.InlineKeyboardMarkup(row_width=2)
+                        for item in buttons:
+                            b = transparent_url_button(item["text"], item["url"], item.get("emoji_id") or None)
+                            if b:
+                                markup.add(b)
+                        ok, failed = perform_broadcast(source, data.get("scope", "all"), markup if markup.keyboard else None)
+                        broadcast_pending.pop(message.from_user.id, None)
+                        bot.send_message(message.chat.id, f"تمت الإذاعة إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
+                        return
+
+                    bot.send_message(
+                        message.chat.id,
+                        f"تمت إضافة الزر رقم <b>{count}</b>. اختر ما تريد الآن:",
+                        reply_markup=broadcast_buttons_more_choice(message.from_user.id, count)
+                    )
                     return
 
             if message.from_user and message.from_user.id == DEVELOPER_ID and message.document and admin_pending.get(message.from_user.id) == "restore_members":
@@ -8821,11 +8892,13 @@ def rank_action(
 
     actor = message.from_user
 
-    actor_rank = get_rank(
+    actor_rank = get_group_access_rank(
         chat_id,
         actor.id
     )
 
+    # الهدف يُقرأ من رتب البوت فقط، حتى لا يتحول مشرف Telegram
+    # تلقائيًا إلى رتبة داخل نظام الرتب.
     target_rank = get_rank(
         chat_id,
         target.id
@@ -8904,7 +8977,8 @@ def rank_action(
         and actor_rank not in (
             "owner",
             "assistant_owner",
-            "manager"
+            "manager",
+            "admin"
         )
     ):
 
@@ -9310,20 +9384,22 @@ def handle_command(
 
     # أوامر المشرف الصريحة
     if command in ("تنزيل_مشرف", "تنزيلمشرف") or (
-        command == "تنزيل" and clean_text(argument) == "مشرف"
+        command == "تنزيل" and clean_text(argument).startswith("مشرف")
     ):
-        target = get_target(message, "")
+        target_arg = re.sub(r"^مشرف\s*", "", argument or "", flags=re.I).strip()
+        target = get_target(message, target_arg)
         if not target:
-            bot.reply_to(message, "استخدم الأمر بالرد على العضو: <code>تنزيل مشرف</code>")
+            bot.reply_to(message, "استخدم الأمر بالرد على العضو أو اكتب: <code>تنزيل مشرف @username</code> أو <code>تنزيل مشرف ID</code>")
             return True
         return rank_action(message, "تنزيل", "moderator", target)
 
     if command in ("رفع_مشرف", "رفعمشرف") or (
-        command == "رفع" and clean_text(argument) == "مشرف"
+        command == "رفع" and clean_text(argument).startswith("مشرف")
     ):
-        target = get_target(message, "")
+        target_arg = re.sub(r"^مشرف\s*", "", argument or "", flags=re.I).strip()
+        target = get_target(message, target_arg)
         if not target:
-            bot.reply_to(message, "استخدم الأمر بالرد على العضو: <code>رفع مشرف</code>")
+            bot.reply_to(message, "استخدم الأمر بالرد على العضو أو اكتب: <code>رفع مشرف @username</code> أو <code>رفع مشرف ID</code>")
             return True
         return rank_action(message, "رفع", "moderator", target)
 
@@ -10743,9 +10819,36 @@ def callbacks(call):
             if uid != DEVELOPER_ID or target_uid != uid or uid not in broadcast_pending:
                 bot.answer_callback_query(call.id, "هذه العملية ليست لك أو انتهت.", show_alert=True)
                 return
+            data = broadcast_pending.get(uid)
+            if len(data.get("buttons", [])) >= 30:
+                bot.answer_callback_query(call.id, "وصلت للحد الأقصى 30 زرًا.", show_alert=True)
+                return
             admin_pending[uid] = "broadcast_button_text"
             bot.answer_callback_query(call.id)
-            bot.send_message(chat_id, "أرسل اسم الزر الشفاف.")
+            bot.send_message(chat_id, f"أرسل اسم الزر رقم <b>{len(data.get('buttons', [])) + 1}</b>.")
+            return
+
+        if call.data.startswith("broadcast_btn_finish:"):
+            try:
+                target_uid = int(call.data.split(":", 1)[1])
+            except Exception:
+                target_uid = -1
+            data = broadcast_pending.get(uid)
+            if uid != DEVELOPER_ID or target_uid != uid or not data:
+                bot.answer_callback_query(call.id, "هذه العملية ليست لك أو انتهت.", show_alert=True)
+                return
+            admin_pending.pop(uid, None)
+            source = data["message"]
+            buttons = data.get("buttons", [])
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            for item in buttons:
+                b = transparent_url_button(item.get("text", "زر"), item.get("url", ""), item.get("emoji_id") or None)
+                if b:
+                    markup.add(b)
+            broadcast_pending.pop(uid, None)
+            bot.answer_callback_query(call.id, "جاري الإرسال...")
+            ok, failed = perform_broadcast(source, data.get("scope", "all"), markup if markup.keyboard else None, progress_chat_id=chat_id)
+            bot.send_message(chat_id, f"تمت الإذاعة إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
             return
 
         if call.data.startswith("broadcast_btn_no:"):
@@ -10975,7 +11078,7 @@ def callbacks(call):
         if call.data == "settings":
 
             if not can_use_moderation(
-                get_rank(
+                get_group_access_rank(
                     chat_id,
                     uid
                 )
@@ -11080,8 +11183,8 @@ def callbacks(call):
             target = p["target"]
 
             if not can_manage_rank(
-                get_rank(chat_id, uid),
-                get_rank(chat_id, target.id),
+                get_group_access_rank(chat_id, uid),
+                get_group_access_rank(chat_id, target.id),
                 "رفع"
             ):
 
@@ -11222,7 +11325,7 @@ def callbacks(call):
             except Exception:
                 bot.answer_callback_query(call.id, "بيانات غير صحيحة", show_alert=True)
                 return
-            if not can_use_moderation(get_rank(chat_id, uid)):
+            if not can_use_moderation(get_group_access_rank(chat_id, uid)):
                 bot.answer_callback_query(call.id, "هذا الزر للأدمن فما فوق.", show_alert=True)
                 return
             try:
@@ -11242,7 +11345,7 @@ def callbacks(call):
 
         # صلاحيات الإدارة
         if not can_use_moderation(
-            get_rank(
+            get_group_access_rank(
                 chat_id,
                 uid
             )
@@ -11365,7 +11468,7 @@ def protection_engine(message):
     uid = message.from_user.id
 
     if can_use_moderation(
-        get_rank(
+        get_group_access_rank(
             chat_id,
             uid
         )
