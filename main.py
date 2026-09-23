@@ -31,7 +31,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "8878742478:AAH8GEda3431adptHolRakROxX_VAZea7
 
 DEVELOPER_ID = 8037399518
 BOT_USERNAME = "v_u_kbot"
-BOT_DISPLAY_NAME = "R e e m "
+BOT_DISPLAY_NAME = "@v_u_kbot"
 DB_NAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "protection_bot.db")
 
 # =========================================================
@@ -711,6 +711,16 @@ CREATE TABLE IF NOT EXISTS bot_private_users (
 """)
 db.commit()
 
+# مستخدمون ثبت فشل الإرسال إليهم بسبب حظر البوت/إغلاق الحساب.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS broadcast_blocked_users (
+    user_id INTEGER PRIMARY KEY,
+    reason TEXT DEFAULT '',
+    blocked_at INTEGER DEFAULT 0
+)
+""")
+db.commit()
+
 # القنوات التي وصلت منها منشورات إلى البوت، لاستخدامها في إذاعة القنوات.
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS broadcast_channels (
@@ -1022,7 +1032,7 @@ def command_parts(message):
         elif second_clean in ("دولار", "الدولار", "usd"):
             command = "تحليل_دولار"
             argument = argument[len(second):].strip()
-        elif second_clean in ("usdt", "ustd"):
+        elif second_clean in ("usdt", "ustd", "يوستيد"):
             command = "تحليل_usdt"
             argument = argument[len(second):].strip()
 
@@ -3361,12 +3371,12 @@ COMMAND_BUTTONS = {
     "protection": ["منع كلمة ...", "الغاء منع كلمة ...", "قائمة الكلمات", "قفل الروابط", "قفل التكرار", "قفل حماية الجدد"],
     "locks": ["قفل الروابط", "قفل الصور", "قفل الفيديو", "قفل الملفات", "قفل الملصقات", "قفل الصوت", "قفل المتحركات", "قفل التكرار", "قفل حماية الجدد", "قفل الجروب", "قفل الكل"],
     "unlocks": ["فتح الروابط", "فتح الصور", "فتح الفيديو", "فتح الملفات", "فتح الملصقات", "فتح الصوت", "فتح المتحركات", "فتح التكرار", "فتح حماية الجدد", "فتح الجروب", "فتح الكل"],
-    "admin": ["حظر", "فك حظر", "حظر عام", "طرد", "كتم", "فك كتم", "تحذير", "تحذيرات", "مسح التحذيرات", "الغاء تحذير", "قفل الجروب", "فتح الجروب"],
+    "admin": ["حظر", "فك حظر", "حظر عام", "طرد", "طرد البوتات", "كتم", "فك كتم", "تحذير", "تحذيرات", "مسح التحذيرات", "الغاء تحذير", "مسح", "حذف", "منشن", "تاك", "منشن الجميع", "منشن المشرفين", "قفل الجروب", "فتح الجروب"],
     "ranks": ["رفع مطور اساسي", "تنزيل مطور اساسي", "رفع مساعد المالك", "تنزيل مساعد المالك", "رفع مدير", "تنزيل مدير", "رفع ادمن", "تنزيل ادمن", "رفع مشرف", "تنزيل مشرف", "رفع حيوان", "تنزيل حيوان"],
     "replies": ["اضف رد", "حذف رد", "قائمة الردود"],
-    "ton": ["1ton", "1تون", "تحليل تون", "تحليل دولار", "محفظة"],
-    "music": ["يوت", "يوتيوب", "اغنية", "تنزيل {اسم الأغنية}"],
-    "images": ["صور"],
+    "ton": ["1ton", "1تون", "يوستيد", "usdt", "تحليل تون", "تحليل دولار", "محفظة"],
+    "music": ["يوت", "يوتيوب", "اغنية", "تنزيل", "تنزيل + رابط الفيديو"],
+    "images": ["صور", "زخرف"],
 }
 
 COMMAND_BUTTONS["all"] = list(dict.fromkeys(
@@ -3436,32 +3446,47 @@ def command_category_text(category, viewer_id=None, chat_id=None):
         "locks": "<b>أوامر القفل</b>\n<code>قفل الروابط</code>\n<code>قفل الصور</code>\n<code>قفل الفيديو</code>\n<code>قفل الملفات</code>\n<code>قفل الملصقات</code>\n<code>قفل الصوت</code>\n<code>قفل المتحركات</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>\n<code>قفل الجروب</code>\n<code>قفل الكل</code>",
         "unlocks": "<b>أوامر الفتح</b>\n<code>فتح الروابط</code>\n<code>فتح الصور</code>\n<code>فتح الفيديو</code>\n<code>فتح الملفات</code>\n<code>فتح الملصقات</code>\n<code>فتح الصوت</code>\n<code>فتح المتحركات</code>\n<code>فتح التكرار</code>\n<code>فتح حماية الجدد</code>\n<code>فتح الجروب</code>\n<code>فتح الكل</code>",
         "groups": "<b>أوامر المجموعات</b>\n<code>رتبتي</code>\n<code>ا</code>\n<code>معلومات</code>\n<code>احصائيات</code>\n<code>السجل</code>\n<code>الاعدادات</code>\n<code>الساعة</code>\n<code>المالك</code>\n<code>المطور</code>",
-        "admin": "<b>أوامر الإدارة</b>\n<code>حظر</code>\n<code>فك حظر</code>\n<code>حظر عام</code>\n<code>طرد</code>\n<code>كتم</code>\n<code>فك كتم</code>\n<code>تحذير</code>\n<code>تحذيرات</code>\n<code>مسح التحذيرات</code>\n<code>الغاء تحذير</code>\n<code>قفل الجروب</code>\n<code>فتح الجروب</code>",
-        "protection": "<b>أوامر الحماية</b>\n<code>منع كلمة ...</code>\n<code>الغاء منع كلمة ...</code>\n<code>قائمة الكلمات</code>\n<code>قفل الروابط</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>",
+        "admin": "<b>أوامر الإدارة</b>\n<code>حظر</code>\n<code>فك حظر</code>\n<code>حظر عام</code>\n<code>طرد</code>\n<code>طرد البوتات</code>\n<code>كتم</code>\n<code>فك كتم</code>\n<code>تحذير</code>\n<code>تحذيرات</code>\n<code>مسح التحذيرات</code>\n<code>الغاء تحذير</code>\n<code>مسح</code>\n<code>حذف</code>\n<code>منشن</code>\n<code>تاك</code>\n<code>منشن الجميع</code>\n<code>منشن المشرفين</code>\n<code>قفل الجروب</code>\n<code>فتح الجروب</code>",
+        "protection": "<b>أوامر الحماية</b>\n<code>منع كلمة</code>\n<code>الغاء منع كلمة</code>\n<code>قائمة الكلمات</code>\n<code>قفل الروابط</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>",
         "ranks": "<b>أوامر الرتب</b>\n<code>رفع مساعد المالك</code>\n<code>تنزيل مساعد المالك</code>\n<code>رفع مدير</code>\n<code>تنزيل مدير</code>\n<code>رفع ادمن</code>\n<code>تنزيل ادمن</code>\n<code>رفع مشرف</code>\n<code>تنزيل مشرف</code>\n<code>رفع حيوان</code>\n<code>تنزيل حيوان</code>",
         "replies": "<b>أوامر الردود</b>\n<code>اضف رد</code>\n<code>حذف رد</code>\n<code>قائمة الردود</code>",
-        "ton": "<b>أوامر TON</b>\n<code>1ton</code> أو <code>1تون</code> — سعر TON\n<code>تحليل تون</code> — تحليل آخر 24 ساعة\n<code>تحليل دولار</code> — سعر الدولار مقابل الجنيه\n<code>محفظة</code> — كشف محفظة TON",
-        "music": "<b>أوامر الأغاني</b>\n<code>تنزيل {اسم الأغنية}</code> — البحث في YouTube وإرسال الصوت",
-        "images": "<b>أوامر الصور</b>\n<code>صور</code> — إرسال صورة من صور البوت",
+        "ton": "<b>أوامر TON</b>\n<code>1ton</code>\n<code>1تون</code>\n<code>يوستيد</code>\n<code>usdt</code>\n<code>تحليل تون</code>\n<code>تحليل دولار</code>\n<code>محفظة</code>",
+        "music": "<b>أوامر الأغاني والتنزيل</b>\n<code>يوت</code>\n<code>يوتيوب</code>\n<code>اغنية</code>\n<code>تنزيل</code>\n<code>تنزيل + رابط الفيديو</code>",
+        "images": "<b>أوامر الصور والزخرفة</b>\n<code>صور</code>\n<code>زخرف</code>",
     }
     return texts.get(category, "<b>قائمة أوامر البوت</b>")
 
 def format_commands_as_quotes(text):
-    """يعرض الأوامر كاقتباسات متتالية بدون أسطر فارغة."""
+    """مربع أوامر متصل: كل سطر يبدأ بـ ¦ وبدون أسطر فارغة."""
     if not text:
         return text
-    output = []
-    for line in text.splitlines():
-        line = line.strip()
+    lines = []
+    for raw in str(text).splitlines():
+        line = raw.strip()
         if not line:
             continue
-        if "<code>" in line and "</code>" in line:
-            parts = re.findall(r"<code>.*?</code>", line)
-            if parts:
-                output.extend(f"<blockquote>{part}</blockquote>" for part in parts)
+        if line.startswith("<b>") and line.endswith("</b>"):
+            title = re.sub(r"<[^>]+>", "", line).strip()
+            if title:
+                lines.append(title)
+            continue
+        commands = re.findall(r"<code>(.*?)</code>", line, flags=re.DOTALL)
+        if commands:
+            clean_cmds = []
+            for cmd in commands:
+                cmd = re.sub(r"<[^>]+>", "", cmd).strip()
+                if cmd:
+                    clean_cmds.append(cmd)
+            if clean_cmds:
+                # داخل نفس السطر: | بدون فراغات زائدة.
+                lines.append("|".join(clean_cmds))
                 continue
-        output.append(line)
-    return "\n".join(output)
+        plain = re.sub(r"<[^>]+>", "", line).strip()
+        if plain:
+            lines.append(plain.replace(" • ", "|"))
+    if not lines:
+        return "<blockquote>¦</blockquote>"
+    return "<blockquote>" + "\n".join("¦" + line for line in lines) + "</blockquote>"
 
 def commands_back_markup(viewer_id=None):
     token = str(viewer_id or 0)
@@ -3489,21 +3514,21 @@ def commands_text(owner=None, viewer_id=None, chat_id=None):
         "<b>للجميع:</b>",
         "<code>الاوامر</code> • <code>مساعدة</code> • <code>ا</code> • <code>ايدي</code> • <code>معلوماتي</code>",
         "<code>كشف</code> • <code>رتبتي</code> • <code>معلومات</code> • <code>البوت</code> • <code>المطور</code> • <code>المالك</code>",
-        "<code>الساعة</code> • <code>صور</code> • <code>كات</code> • <code>تنزيل {اسم الأغنية}</code>",
+        "<code>الساعة</code> • <code>صور</code> • <code>زخرف</code> • <code>تنزيل</code>",
         "<code>اضف رد</code> • <code>حذف رد</code> • <code>قائمة الردود</code>",
-        "<code>همسة</code> • <code>همسة @username</code> • <code>همسة ID</code> — همسة مشفرة للمستلم",
-        "<code>محفظة</code> — كشف محفظة TON أو @username / name.ton",
-        "<code>صور</code> — صورة من مكتبة المطور فقط",
+        "<code>همسة</code> • <code>همسة مستخدم</code> — همسة مشفرة للمستلم",
+        "<code>محفظة</code> — كشف محفظة TON أو اسم TON/Fragment",
+        "<code>صور</code> — صورة من مكتبة البوت",
     ]
     if allowed_admin:
         lines += [
             "",
             "<b>الإدارة والحماية:</b>",
             "<code>حظر</code> • <code>فك حظر</code> • <code>حظر عام</code> • <code>طرد</code> • <code>كتم</code> • <code>فك كتم</code>",
-            "<code>تحذير</code> • <code>تحذيرات</code> • <code>مسح التحذيرات</code> • <code>الغاء تحذير</code>",
+            "<code>تحذير</code> • <code>تحذيرات</code> • <code>مسح التحذيرات</code> • <code>الغاء تحذير</code> • <code>كتم</code> • <code>فك كتم</code>",
             "<code>قفل الجروب</code> • <code>فتح الجروب</code> • <code>الاعدادات</code> • <code>احصائيات</code> • <code>السجل</code>",
             "<code>قفل الروابط</code> • <code>قفل الصور</code> • <code>قفل الفيديو</code> • <code>قفل الملفات</code>",
-            "<code>قفل التكرار</code> • <code>قفل حماية الجدد</code> • <code>منع كلمة ...</code>",
+            "<code>قفل التكرار</code> • <code>قفل حماية الجدد</code> • <code>منع كلمة</code> • <code>الغاء منع كلمة</code>",
         ]
     if allowed_ranks:
         lines += [
@@ -3693,7 +3718,7 @@ def save_auto_reply(
         button_data = []
         if button_enabled and button_url:
             button_data.append({
-                "text": button_text or "​‹𝗥 𝗲 𝗲 𝗺 ​› ",
+                "text": button_text or "• 𝗥 𝗲 𝗲 𝗺",
                 "url": button_url,
                 "emoji_id": button_emoji_id or ""
             })
@@ -4054,6 +4079,8 @@ def _save_pending_reply(token, with_buttons=True):
         p.get("reply_media_entities", "")
     )
     reply_pending.pop(token, None)
+    if p.get("global"):
+        admin_pending.pop(p.get("initiator"), None)
     return True
 
 
@@ -4342,7 +4369,7 @@ def admin_control_markup():
         button("الإذاعة", callback_data="admin:broadcast", icon_custom_emoji_id=CE_REPLY_BUTTON),
         button("إذاعة تحديثات البوت", callback_data="admin:updates_broadcast", icon_custom_emoji_id=CE_REPLY_BUTTON)
     )
-    markup.row(button("إضافة رد عام", callback_data="admin:global_reply", icon_custom_emoji_id=CE_REPLY_BUTTON))
+    markup.row(button("إضافة رد عام", callback_data="admin:global_reply", style="primary", icon_custom_emoji_id=CE_REPLY_BUTTON))
     markup.row(
         button("الاشتراك الإجباري", callback_data="admin:force_channels", icon_custom_emoji_id=CE_FORCE_SUB),
         button("السجل", callback_data="admin:actions", icon_custom_emoji_id=CE_COMMANDS)
@@ -5072,7 +5099,7 @@ def send_random_bot_image(message):
 
 # ==================== YouTube Cookies (مكان مخصص) ====================
 # لا تضع بيانات جلسة YouTube الحقيقية في الكود إذا كان الملف سيُشارك.
-YOUTUBE_COOKIES = """# Netscape HTTP Cookie File
+YOUTUBE_COOKIES="""# Netscape HTTP Cookie File
 # This file is generated by yt-dlp.  Do not edit.
 
 .youtube.com	TRUE	/	FALSE	1818960679	APISID	ah0KS413n7pwUSJd/A6D2sc55a2FWqb4_J
@@ -5771,6 +5798,64 @@ def _split_large_audio(path, temp_dir, max_bytes=49 * 1024 * 1024):
     return parts
 
 
+def prepare_telegram_voice(path, temp_dir, max_bytes=49 * 1024 * 1024):
+    """
+    يحول ملف الأغنية إلى OGG/Opus مناسب لـ Telegram send_voice.
+    إذا كان الملف OGG/Opus بالفعل نستخدمه مباشرة، وإلا نحوله عبر ffmpeg.
+    """
+    if not path or not os.path.isfile(path):
+        raise FileNotFoundError("ملف الصوت غير موجود")
+
+    lower = path.lower()
+    if lower.endswith((".ogg", ".opus")) and _audio_size(path) <= max_bytes:
+        return path
+
+    ffmpeg = _find_ffmpeg()
+    if not ffmpeg:
+        raise RuntimeError(
+            "FFmpeg غير مثبت؛ يلزم FFmpeg لتحويل الأغنية إلى OGG/Opus وإرسالها كرسالة صوتية."
+        )
+
+    voice_path = os.path.join(temp_dir, "telegram_voice.ogg")
+    # Opus داخل OGG هو التنسيق الذي يتوقعه Telegram للرسائل الصوتية.
+    for bitrate in (96, 80, 64, 48, 40, 32, 24):
+        try:
+            if os.path.exists(voice_path):
+                os.remove(voice_path)
+        except Exception:
+            pass
+
+        cmd = [
+            ffmpeg, "-y",
+            "-i", path,
+            "-vn",
+            "-map_metadata", "-1",
+            "-ac", "1",
+            "-ar", "48000",
+            "-c:a", "libopus",
+            "-b:a", f"{bitrate}k",
+            "-vbr", "on",
+            "-application", "audio",
+            voice_path,
+        ]
+        try:
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=900,
+                check=False,
+            )
+            if result.returncode == 0 and os.path.isfile(voice_path):
+                if _audio_size(voice_path) <= max_bytes:
+                    return voice_path
+        except Exception as e:
+            print("[Voice Conversion Error]", repr(e))
+            break
+
+    raise RuntimeError("تعذر تحويل الأغنية إلى OGG/Opus لإرسالها كرسالة صوتية.")
+
+
 def send_youtube_song(message, query, processing_message=None):
     result, error = download_youtube_song(query)
     if error:
@@ -5793,65 +5878,50 @@ def send_youtube_song(message, query, processing_message=None):
 
     path, title, temp_dir = result
     try:
-        # Telegram يرفض الملفات التي تتجاوز حد الرفع؛ لذلك نجهز الملف تلقائيًا.
-        prepared_path = prepare_telegram_audio(path, temp_dir)
-        send_paths = [prepared_path]
+        # إرسال الأغنية كـ Voice حقيقي (OGG/Opus) وليس Audio.
+        # إذا كانت الأغنية طويلة/كبيرة نضغطها تلقائيًا قبل الإرسال.
+        prepared_audio = prepare_telegram_audio(path, temp_dir)
+        voice_path = prepare_telegram_voice(prepared_audio, temp_dir)
 
-        # إذا بقي الملف كبيرًا، نقسمه تلقائيًا بدل إظهار رسالة فشل مباشرة.
-        if _audio_size(prepared_path) > 49 * 1024 * 1024:
-            send_paths = _split_large_audio(prepared_path, temp_dir)
-            if not send_paths:
-                raise RuntimeError("Telegram upload size limit")
+        if _audio_size(voice_path) > 49 * 1024 * 1024:
+            raise RuntimeError("Telegram voice upload size limit")
 
         if processing_message:
             try:
-                bot.edit_message_text("جاري الارسال...",message.chat.id,processing_message.message_id,parse_mode="HTML")
+                bot.edit_message_text(
+                    "جاري إرسال الأغنية كرسالة صوتية...",
+                    message.chat.id,
+                    processing_message.message_id,
+                    parse_mode="HTML"
+                )
             except Exception:
                 pass
+
         caption = (
-            f"<b>Music Reem</b>\n\n"
-            f"<b>{html.escape(title)}</b>\n\n"
+            f"🎵 <b>{html.escape(title)}</b>\n\n"
             f'• <b>DeV</b> | <a href="{SOURCE_DEVELOPER_URL}">@L1_D_R</a>'
         )
-        markup = music_source_markup()
-        image_id = get_song_bot_image_id()
 
-        for index, send_path in enumerate(send_paths, 1):
-            part_caption = caption
-            if len(send_paths) > 1:
-                part_caption += f"\n\n<b>الجزء {index} من {len(send_paths)}</b>"
-
-            sent = False
-            if image_id:
-                try:
-                    with open(send_path, "rb") as audio:
-                        bot.send_audio(
-                            message.chat.id,
-                            audio,
-                            title=title if index == 1 else f"{title} - الجزء {index}",
-                            performer="YouTube",
-                            caption=part_caption,
-                            parse_mode="HTML",
-                            reply_markup=markup,
-                            reply_to_message_id=message.message_id,
-                            thumb=image_id,
-                        )
-                    sent = True
-                except Exception as thumb_error:
-                    print("[Song Thumbnail Fallback]", repr(thumb_error))
-
-            if not sent:
-                with open(send_path, "rb") as audio:
-                    bot.send_audio(
-                        message.chat.id,
-                        audio,
-                        title=title if index == 1 else f"{title} - الجزء {index}",
-                        performer="YouTube",
-                        caption=part_caption,
-                        parse_mode="HTML",
-                        reply_markup=markup,
-                        reply_to_message_id=message.message_id,
-                    )
+        # Telegram send_voice يدعم OGG/Opus للرسائل الصوتية.
+        try:
+            with open(voice_path, "rb") as voice_file:
+                bot.send_voice(
+                    message.chat.id,
+                    voice_file,
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_to_message_id=message.message_id,
+                    duration=None,
+                )
+        except Exception as voice_error:
+            print("[Telegram Voice Error]", repr(voice_error))
+            # محاولة ثانية بدون مدة/كابتشن إذا كان الخطأ متعلقًا ببيانات إضافية.
+            with open(voice_path, "rb") as voice_file:
+                bot.send_voice(
+                    message.chat.id,
+                    voice_file,
+                    reply_to_message_id=message.message_id,
+                )
 
         if processing_message:
             try:
@@ -5890,8 +5960,8 @@ def send_youtube_song(message, query, processing_message=None):
 
 def handle_music_command(message, query):
     """
-    الأمر: يوت / تنزيل + اسم الأغنية.
-    أولًا يعرض نتائج البحث، وبعد الضغط على نتيجة يبدأ التنزيل والإرسال تلقائيًا.
+    الأمر: يوت + اسم الأغنية.
+    يبحث في YouTube ويعرض النتائج، وبعد اختيار نتيجة ينزلها ويرسلها كرسالة صوتية OGG/Opus.
     """
     query = (query or "").strip()
     if not query:
@@ -5973,6 +6043,248 @@ def send_cat_question(message):
     question = random.choice(CAT_QUESTIONS)
     bot.reply_to(message, f"<b>سؤال كات</b>\n{question}")
     return True
+
+# =========================================================
+# الزخرفة + تنزيل السوشيال
+# =========================================================
+
+SOCIAL_MAX_MB = 49
+SOCIAL_MAX_BYTES = SOCIAL_MAX_MB * 1024 * 1024
+
+# مواقع البالغين محظورة صراحةً من ميزة التنزيل.
+ADULT_BLOCKED_DOMAINS = {
+    "pornhub.com", "pornhub.org", "xvideos.com", "xhamster.com", "xnxx.com",
+    "redtube.com", "youporn.com", "spankbang.com", "tube8.com", "youjizz.com",
+    "chaturbate.com", "stripchat.com", "xhamsterlive.com", "cam4.com",
+    "livejasmin.com", "bongacams.com", "brazzers.com", "rule34.xxx",
+    "hentai-foundry.com", "nhentai.net", "xhamster.desi", "porn.com",
+}
+ADULT_BLOCKED_WORDS = ("porn", "xxx", "sexcam", "hentai", "nsfw")
+
+
+def _host_from_url(url):
+    try:
+        return urllib.parse.urlparse(url).hostname.lower().strip('.')
+    except Exception:
+        return ""
+
+
+def _is_adult_url(url):
+    host = _host_from_url(url)
+    if not host:
+        return True
+    if any(host == d or host.endswith("." + d) for d in ADULT_BLOCKED_DOMAINS):
+        return True
+    # لا نمنع كلمات مثل "sex" وحدها حتى لا نحجب مواقع عادية بلا داعٍ.
+    lowered = host.lower()
+    return any(word in lowered for word in ADULT_BLOCKED_WORDS)
+
+
+def _valid_social_url(text):
+    text = (text or "").strip().strip('<>')
+    if not re.match(r"^https?://\S+$", text, re.I):
+        return None
+    if _is_adult_url(text):
+        return None
+    return text
+
+
+def _latin_style(text, offset=0):
+    upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    lower = "abcdefghijklmnopqrstuvwxyz"
+    styles = [
+        ("𝗔𝗕𝗖𝗗𝗘𝗙𝗚𝗛𝗜𝗝𝗞𝗟𝗠𝗡𝗢𝗣𝗤𝗥𝗦𝗧𝗨𝗩𝗪𝗫𝗬𝗭", "𝗮𝗯𝗰𝗱𝗲𝗳𝗴𝗵𝗶𝗷𝗸𝗹𝗺𝗻𝗼𝗽𝗾𝗿𝘀𝘁𝘂𝘃𝘄𝘅𝘆𝘇"),
+        ("𝘈𝘉𝘊𝘋𝘌𝘍𝘎𝘏𝘐𝘑𝘒𝘓𝘔𝘕𝘖𝘗𝘘𝘙𝘚𝘛𝘜𝘝𝘞𝘟𝘠𝘡", "𝘢𝘣𝘤𝘥𝘦𝘧𝘨𝘩𝘪𝘫𝘬𝘭𝘮𝘯𝘰𝘱𝘲𝘳𝘴𝘵𝘶𝘷𝘸𝘹𝘺𝘻"),
+        ("𝙰𝙱𝙲𝙳𝙴𝙵𝙶𝙷𝙸𝙹𝙺𝙻𝙼𝙽𝙾𝙿𝚀𝚁𝚂𝚃𝚄𝚅𝚆𝚇𝚈𝚉", "𝚊𝚋𝚌𝚍𝚎𝚏𝚐𝚑𝚒𝚓𝚔𝚕𝚖𝚗𝚘𝚙𝚚𝚛𝚜𝚝𝚞𝚟𝚠𝚡𝚢𝚣"),
+        ("𝔸𝔹ℂ𝔻𝔼𝔽𝔾ℍ𝕀𝕁𝕂𝕃𝕄ℕ𝕆ℙℚℝ𝕊𝕋𝕌𝕍𝕎𝕏𝕐ℤ", "𝕒𝕓𝕔𝕕𝕖𝕗𝕘𝕙𝕚𝕛𝕜𝕝𝕞𝕟𝕠𝕡𝕢𝕣𝕤𝕥𝕦𝕧𝕨𝕩𝕪𝕫"),
+    ]
+    a,b=styles[offset % len(styles)]
+    table=str.maketrans(upper+lower, a+b)
+    return text.translate(table)
+
+
+def _arabic_styles(text):
+    # العربية ليس لها مجموعة Unicode عريضة كاملة؛ لذلك نعطي أشكالًا زخرفية
+    # آمنة لا تكسر القراءة أو النسخ، مع الحفاظ على الأحرف الأصلية.
+    return [
+        f"꧁༺ {text} ༻꧂",
+        f"『 {text} 』",
+        f"𓆩 {text} 𓆪",
+        f"◥ {text} ◤",
+        f"╰☆☆ {text} ☆☆╮",
+        f"•° {text} °•",
+        f"〘 {text} 〙",
+        f"⟦ {text} ⟧",
+        f"༺ {text} ༻",
+        f"𒆜 {text} 𒆜",
+    ]
+
+
+def decorate_name(text):
+    text=(text or "").strip()
+    if not text:
+        return []
+    arabic = bool(re.search(r"[\u0600-\u06FF]", text))
+    latin = bool(re.search(r"[A-Za-z]", text))
+    out=[]
+    if latin:
+        for i in range(4):
+            out.append(_latin_style(text, i))
+    if arabic:
+        out.extend(_arabic_styles(text))
+    if not arabic and not latin:
+        out.extend(_arabic_styles(text))
+    # تنويعات عامة تعمل مع العربي والإنجليزي معًا.
+    out.extend([
+        f"★彡 {text} 彡★",
+        f"✦ {text} ✦",
+        f"『{text}』",
+        f"༒ {text} ༒",
+    ])
+    # إزالة التكرار مع الحفاظ على الترتيب.
+    seen=set(); result=[]
+    for x in out:
+        if x not in seen:
+            seen.add(x); result.append(x)
+    return result[:16]
+
+
+def handle_decoration_command(message, argument):
+    name=(argument or "").strip()
+    if not name:
+        bot.reply_to(message, "استخدم: <code>زخرف ليدر</code>")
+        return True
+    variants=decorate_name(name)
+    body="\n".join(f"<blockquote>{html.escape(v)}</blockquote>" for v in variants)
+    bot.reply_to(message, f"<b>زخرفة الاسم:</b>\n{body}", parse_mode="HTML")
+    return True
+
+
+def _social_download_options(yt_dlp, outtmpl):
+    opts={
+        "outtmpl": outtmpl,
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "retries": 2,
+        "fragment_retries": 2,
+        "socket_timeout": 25,
+        "merge_output_format": "mp4",
+        # نحاول اختيار ملف تحت 49MB أولًا، ثم جودة متوسطة.
+        "format": (
+            "best[ext=mp4][filesize<49M]/best[filesize<49M]/"
+            "best[height<=720][ext=mp4]/best[height<=720]/best"
+        ),
+    }
+    # استخدم Runtime/EJS إن كان yt-dlp يحتاجه، خصوصًا للمواقع التي تعتمد على JS.
+    try:
+        opts.update(_youtube_runtime_options(yt_dlp, use_cookies=True))
+    except Exception:
+        pass
+    return opts
+
+
+def _social_download(url):
+    """تنزيل فيديو من أي موقع يدعمه yt-dlp مع حظر مواقع البالغين وحجم Telegram."""
+    if _is_adult_url(url):
+        return None, "هذا الموقع محظور من ميزة التنزيل."
+    try:
+        yt_dlp=_ensure_ytdlp()
+    except Exception as exc:
+        print("[Social yt-dlp Load Error]", repr(exc))
+        yt_dlp=None
+    if yt_dlp is None:
+        return None, "yt-dlp غير مثبت حاليًا. أضفه إلى requirements.txt ثم أعد التشغيل."
+
+    temp_dir=tempfile.mkdtemp(prefix="reem_social_")
+    outtmpl=os.path.join(temp_dir, "%(id)s.%(ext)s")
+    try:
+        opts=_social_download_options(yt_dlp, outtmpl)
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info=ydl.extract_info(url, download=True)
+        title=info.get("title") or "فيديو"
+        webpage=info.get("webpage_url") or url
+        files=[]
+        for root,_,names in os.walk(temp_dir):
+            for name in names:
+                path=os.path.join(root,name)
+                if os.path.isfile(path) and not name.endswith(('.part','.ytdl')):
+                    files.append(path)
+        if not files:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return None, "لم يتم إنشاء ملف فيديو من الرابط."
+        path=max(files,key=os.path.getsize)
+        size=os.path.getsize(path)
+        if size> SOCIAL_MAX_BYTES:
+            # محاولة ثانية بجودة أقل لتفادي رفض Telegram للملف الكبير.
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            temp_dir=tempfile.mkdtemp(prefix="reem_social_low_")
+            outtmpl=os.path.join(temp_dir, "%(id)s.%(ext)s")
+            opts=_social_download_options(yt_dlp,outtmpl)
+            opts["format"]="best[height<=480][ext=mp4]/best[height<=480]/worst[ext=mp4]/worst"
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info=ydl.extract_info(url, download=True)
+            title=info.get("title") or title
+            files=[]
+            for root,_,names in os.walk(temp_dir):
+                for name in names:
+                    path2=os.path.join(root,name)
+                    if os.path.isfile(path2) and not name.endswith(('.part','.ytdl')):
+                        files.append(path2)
+            if not files:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return None,"الفيديو أكبر من حد Telegram ولم أستطع إنشاء نسخة أصغر."
+            path=max(files,key=os.path.getsize)
+            size=os.path.getsize(path)
+        if size> SOCIAL_MAX_BYTES:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return None, f"حجم الفيديو أكبر من {SOCIAL_MAX_MB}MB حتى بعد تقليل الجودة."
+        return (path,title,webpage,temp_dir),None
+    except Exception as exc:
+        print("[Social Download Error]", repr(exc))
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        msg=str(exc).lower()
+        if "unsupported url" in msg or "no suitable extractor" in msg:
+            return None,"هذا الرابط غير مدعوم حاليًا بواسطة yt-dlp."
+        if "private" in msg or "login" in msg or "sign in" in msg:
+            return None,"الرابط خاص أو يحتاج تسجيل دخول/cookies صالحة."
+        if "age" in msg and "restrict" in msg:
+            return None,"هذا المحتوى عليه تقييد عمري ولا يمكن تنزيله."
+        return None,"تعذر تنزيل الفيديو من الرابط حاليًا."
+
+
+def handle_social_download(message, url):
+    url=_valid_social_url(url)
+    if not url:
+        bot.reply_to(message,"❌ الرابط غير صالح أو الموقع محظور من ميزة التنزيل.")
+        return True
+    status=bot.reply_to(message,"⏳ جاري تنزيل الفيديو...")
+    def worker():
+        result,error=_social_download(url)
+        try:
+            bot.delete_message(message.chat.id,status.message_id)
+        except Exception:
+            pass
+        if error:
+            bot.send_message(message.chat.id,f"❌ {html.escape(error)}",parse_mode="HTML",reply_to_message_id=message.message_id)
+            return
+        path,title,source,temp_dir=result
+        try:
+            caption=f"<b>{html.escape(str(title)[:900])}</b>\n<a href=\"{html.escape(source, quote=True)}\">المصدر</a>"
+            with open(path,"rb") as video:
+                bot.send_video(message.chat.id,video,caption=caption,parse_mode="HTML",supports_streaming=True,timeout=120,reply_to_message_id=message.message_id)
+        except Exception as exc:
+            print("[Social Send Error]",repr(exc))
+            try:
+                bot.send_document(message.chat.id,open(path,"rb"),caption=html.escape(str(title)[:900]),parse_mode="HTML",timeout=120,reply_to_message_id=message.message_id)
+            except Exception as send_exc:
+                print("[Social Document Send Error]",repr(send_exc))
+                bot.send_message(message.chat.id,"❌ تم تنزيل الفيديو لكن فشل إرساله إلى Telegram.")
+        finally:
+            shutil.rmtree(temp_dir,ignore_errors=True)
+    Thread(target=worker,daemon=True,name="SocialDownloader").start()
+    return True
+
 
 # =========================================================
 # كشف محافظ TON Keeper / TON
@@ -6554,6 +6866,22 @@ def bot_chat_membership_handler(message):
             elif new_status in ("left", "kicked") and old_status in ("member", "administrator", "creator"):
                 ensure_group(message.chat)
                 notify_group_event("removed", message)
+        elif message.chat.type == "channel":
+            # تسجيل القناة فور إضافة البوت إليها، حتى لو لم تنشر القناة أي رسالة بعد.
+            if new_status in ("member", "administrator", "creator") and old_status in ("left", "kicked", "", "member", "administrator", "creator"):
+                cursor.execute(
+                    "INSERT INTO broadcast_channels(chat_id,title,username,first_seen,last_seen) VALUES(?,?,?,?,?) "
+                    "ON CONFLICT(chat_id) DO UPDATE SET title=excluded.title,username=excluded.username,last_seen=excluded.last_seen",
+                    (message.chat.id, message.chat.title or "", message.chat.username or "", now(), now())
+                )
+                db.commit()
+                try:
+                    bot.send_message(DEVELOPER_ID, f"📢 تمت إضافة البوت إلى قناة\n<b>{html.escape(message.chat.title or 'بدون اسم')}</b>\n@{html.escape(message.chat.username or 'بدون يوزر')}\n<code>{message.chat.id}</code>")
+                except Exception:
+                    pass
+            elif new_status in ("left", "kicked"):
+                cursor.execute("DELETE FROM broadcast_channels WHERE chat_id=?", (message.chat.id,))
+                db.commit()
         elif message.chat.type == "private":
             # فتح الخاص/إلغاء الحظر يُسجل كمستخدم.
             if new_status in ("member", "administrator"):
@@ -6798,28 +7126,57 @@ def mention_everyone_with_message(message, extra_text=""):
         time.sleep(0.08)
     return True
 
+def _blocked_broadcast_users():
+    try:
+        cursor.execute("SELECT user_id FROM broadcast_blocked_users")
+        return {int(r["user_id"]) for r in cursor.fetchall()}
+    except Exception:
+        return set()
+
+def _mark_broadcast_blocked(user_id, reason=""):
+    try:
+        cursor.execute(
+            "INSERT OR REPLACE INTO broadcast_blocked_users(user_id,reason,blocked_at) VALUES(?,?,?)",
+            (int(user_id), str(reason)[:500], now())
+        )
+        db.commit()
+    except Exception as e:
+        print("[Broadcast Blocked DB]", repr(e))
+
+def _is_private_broadcast_target(user_id):
+    try:
+        cursor.execute("SELECT 1 FROM bot_private_users WHERE user_id=? LIMIT 1", (int(user_id),))
+        return cursor.fetchone() is not None
+    except Exception:
+        return False
+
 def broadcast_recipients(scope="all"):
+    blocked = _blocked_broadcast_users()
     if scope in ("all", "private"):
+        # المستخدمون الذين فتحوا البوت + الأعضاء المسترجعون من النسخة الاحتياطية.
+        # Telegram قد يرفض من لم يبدأ الخاص؛ نحاول الإرسال لهم مرة، ثم نحفظ من حظر البوت.
         cursor.execute("SELECT user_id FROM bot_private_users")
         private_ids = {int(r["user_id"]) for r in cursor.fetchall()}
-        # ضم الأعضاء المسترجعين من النسخة الاحتياطية؛ الإرسال الخاص يعمل
-        # فقط إذا كان المستخدم قد بدأ البوت سابقًا، وإلا سيُسجل الفشل بدون إيقاف الإذاعة.
         cursor.execute("SELECT DISTINCT user_id FROM group_users WHERE user_id > 0")
         private_ids.update(int(r["user_id"]) for r in cursor.fetchall())
         cursor.execute("SELECT user_id FROM global_bans")
         private_ids.difference_update(int(r["user_id"]) for r in cursor.fetchall())
+        private_ids.difference_update(blocked)
     else:
         private_ids = set()
+
     if scope in ("all", "groups"):
         cursor.execute("SELECT chat_id FROM groups")
         group_ids = {int(r["chat_id"]) for r in cursor.fetchall()}
     else:
         group_ids = set()
+
     if scope in ("all", "channels"):
         cursor.execute("SELECT chat_id FROM broadcast_channels")
         channel_ids = {int(r["chat_id"]) for r in cursor.fetchall()}
     else:
         channel_ids = set()
+
     return sorted(private_ids | group_ids | channel_ids)
 
 
@@ -6830,34 +7187,60 @@ def perform_broadcast(source_message, scope="all", reply_markup=None, progress_c
     progress_message = None
     if progress_chat_id is not None:
         try:
-            progress_message = bot.send_message(progress_chat_id, f"جاري الاذاعة\nالمرسل: <b>{ok}</b>\nالمتبقي: <b>{total}</b>\nالفشل: <b>{failed}</b>")
+            progress_message = bot.send_message(
+                progress_chat_id,
+                f"جاري الاذاعة\nالمرسل: <b>{ok}</b>\nالمتبقي: <b>{total}</b>\nالفشل: <b>{failed}</b>"
+            )
         except Exception:
             pass
+
     for index, target_id in enumerate(recipients, 1):
         if target_id == DEVELOPER_ID:
             continue
         try:
-            kwargs={"chat_id":target_id,"from_chat_id":source_message.chat.id,"message_id":source_message.message_id}
+            kwargs = {
+                "chat_id": target_id,
+                "from_chat_id": source_message.chat.id,
+                "message_id": source_message.message_id,
+            }
             if reply_markup is not None:
-                kwargs["reply_markup"]=reply_markup
+                kwargs["reply_markup"] = reply_markup
             bot.copy_message(**kwargs)
             ok += 1
             time.sleep(0.03)
         except Exception as e:
             failed += 1
-            print("[Broadcast]", scope, target_id, e)
-        if progress_message and (index==1 or index%20==0 or index==total):
+            err = str(e)
+            print("[Broadcast]", scope, target_id, err)
+            # لو الهدف مستخدم خاص وفشل بسبب حظر البوت، لا تحاول مراسلته في الإذاعات القادمة.
+            if _is_private_broadcast_target(target_id) and (
+                "bot was blocked by the user" in err.lower()
+                or "user is deactivated" in err.lower()
+                or "chat not found" in err.lower()
+                or "forbidden" in err.lower()
+            ):
+                _mark_broadcast_blocked(target_id, err)
+
+        if progress_message and (index == 1 or index % 20 == 0 or index == total):
             try:
-                bot.edit_message_text(f"جاري الاذاعة\nالمرسل: <b>{ok}</b>\nالمتبقي: <b>{max(total-ok-failed,0)}</b>\nالفشل: <b>{failed}</b>", progress_chat_id, progress_message.message_id)
+                bot.edit_message_text(
+                    f"جاري الاذاعة\nالمرسل: <b>{ok}</b>\nالمتبقي: <b>{max(total-ok-failed,0)}</b>\nالفشل: <b>{failed}</b>",
+                    progress_chat_id,
+                    progress_message.message_id
+                )
             except Exception:
                 pass
+
     if progress_message:
         try:
-            bot.edit_message_text(f"اكتملت الاذاعة\n<b>تم الارسال: {ok}</b>\n<b>فشل: {failed}</b>", progress_chat_id, progress_message.message_id)
+            bot.edit_message_text(
+                f"اكتملت الاذاعة\n<b>تم الارسال: {ok}</b>\n<b>فشل: {failed}</b>",
+                progress_chat_id,
+                progress_message.message_id
+            )
         except Exception:
             pass
     return ok, failed
-
 
 
 def updates_broadcast_markup(buttons):
@@ -6870,18 +7253,72 @@ def updates_broadcast_markup(buttons):
     return markup
 
 
+def _resolve_updates_channel():
+    """يحل قناة تحديثات البوت إلى chat_id رقمي ويتأكد أنها قناة فعلًا."""
+    try:
+        chat = bot.get_chat(UPDATES_BROADCAST_CHANNEL)
+        if getattr(chat, "type", "") != "channel":
+            return None, "الهدف المحدد ليس قناة Telegram."
+        return int(chat.id), None
+    except Exception as exc:
+        return None, f"تعذر الوصول إلى {UPDATES_BROADCAST_CHANNEL}: {exc}"
+
+
+def _check_updates_channel_access(chat_id):
+    """يتأكد أن البوت يستطيع النشر في قناة التحديثات."""
+    try:
+        me = bot.get_me()
+        member = bot.get_chat_member(chat_id, me.id)
+        status = getattr(member, "status", "")
+        if status not in ("administrator", "creator"):
+            return False, "البوت موجود في القناة لكنه ليس مشرفًا. ارفعه مشرفًا مع صلاحية نشر الرسائل."
+        can_post = getattr(member, "can_post_messages", None)
+        if can_post is False:
+            return False, "البوت مشرف لكن صلاحية نشر الرسائل في القناة غير مفعلة."
+        return True, None
+    except Exception as exc:
+        return False, f"تعذر التحقق من صلاحيات البوت في القناة: {exc}"
+
+
 def perform_updates_broadcast(source_message, reply_markup=None, progress_chat_id=None):
-    """ينشر تحديث البوت في قناة السورس فقط."""
-    ok = failed = 0
+    """إذاعة تحديث واحدة إلى قناة Ssource_MaX فقط، مع تشخيص واضح لأي فشل."""
     progress_message = None
     if progress_chat_id is not None:
         try:
-            progress_message = bot.send_message(progress_chat_id, "جاري إذاعة تحديثات البوت إلى القناة فقط\n<b>تم الإرسال:</b> 0\n<b>الفشل:</b> 0")
+            progress_message = bot.send_message(
+                progress_chat_id,
+                "جاري إذاعة تحديث البوت...\n<b>الهدف:</b> @Ssource_MaX"
+            )
         except Exception:
             pass
+
+    target_id, resolve_error = _resolve_updates_channel()
+    if target_id is None:
+        error_text = "❌ إذاعة تحديثات البوت لم تبدأ.\n" + html.escape(resolve_error or "تعذر تحديد القناة.")
+        print("[Updates Broadcast Resolve Error]", resolve_error)
+        if progress_message:
+            try:
+                bot.edit_message_text(error_text, progress_chat_id, progress_message.message_id)
+            except Exception:
+                pass
+        return 0, 1, resolve_error
+
+    allowed, access_error = _check_updates_channel_access(target_id)
+    if not allowed:
+        error_text = "❌ لا يمكن النشر في قناة تحديثات البوت.\n" + html.escape(access_error or "صلاحيات القناة غير كافية.")
+        print("[Updates Broadcast Permission Error]", access_error)
+        if progress_message:
+            try:
+                bot.edit_message_text(error_text, progress_chat_id, progress_message.message_id)
+            except Exception:
+                pass
+        return 0, 1, access_error
+
+    ok = failed = 0
+    last_error = ""
     try:
         kwargs = {
-            "chat_id": UPDATES_BROADCAST_CHANNEL,
+            "chat_id": target_id,
             "from_chat_id": source_message.chat.id,
             "message_id": source_message.message_id,
         }
@@ -6890,17 +7327,36 @@ def perform_updates_broadcast(source_message, reply_markup=None, progress_chat_i
         bot.copy_message(**kwargs)
         ok = 1
     except Exception as exc:
-        failed = 1
-        print("[Updates Broadcast]", repr(exc))
+        last_error = str(exc)
+        print("[Updates Broadcast Copy Error]", repr(exc))
+        # محاولة ثانية باستخدام forward_message للرسائل التي يرفض Telegram نسخها.
+        try:
+            kwargs = {
+                "chat_id": target_id,
+                "from_chat_id": source_message.chat.id,
+                "message_id": source_message.message_id,
+            }
+            if reply_markup is not None:
+                kwargs["reply_markup"] = reply_markup
+            bot.forward_message(**kwargs)
+            ok = 1
+            failed = 0
+            last_error = ""
+        except Exception as exc2:
+            failed = 1
+            last_error = str(exc2)
+            print("[Updates Broadcast Forward Error]", repr(exc2))
+
     if progress_message:
         try:
-            bot.edit_message_text(
-                f"اكتملت إذاعة تحديثات البوت إلى <b>{UPDATES_BROADCAST_CHANNEL}</b>\n<b>تم الإرسال:</b> {ok}\n<b>الفشل:</b> {failed}",
-                progress_chat_id, progress_message.message_id
-            )
+            if ok:
+                text = "✅ تمت إذاعة تحديث البوت بنجاح إلى <b>@Ssource_MaX</b>."
+            else:
+                text = "❌ فشلت إذاعة تحديث البوت.\n" + html.escape(last_error or "خطأ غير معروف.")
+            bot.edit_message_text(text, progress_chat_id, progress_message.message_id)
         except Exception:
             pass
-    return ok, failed
+    return ok, failed, last_error
 
 def start_updates_broadcast(message):
     if not message.from_user or message.from_user.id != DEVELOPER_ID:
@@ -6909,7 +7365,7 @@ def start_updates_broadcast(message):
     admin_pending[message.from_user.id] = "updates_broadcast_message"
     bot.send_message(
         message.chat.id,
-        f"أرسل رسالة تحديث البوت الآن.\nسيتم نشرها في قناة <b>{UPDATES_BROADCAST_CHANNEL}</b> فقط.\nبعدها أرسل أسماء وروابط الأزرار، من 16 إلى 30 زرًا."
+        f"أرسل رسالة تحديث البوت الآن.\nسيتم نشرها في قناة <b>{UPDATES_BROADCAST_CHANNEL}</b> فقط.\nبعدها أرسل أسماء وروابط الأزرار، حتى 30 زرًا (يمكنك الإنهاء بأي عدد)."
     )
     return True
 def start_broadcast(message):
@@ -6947,6 +7403,7 @@ def start_global_reply(message):
             pass
         return False
     token = secrets.token_hex(8)
+    admin_pending[message.from_user.id] = "global_reply_setup"
     reply_pending[token] = {
         "chat_id": 0,
         "initiator": message.from_user.id,
@@ -6956,6 +7413,7 @@ def start_global_reply(message):
         "global": True
     }
     bot.send_message(message.chat.id, "أرسل الآن كلمة الرد العام.")
+    return True
 
 # =========================================================
 # الهمسة الإيمانية — أذكار وتسبيح تلقائي للمجموعات
@@ -7082,7 +7540,7 @@ except Exception as _e:
 # =========================================================
 # أوامر القنوات
 # =========================================================
-@bot.channel_post_handler(content_types=["text"])
+@bot.channel_post_handler(content_types=["text", "photo", "video", "document", "audio", "voice", "animation", "sticker", "video_note"])
 def channel_post_handler(message):
     try:
         cursor.execute(
@@ -7229,16 +7687,18 @@ def main_handler(message):
                     raw = (message.text or "").strip()
                     if clean_text(raw) in ("تم", "انهاء", "إنهاء"):
                         buttons = state.get("buttons", [])
-                        if len(buttons) < 16:
-                            bot.send_message(message.chat.id, "لازم تضيف 16 زرًا على الأقل في إذاعة التحديثات. أرسل اسم الزر التالي.")
-                            return
                         source = state.get("message")
+                        if source is None:
+                            bot.send_message(message.chat.id, "لم تصل رسالة التحديث. أرسل رسالة التحديث أولًا.")
+                            return
                         markup = updates_broadcast_markup(buttons)
                         admin_pending.pop(message.from_user.id, None)
                         updates_broadcast_pending.pop(message.from_user.id, None)
                         bot.send_message(message.chat.id, "جاري إذاعة تحديثات البوت...")
-                        ok, failed = perform_updates_broadcast(source, markup if markup.keyboard else None, progress_chat_id=message.chat.id)
-                        bot.send_message(message.chat.id, f"تمت إذاعة التحديثات إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
+                        ok, failed, err = perform_updates_broadcast(source, markup if markup.keyboard else None, progress_chat_id=message.chat.id)
+                        if not ok and err:
+                            bot.send_message(message.chat.id, f"❌ سبب الفشل: <code>{html.escape(str(err))}</code>")
+                        return
                         return
                     if not raw:
                         bot.send_message(message.chat.id, "أرسل اسم الزر أو اكتب تم لإنهاء الأزرار.")
@@ -7269,8 +7729,10 @@ def main_handler(message):
                         admin_pending.pop(message.from_user.id, None)
                         updates_broadcast_pending.pop(message.from_user.id, None)
                         bot.send_message(message.chat.id, "تم الوصول إلى الحد الأقصى 30 زرًا. جاري إذاعة التحديثات...")
-                        ok, failed = perform_updates_broadcast(source, markup if markup.keyboard else None, progress_chat_id=message.chat.id)
-                        bot.send_message(message.chat.id, f"تمت إذاعة التحديثات إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
+                        ok, failed, err = perform_updates_broadcast(source, markup if markup.keyboard else None, progress_chat_id=message.chat.id)
+                        if not ok and err:
+                            bot.send_message(message.chat.id, f"❌ سبب الفشل: <code>{html.escape(str(err))}</code>")
+                        return
                         return
                     admin_pending[message.from_user.id] = "updates_broadcast_button_text"
                     bot.send_message(message.chat.id, f"تمت إضافة الزر رقم <b>{len(buttons)}</b>. أرسل اسم الزر التالي أو اكتب تم.")
@@ -7447,6 +7909,15 @@ def main_handler(message):
 
         if message.text:
             _clean_command, _command_arg = command_parts(message)
+            # دعم الصيغة المطلوبة: تنزيل+https://example.com/video
+            _raw_text = (message.text or "").strip()
+            if _raw_text.lower().startswith(("تنزيل+", "تحميل+")):
+                _plus_url = _raw_text.split("+", 1)[1].strip()
+                if _valid_social_url(_plus_url):
+                    handle_social_download(message, _plus_url)
+                    return
+                bot.reply_to(message, "❌ رابط غير صالح أو الموقع محظور.")
+                return
             if _clean_command in ("محفظة", "wallet"):
                 wallet_text = (_command_arg or "").strip()
                 address = None
@@ -7460,6 +7931,16 @@ def main_handler(message):
                     send_ton_wallet_info(message, address)
                 else:
                     bot.reply_to(message, "اكتب عنوان TON أو اسمًا مربوطًا بـ TON/Fragment مثل <code>/محفظة EQ...</code> أو <code>/محفظة name.ton</code> أو رابط Fragment.")
+                return
+
+            if _clean_command in ("زخرف", "زخرفه", "زخرفة"):
+                handle_decoration_command(message, _command_arg)
+                return
+
+            # تنزيل فيديو مباشر من رابط: يدعم كل المواقع التي يدعمها yt-dlp
+            # مع حظر صريح لمواقع البالغين.
+            if _clean_command in ("تنزيل", "تحميل") and _valid_social_url(_command_arg):
+                handle_social_download(message, _command_arg)
                 return
 
             if _clean_command in ("يوت", "يوتيوب", "اغنية", "أغنية"):
