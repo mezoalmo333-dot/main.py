@@ -11503,8 +11503,8 @@ def run_bot_forever():
             ):
                 conflict_count += 1
                 print(
-                    "[ايوا ياليدر ياريقققق  "
-                    "يعمل ياليدر آخر
+                    "[ايوا ياليدر ياريقققق"
+                    "يعمل ياليدر آخر"
                 )
                 time.sleep(min(30, 5 + conflict_count * 3))
             else:
