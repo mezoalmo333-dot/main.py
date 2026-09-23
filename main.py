@@ -2261,22 +2261,15 @@ def send_gift_price(message, url):
     if stars is not None and usd_egp and ton_usd and usd_egp>0 and ton_usd>0:
         egp,usd,ton_from_stars=_star_prices(float(stars))
 
-    lines=['<blockquote>‹ تحليل الهدية ›</blockquote>']
-    if data.get('name'):
-        lines.append(f"<blockquote>• Gift  {html.escape(data['name'])}</blockquote>")
+    lines=[]
+    if egp is not None:
+        lines.append(f"<blockquote>• EGP  {format_money(egp, 2)} جنيه</blockquote>")
+    if usd is not None:
+        lines.append(f"<blockquote>• UsT  {format_money(usd, 4)} USDT</blockquote>")
+    if ton_from_stars is not None:
+        lines.append(f"<blockquote>• ToN  {format_money(ton_from_stars, 4)} TON</blockquote>")
     if stars is not None:
-        lines.append(f"<blockquote>• StaRS  {format_money(stars, 0)} ⭐</blockquote>")
-        if egp is not None:
-            lines.append(f"<blockquote>• EGP  {format_money(egp, 2)} جنيه</blockquote>")
-            lines.append(f"<blockquote>• UsT  {format_money(usd, 4)} USDT</blockquote>")
-            lines.append(f"<blockquote>• ToN  {format_money(ton_from_stars, 4)} TON</blockquote>")
-    if gift_ton is not None:
-        lines.append(f"<blockquote>• Market  {format_money(gift_ton, 4)} TON</blockquote>")
-        if usd_egp and ton_usd and usd_egp>0 and ton_usd>0:
-            market_usd=gift_ton*ton_usd
-            market_egp=market_usd*usd_egp
-            lines.append(f"<blockquote>• Market USD  {format_money(market_usd, 4)} USDT</blockquote>")
-            lines.append(f"<blockquote>• Market EGP  {format_money(market_egp, 2)} جنيه</blockquote>")
+        lines.append(f"<blockquote>• StaRS  {format_money(stars, 0)}</blockquote>")
 
     bot.reply_to(message,'\n'.join(lines),parse_mode='HTML')
     return True
@@ -2292,8 +2285,8 @@ def handle_transfer_code_request(message, phone, amount):
     # لذلك نضع PIN كعنصر نائب ولا نطلب أو نحفظ الرقم السري داخل البوت.
     codes = [
         ("Vodafone", f"*9*7*{phone}*{amount_text}#"),
-        ("Orange", f"#7115*5*7*{phone}*{amount_text}*PIN#"),
-        ("Etsleat", "*777*1#"),
+        ("Orange", f"#7115*1*1*1*{phone}*{amount_text}#"),
+        ("Etsleat", f"*777*2*{phone}*{amount_text}#"),
         ("WE", "*7*2#"),
     ]
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -2303,7 +2296,7 @@ def handle_transfer_code_request(message, phone, amount):
             markup.add(btn)
     bot.reply_to(
         message,
-        f"‹ أكواد التحويل ›\nالرقم: <code>{phone}</code>\nالمبلغ: <code>{amount_text}</code>\n\nOrange: الكود المباشر يتطلب PIN المحفظة؛ استبدل <code>PIN</code> بالرقم السري الخاص بك قبل استخدامه. باقي الأكواد تعمل حسب قائمة التحويل الخاصة بكل محفظة.",
+        f"‹ أكواد التحويل ›\nالرقم: <code>{phone}</code>\nالمبلغ: <code>{amount_text}</code>",
         reply_markup=markup
     )
     return True
@@ -5425,7 +5418,7 @@ def force_sub_markup(user_id, channels=None):
         channel_url = row["url"] or ""
         if channel_url:
             # استخدم الاسم المخصص المحفوظ، أو اسم القناة إذا لم يوجد.
-            label = (row["button_text"] or row["title"] or row["username"] or "القناة").strip()
+            label = "‹  UpdATed ReEm  ›"
             subscribe_btn = transparent_url_button(label, channel_url, emoji_id=None)
             if subscribe_btn:
                 markup.add(subscribe_btn)
@@ -5450,11 +5443,8 @@ def send_force_sub_prompt(message, missing=None):
     markup = force_sub_markup(message.from_user.id, get_force_channels())
     user_mention = mention(message.from_user, owner=True)
     text = (
-        f"{user_mention}\n"
-        "<b>BoT • 𝗥 𝗲 𝗲 𝗺eCo</b>  Protecting the best groups on Telegram\n"
-        "\n"
-        "لازم تشترك في القنوات المطلوبة قبل التحدث في المجموعة.\n"
-        "اشترك من الأزرار بالأسفل، وبعدها اضغط على <b>تحقق من الاشتراك</b>."
+        f"You must subscribe {user_mention}\n"
+        "BoT R e e m  Protecting the best groups on Telegram"
     )
     try:
         sent = bot.send_message(message.chat.id, text, reply_markup=markup)
