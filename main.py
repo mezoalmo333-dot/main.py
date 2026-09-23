@@ -31,13 +31,14 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "8878742478:AAH8GEda3431adptHolRakROxX_VAZea7
 
 DEVELOPER_ID = 8037399518
 BOT_USERNAME = "v_u_kbot"
-BOT_DISPLAY_NAME = "@v_u_kbot"
+BOT_DISPLAY_NAME = "R e e m "
 DB_NAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "protection_bot.db")
 
 # =========================================================
 # بيانات السورس
 # =========================================================
 SOURCE_CHANNEL_URL = "https://t.me/Ssource_MaX"
+UPDATES_BROADCAST_CHANNEL = "@Ssource_MaX"
 SOURCE_DEVELOPER_URL = "https://t.me/L1_D_R"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
@@ -3380,12 +3381,9 @@ COMMAND_CATEGORY_TITLES = {
 }
 
 def command_buttons_markup(category, viewer_id=None, chat_id=None):
-    items = COMMAND_BUTTONS.get(category, [])
-    markup = types.InlineKeyboardMarkup(row_width=2)
     token = str(viewer_id or 0)
-    for index, label in enumerate(items):
-        markup.row(button(label, callback_data=f"cmdpick:{token}:{category}:{index}", style="primary", icon_custom_emoji_id=CE_COMMANDS))
-    markup.row(button("↩️ رجوع للأوامر", callback_data=f"cmdcat:{token}:home", style="danger", icon_custom_emoji_id=CE_COMMANDS))
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.row(button("رجوع للأوامر", callback_data=f"cmdcat:{token}:home", style="primary"))
     return markup
 
 def command_category_allowed(category, viewer_id, chat_id=None):
@@ -3409,69 +3407,66 @@ def commands_menu_markup(viewer_id=None, chat_id=None):
     markup = types.InlineKeyboardMarkup(row_width=2)
     token = str(viewer_id or 0)
     markup.row(
-        button("أوامر المجموعات", callback_data=f"cmdcat:{token}:groups", style="primary", icon_custom_emoji_id=CE_COMMANDS),
-        button("أوامر الحماية", callback_data=f"cmdcat:{token}:protection", style="primary", icon_custom_emoji_id=CE_PROTECTION)
+        button("أوامر المجموعات", callback_data=f"cmdcat:{token}:groups", style="primary"),
+        button("أوامر الحماية", callback_data=f"cmdcat:{token}:protection", style="primary")
     )
     markup.row(
-        button("أوامر الإدارة", callback_data=f"cmdcat:{token}:admin", style="primary", icon_custom_emoji_id=CE_COMMANDS),
-        button("أوامر الرتب", callback_data=f"cmdcat:{token}:ranks", style="primary", icon_custom_emoji_id=CE_COMMANDS)
+        button("أوامر الإدارة", callback_data=f"cmdcat:{token}:admin", style="primary"),
+        button("أوامر الرتب", callback_data=f"cmdcat:{token}:ranks", style="primary")
     )
     markup.row(
-        button("أوامر القفل", callback_data=f"cmdcat:{token}:locks", style="primary", icon_custom_emoji_id=CE_PROTECTION),
-        button("أوامر الفتح", callback_data=f"cmdcat:{token}:unlocks", style="primary", icon_custom_emoji_id=CE_PROTECTION)
+        button("أوامر القفل", callback_data=f"cmdcat:{token}:locks", style="primary"),
+        button("أوامر الفتح", callback_data=f"cmdcat:{token}:unlocks", style="primary")
     )
     markup.row(
-        button("أوامر TON", callback_data=f"cmdcat:{token}:ton", style="primary", icon_custom_emoji_id=CE_TON_WALLET),
-        button("أوامر الأغاني", callback_data=f"cmdcat:{token}:music", style="primary", icon_custom_emoji_id=CE_COMMANDS)
+        button("أوامر TON", callback_data=f"cmdcat:{token}:ton", style="primary"),
+        button("أوامر الأغاني", callback_data=f"cmdcat:{token}:music", style="primary")
     )
     markup.row(
-        button("أوامر الصور", callback_data=f"cmdcat:{token}:images", style="primary", icon_custom_emoji_id=CE_COMMANDS),
-        button("أوامر الردود", callback_data=f"cmdcat:{token}:replies", style="primary", icon_custom_emoji_id=CE_COMMANDS)
+        button("أوامر الصور", callback_data=f"cmdcat:{token}:images", style="primary"),
+        button("أوامر الردود", callback_data=f"cmdcat:{token}:replies", style="primary")
     )
-    markup.row(button("كل الأوامر", callback_data=f"cmdcat:{token}:all", style="primary", icon_custom_emoji_id=CE_COMMANDS))
+    markup.row(button("كل الأوامر", callback_data=f"cmdcat:{token}:all", style="primary"))
     return markup
 
 def command_category_text(category, viewer_id=None, chat_id=None):
     if not command_category_allowed(category, viewer_id, chat_id):
         return "❌ هذه الأوامر ليست ضمن صلاحيات رتبتك."
     texts = {
-        "locks": "🔒 <b>أوامر القفل</b>\n\n<code>قفل الروابط</code>\n<code>قفل الصور</code>\n<code>قفل الفيديو</code>\n<code>قفل الملفات</code>\n<code>قفل الملصقات</code>\n<code>قفل الصوت</code>\n<code>قفل المتحركات</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>\n<code>قفل الجروب</code>\n<code>قفل الكل</code>",
-        "unlocks": "🔓 <b>أوامر الفتح</b>\n\n<code>فتح الروابط</code>\n<code>فتح الصور</code>\n<code>فتح الفيديو</code>\n<code>فتح الملفات</code>\n<code>فتح الملصقات</code>\n<code>فتح الصوت</code>\n<code>فتح المتحركات</code>\n<code>فتح التكرار</code>\n<code>فتح حماية الجدد</code>\n<code>فتح الجروب</code>\n<code>فتح الكل</code>",
-        "groups": "👥 <b>أوامر المجموعات</b>\n\n<code>رتبتي</code>\n<code>ا</code>\n<code>معلومات</code>\n<code>احصائيات</code>\n<code>السجل</code>\n<code>الاعدادات</code>\n<code>الساعة</code>\n<code>المالك</code>\n<code>المطور</code>",
-        "admin": "👮 <b>أوامر الإدارة</b>\n\n<code>حظر</code>\n<code>فك حظر</code>\n<code>حظر عام</code>\n<code>طرد</code>\n<code>كتم</code>\n<code>فك كتم</code>\n<code>تحذير</code>\n<code>تحذيرات</code>\n<code>مسح التحذيرات</code>\n<code>الغاء تحذير</code>\n<code>قفل الجروب</code>\n<code>فتح الجروب</code>",
-        "protection": "🛡️ <b>أوامر الحماية</b>\n\n<code>منع كلمة ...</code>\n<code>الغاء منع كلمة ...</code>\n<code>قائمة الكلمات</code>\n<code>قفل الروابط</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>",
-        "ranks": "👑 <b>أوامر الرتب</b>\n\n<code>رفع مساعد المالك</code>\n<code>تنزيل مساعد المالك</code>\n<code>رفع مدير</code>\n<code>تنزيل مدير</code>\n<code>رفع ادمن</code>\n<code>تنزيل ادمن</code>\n<code>رفع مشرف</code>\n<code>تنزيل مشرف</code>\n<code>رفع حيوان</code>\n<code>تنزيل حيوان</code>",
-        "replies": "💬 <b>أوامر الردود</b>\n\n<code>اضف رد</code>\n<code>حذف رد</code>\n<code>قائمة الردود</code>\n\nالرد الذي تضيفه من داخل المجموعة يُحفظ لهذه المجموعة فقط.",
-        "ton": "💎 <b>أوامر TON</b>\n\n<code>1ton</code> أو <code>1تون</code> — سعر TON\n<code>تحليل تون</code> — تحليل آخر 24 ساعة\n<code>تحليل دولار</code> — سعر الدولار مقابل الجنيه",
-        "music": "🎵 <b>أوامر الأغاني</b>\n\n<code>تنزيل {اسم الأغنية}</code> — يبحث في YouTube ويرسل الأغنية كملف صوتي.",
-        "images": "أوامر الصور\n\n<code>صور</code> — إرسال صورة من الصور التي أضافها المطور.",
+        "locks": "<b>أوامر القفل</b>\n<code>قفل الروابط</code>\n<code>قفل الصور</code>\n<code>قفل الفيديو</code>\n<code>قفل الملفات</code>\n<code>قفل الملصقات</code>\n<code>قفل الصوت</code>\n<code>قفل المتحركات</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>\n<code>قفل الجروب</code>\n<code>قفل الكل</code>",
+        "unlocks": "<b>أوامر الفتح</b>\n<code>فتح الروابط</code>\n<code>فتح الصور</code>\n<code>فتح الفيديو</code>\n<code>فتح الملفات</code>\n<code>فتح الملصقات</code>\n<code>فتح الصوت</code>\n<code>فتح المتحركات</code>\n<code>فتح التكرار</code>\n<code>فتح حماية الجدد</code>\n<code>فتح الجروب</code>\n<code>فتح الكل</code>",
+        "groups": "<b>أوامر المجموعات</b>\n<code>رتبتي</code>\n<code>ا</code>\n<code>معلومات</code>\n<code>احصائيات</code>\n<code>السجل</code>\n<code>الاعدادات</code>\n<code>الساعة</code>\n<code>المالك</code>\n<code>المطور</code>",
+        "admin": "<b>أوامر الإدارة</b>\n<code>حظر</code>\n<code>فك حظر</code>\n<code>حظر عام</code>\n<code>طرد</code>\n<code>كتم</code>\n<code>فك كتم</code>\n<code>تحذير</code>\n<code>تحذيرات</code>\n<code>مسح التحذيرات</code>\n<code>الغاء تحذير</code>\n<code>قفل الجروب</code>\n<code>فتح الجروب</code>",
+        "protection": "<b>أوامر الحماية</b>\n<code>منع كلمة ...</code>\n<code>الغاء منع كلمة ...</code>\n<code>قائمة الكلمات</code>\n<code>قفل الروابط</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>",
+        "ranks": "<b>أوامر الرتب</b>\n<code>رفع مساعد المالك</code>\n<code>تنزيل مساعد المالك</code>\n<code>رفع مدير</code>\n<code>تنزيل مدير</code>\n<code>رفع ادمن</code>\n<code>تنزيل ادمن</code>\n<code>رفع مشرف</code>\n<code>تنزيل مشرف</code>\n<code>رفع حيوان</code>\n<code>تنزيل حيوان</code>",
+        "replies": "<b>أوامر الردود</b>\n<code>اضف رد</code>\n<code>حذف رد</code>\n<code>قائمة الردود</code>",
+        "ton": "<b>أوامر TON</b>\n<code>1ton</code> أو <code>1تون</code> — سعر TON\n<code>تحليل تون</code> — تحليل آخر 24 ساعة\n<code>تحليل دولار</code> — سعر الدولار مقابل الجنيه\n<code>محفظة</code> — كشف محفظة TON",
+        "music": "<b>أوامر الأغاني</b>\n<code>تنزيل {اسم الأغنية}</code> — البحث في YouTube وإرسال الصوت",
+        "images": "<b>أوامر الصور</b>\n<code>صور</code> — إرسال صورة من صور البوت",
     }
-    return texts.get(category, "📚 <b>قائمة أوامر البوت</b>")
-
+    return texts.get(category, "<b>قائمة أوامر البوت</b>")
 
 def format_commands_as_quotes(text):
-    """عرض الأوامر كنصوص مقتبسة متتالية بدون أسطر فارغة بينها."""
+    """يعرض الأوامر كاقتباسات متتالية بدون أسطر فارغة."""
     if not text:
         return text
     output = []
     for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
+        line = line.strip()
+        if not line:
             continue
-        if "<code>" in stripped and "</code>" in stripped:
-            # لو السطر يحتوي أكثر من أمر مفصولًا بـ • نفصلها إلى أسطر مقتبسة.
-            parts = [part.strip() for part in re.split(r"\s*•\s*", stripped) if part.strip()]
-            for part in parts:
-                output.append(f"<blockquote>{part}</blockquote>")
-        else:
-            output.append(stripped)
+        if "<code>" in line and "</code>" in line:
+            parts = re.findall(r"<code>.*?</code>", line)
+            if parts:
+                output.extend(f"<blockquote>{part}</blockquote>" for part in parts)
+                continue
+        output.append(line)
     return "\n".join(output)
-
 
 def commands_back_markup(viewer_id=None):
     token = str(viewer_id or 0)
     markup = types.InlineKeyboardMarkup()
-    markup.add(button("↩️ رجوع للأوامر", callback_data=f"cmdcat:{token}:home", style="primary", icon_custom_emoji_id=CE_COMMANDS))
+    markup.add(button("رجوع للأوامر", callback_data=f"cmdcat:{token}:home", style="primary"))
     return markup
 
 
@@ -3698,7 +3693,7 @@ def save_auto_reply(
         button_data = []
         if button_enabled and button_url:
             button_data.append({
-                "text": button_text or "• 𝗥 𝗲 𝗲 𝗺",
+                "text": button_text or "​‹𝗥 𝗲 𝗲 𝗺 ​› ",
                 "url": button_url,
                 "emoji_id": button_emoji_id or ""
             })
@@ -4811,7 +4806,7 @@ def ensure_default_force_channel():
                 username,
                 getattr(chat, "title", "") or "Ssource_MaX",
                 url,
-                "Update Bot",
+                "اشترك في السورس",
                 CE_FORCE_SUB
             )
         )
@@ -5101,7 +5096,6 @@ YOUTUBE_COOKIES = """# Netscape HTTP Cookie File
 .youtube.com	TRUE	/	TRUE	1802154633	__Secure-ROLLOUT_TOKEN	CIHe4sDo2eaE-wEQoozup_2clgMYvNLauv2clgM%3D
 .youtube.com	TRUE	/	TRUE	1820730593	__Secure-YEC	CgtSMXpxX3Z4cEtOSSji9fXTBjIKCgJERRIEEgAgV2LgAgrdAjE3LllURT1PcnJ3OUxQYkNZMXRjanpzZTRrMUw5Yjl0UmZKRTZiMjJzdkJLaE84N0lScjI5eHlRVHZFdm5RaGNyMWxXdHZ6T0lJckZTSXFTaFhubUNsLWVaRjFhY2hHVzJmMFdnNlpMTXFGZHRCeTNwUmQtR2UtWHYzU2V2Y0wzN1licWpKUnc1MEwxMzRvR2VGeW0tRkxPbnlpeVE2T3dxX3JQQWRJbGMtLVJPX3RLVXZJaWRfRndrR3VvSUVJeF9sWDFvWUg0cTJRNTlTRzVieHlhVjFDeDVSR01HVjdGNDhncFJ4RUJwZ2tEMzZ3elFDdGRDRFpqaXRwZXV5dTRYVzNOZ3pHakZxdUJRVEQ5SmV1OTh4WkhWek5vMXdueDhqWlVUZGVWQkFSTkQxdk1hVGZfYTVDdHU2aWZvSTh1VUZJZm4yYURZSTF3c2x6VV9JMlRjczBJZ09TVVE%3D
 .youtube.com	TRUE	/	TRUE	1820730594	__Secure-YENID	17.YTE=Orrw9LPbCY1tcjzse4k1L9b9tRfJE6b22svBKhO87IRr29xyQTvEvnQhcr1lWtvzOIIrFSIqShXnmCl-eZF1achGW2f0Wg6ZLMqFdtBy3pRd-Ge-Xv3SevcL37YbqjJRw50L134oGeFym-FLOnyiyQ6Owq_rPAdIlc--RO_tKUvIid_FwkGuoIEIx_lX1oYH4q2Q59SG5bxyaV1Cx5RGMGV7F48gpRxEBpgkD36wzQCtdCDZjitpeuyu4XW3NgzGjFquBQTD9Jeu98xZHVzNo1wnx8jZUTdeVBARND1vMaTf_a5Ctu6ifoI8uUFIfn2aDYI1wslzU_I2Tcs0IgOSUQ
-
 """.strip()
 
 _cookie_runtime_file = None
@@ -6295,7 +6289,6 @@ def start_inline_markup(user_id):
         button("‹ LeAaDeR ›", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI),
         button("‹ DeV ›", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI)
     )
-    markup.row(button("‹ Help ›", callback_data=f"cmdcat:{user_id}:all", style="primary", icon_custom_emoji_id=CE_COMMANDS))
     markup.row(button("‹ Add Me To Your Group ›", url=ADD_TO_GROUP_URL, style="primary", icon_custom_emoji_id="5462943653116792628"))
     return markup
 
@@ -6328,13 +6321,14 @@ def build_welcome_text(user, private=False, chat=None):
     now_eg = datetime.now(timezone(timedelta(hours=3)))
     time_text = now_eg.strftime("%I:%M %p").lstrip("0")
     if private:
-        bot_name = html.escape(BOT_DISPLAY_NAME)
+        bot_name = html.escape(BOT_USERNAME)
         username = html.escape(username_text(user))
+        display_name = html.escape(name)
         return (
-            "• أهلا بك عزيزي المُستخدِم .\n"
-            "      ─ ── ── ── ── ──\n"
-            f"• انا بوت (<a href=\"https://t.me/{BOT_USERNAME}\">{bot_name}</a>) ︕، يمڪنك أستخدامي في حمايه الجروبات من التفليش والروابط والاسبام والاباحي\n"
-            "      ─ ── ── ── ── ──\n"
+            f"🔹 • أهلا بك عزيزي المُستخدِم <a href=\"tg://user?id={user.id}\">{display_name}</a> .\n"
+            "🔹 ─ ── ── ── ── ──\n"
+            f"🔹 • انا بوت (<a href=\"https://t.me/{BOT_USERNAME}\">{bot_name}</a>) ︕، يمڪنك أستخدامي في حمايه الجروبات من التفليش والروابط والاسبام والاباحي\n"
+            "🔹 ─ ── ── ── ── ──\n"
             f"• UsE ⦉ <a href=\"tg://user?id={user.id}\">{username}</a> ⦊\n"
             f"• ID  ⦉ <code>{user.id}</code> ⦊"
         )
@@ -6876,23 +6870,48 @@ def updates_broadcast_markup(buttons):
     return markup
 
 
+def perform_updates_broadcast(source_message, reply_markup=None, progress_chat_id=None):
+    """ينشر تحديث البوت في قناة السورس فقط."""
+    ok = failed = 0
+    progress_message = None
+    if progress_chat_id is not None:
+        try:
+            progress_message = bot.send_message(progress_chat_id, "جاري إذاعة تحديثات البوت إلى القناة فقط\n<b>تم الإرسال:</b> 0\n<b>الفشل:</b> 0")
+        except Exception:
+            pass
+    try:
+        kwargs = {
+            "chat_id": UPDATES_BROADCAST_CHANNEL,
+            "from_chat_id": source_message.chat.id,
+            "message_id": source_message.message_id,
+        }
+        if reply_markup is not None:
+            kwargs["reply_markup"] = reply_markup
+        bot.copy_message(**kwargs)
+        ok = 1
+    except Exception as exc:
+        failed = 1
+        print("[Updates Broadcast]", repr(exc))
+    if progress_message:
+        try:
+            bot.edit_message_text(
+                f"اكتملت إذاعة تحديثات البوت إلى <b>{UPDATES_BROADCAST_CHANNEL}</b>\n<b>تم الإرسال:</b> {ok}\n<b>الفشل:</b> {failed}",
+                progress_chat_id, progress_message.message_id
+            )
+        except Exception:
+            pass
+    return ok, failed
+
 def start_updates_broadcast(message):
-    """إذاعة تحديثات منفصلة عن الإذاعة العامة، مع أكثر من 15 زر رابط."""
     if not message.from_user or message.from_user.id != DEVELOPER_ID:
         return False
-    updates_broadcast_pending[message.from_user.id] = {
-        "message": None,
-        "buttons": [],
-        "step": "message"
-    }
+    updates_broadcast_pending[message.from_user.id] = {"message": None, "buttons": [], "step": "message"}
     admin_pending[message.from_user.id] = "updates_broadcast_message"
     bot.send_message(
         message.chat.id,
-        "أرسل رسالة تحديث البوت الآن بأي نوع يدعمه Telegram.\n"
-        "بعدها سأجمع أزرار الروابط واحدًا واحدًا. يمكنك إضافة أكثر من 15 زر، وحتى 30 زرًا."
+        f"أرسل رسالة تحديث البوت الآن.\nسيتم نشرها في قناة <b>{UPDATES_BROADCAST_CHANNEL}</b> فقط.\nبعدها أرسل أسماء وروابط الأزرار، من 16 إلى 30 زرًا."
     )
     return True
-
 def start_broadcast(message):
     admin_pending[message.from_user.id] = "broadcast_message"
     bot.send_message(
@@ -7218,7 +7237,7 @@ def main_handler(message):
                         admin_pending.pop(message.from_user.id, None)
                         updates_broadcast_pending.pop(message.from_user.id, None)
                         bot.send_message(message.chat.id, "جاري إذاعة تحديثات البوت...")
-                        ok, failed = perform_broadcast(source, "all", markup if markup.keyboard else None, progress_chat_id=message.chat.id)
+                        ok, failed = perform_updates_broadcast(source, markup if markup.keyboard else None, progress_chat_id=message.chat.id)
                         bot.send_message(message.chat.id, f"تمت إذاعة التحديثات إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
                         return
                     if not raw:
@@ -7250,7 +7269,7 @@ def main_handler(message):
                         admin_pending.pop(message.from_user.id, None)
                         updates_broadcast_pending.pop(message.from_user.id, None)
                         bot.send_message(message.chat.id, "تم الوصول إلى الحد الأقصى 30 زرًا. جاري إذاعة التحديثات...")
-                        ok, failed = perform_broadcast(source, "all", markup if markup.keyboard else None, progress_chat_id=message.chat.id)
+                        ok, failed = perform_updates_broadcast(source, markup if markup.keyboard else None, progress_chat_id=message.chat.id)
                         bot.send_message(message.chat.id, f"تمت إذاعة التحديثات إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
                         return
                     admin_pending[message.from_user.id] = "updates_broadcast_button_text"
@@ -9613,31 +9632,18 @@ def callbacks(call):
             return
 
         if call.data.startswith("cmdpick:"):
+            # توافق مع أي زر قديم محفوظ؛ لا تعرض أوامر كأزرار منفصلة.
             parts = call.data.split(":", 3)
             if len(parts) != 4:
                 return
-            owner_id = int(parts[1]) if parts[1].isdigit() else 0
+            owner_id = int(parts[1]) if parts[1].isdigit() else uid
             category = parts[2]
-            try:
-                index = int(parts[3])
-            except Exception:
-                return
             if owner_id and owner_id != uid:
                 bot.answer_callback_query(call.id, "هذه الأوامر ليست لك.", show_alert=True)
                 return
-            items = COMMAND_BUTTONS.get(category, [])
-            if index < 0 or index >= len(items):
-                bot.answer_callback_query(call.id, "الأمر غير موجود.", show_alert=True)
-                return
-            command_label = items[index]
-            bot.answer_callback_query(call.id, command_label[:180])
-            bot.send_message(
-                chat_id,
-                f"<b>{html.escape(COMMAND_CATEGORY_TITLES.get(category, 'الأمر'))}</b>\n\n"
-                f"<code>{html.escape(command_label)}</code>\n\n"
-                "اضغط الزر لاختيار الأمر، ثم نفّذه بالصيغة الظاهرة في المجموعة.",
-                reply_markup=command_buttons_markup(category, uid, chat_id)
-            )
+            bot.answer_callback_query(call.id)
+            text = format_commands_as_quotes(command_category_text(category, uid, chat_id))
+            bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=commands_back_markup(uid))
             return
 
         if call.data.startswith("cmdcat:"):
