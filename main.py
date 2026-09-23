@@ -1060,7 +1060,6 @@ def command_parts(message):
         command = "همسة"
     elif command in ("ث", "تثبيت"):
         command = "تثبيت"
-        argument = ""
     if command == "قفل" and argument and clean_text(argument) in ("الجروب", "المجموعه", "المجموعة"):
         command = "قفل_الجروب"
         argument = ""
@@ -1125,6 +1124,18 @@ def command_parts(message):
             argument = argument[len(second):].strip()
         elif second_clean in ("usdt", "ustd", "يوستيد"):
             command = "تحليل_usdt"
+            argument = argument[len(second):].strip()
+
+    if command == "مسح" and argument:
+        second = argument.split(maxsplit=1)[0]
+        if clean_text(second) == "التحذيرات":
+            command = "مسح_التحذيرات"
+            argument = argument[len(second):].strip()
+
+    if command == "الغاء" and argument:
+        second = argument.split(maxsplit=1)[0]
+        if clean_text(second) == "تحذير":
+            command = "الغاء_تحذير"
             argument = argument[len(second):].strip()
 
     if command == "فك" and argument:
@@ -2139,139 +2150,45 @@ def send_star_price(message, amount):
     return True
 
 
-def _gift_links_from_text(text):
-    if not text:
-        return []
-    pattern = r'(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me)/(?:nft|gift|giftcode)/[^\s<>()]+'
-    links=[]
-    for raw in re.findall(pattern, text, re.I):
-        raw=raw.rstrip('.,!?؛،)]}')
-        if not raw.lower().startswith(('http://','https://')):
-            raw='https://'+raw
-        if raw not in links:
-            links.append(raw)
-    return links
-
-
-def _gift_slug_from_url(url):
+def _gift_star_count_from_page(url):
     try:
-        parsed=urllib.parse.urlparse(url)
-        parts=[urllib.parse.unquote(x) for x in parsed.path.split('/') if x]
-        if len(parts)>=2 and parts[0].lower() in ('nft','gift','giftcode'):
-            return parts[1]
-    except Exception:
-        pass
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US,en;q=0.8"})
+        with urllib.request.urlopen(req, timeout=15) as response:
+            raw = response.read().decode("utf-8", "ignore")
+        raw = raw.replace("\\/", "/")
+        patterns = [
+            r'"star_count"\s*:\s*(\d+)',
+            r'"starCount"\s*:\s*(\d+)',
+            r'"stars"\s*:\s*(\d+)',
+            r'(?<![A-Za-z])([0-9]{1,6})\s*Stars',
+            r'Stars[^0-9]{0,40}([0-9]{1,6})'
+        ]
+        for pat in patterns:
+            m = re.search(pat, raw, re.I)
+            if m:
+                return int(m.group(1))
+    except Exception as e:
+        print("[Gift Page Error]", repr(e))
     return None
 
 
-def _fetch_text(url):
-    try:
-        req=urllib.request.Request(url,headers={
-            'User-Agent':'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/140 Safari/537.36',
-            'Accept-Language':'en-US,en;q=0.9,ar;q=0.8',
-            'Accept':'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8'
-        })
-        with urllib.request.urlopen(req,timeout=12) as response:
-            return response.read().decode('utf-8','ignore')
-    except Exception as e:
-        print('[Gift Fetch Error]',url,repr(e))
-        return ''
-
-
-def _gift_numeric_values(raw):
-    values=[]
-    if not raw:
-        return values
-    raw=raw.replace('\\/','/')
-    patterns=[
-        r'"(?:star_count|starCount|stars|price_stars|priceStars|resale_price_stars)"\s*:\s*([0-9]{1,8}(?:\.[0-9]+)?)',
-        r'"(?:price_ton|priceTon|ton_price|tonPrice|resale_price_ton)"\s*:\s*([0-9]{1,8}(?:\.[0-9]+)?)',
-        r'(?<![A-Za-z0-9])([0-9]{1,8}(?:\.[0-9]+)?)\s*(?:⭐|Stars?|STARS?)',
-        r'(?:Stars?|STARS?|⭐)[^0-9]{0,50}([0-9]{1,8}(?:\.[0-9]+)?)',
-        r'(?<![A-Za-z0-9])([0-9]{1,8}(?:\.[0-9]+)?)\s*(?:TON|Ton|ton)\b',
-        r'(?:TON|Ton|ton)[^0-9]{0,50}([0-9]{1,8}(?:\.[0-9]+)?)'
-    ]
-    for i,pat in enumerate(patterns):
-        for m in re.finditer(pat,raw,re.I):
-            try:
-                value=float(m.group(1))
-                if value<=0: continue
-                kind='stars' if i<4 else 'ton'
-                values.append((kind,value))
-            except Exception:
-                pass
-    return values
-
-
-def _gift_data_from_pages(url):
-    slug=_gift_slug_from_url(url)
-    pages=[url]
-    if slug:
-        pages += [f'https://fragment.com/gift/{slug}', f'https://nft.fragment.com/gift/{slug}']
-    stars=None
-    ton=None
-    raw_all=''
-    for page in pages:
-        raw=_fetch_text(page)
-        if not raw: continue
-        raw_all += '\n'+raw
-        vals=_gift_numeric_values(raw)
-        for kind,val in vals:
-            if kind=='stars' and stars is None:
-                stars=int(val) if float(val).is_integer() else val
-            elif kind=='ton' and ton is None:
-                ton=val
-        if stars is not None and ton is not None:
-            break
-    if stars is None:
-        # بعض صفحات الهدايا تعرض السعر في النص بصيغة مثل 999 Stars.
-        m=re.search(r'([0-9]{1,8})\s*(?:⭐|Stars?)\b',raw_all,re.I)
-        if m:
-            stars=int(m.group(1))
-    if ton is None:
-        m=re.search(r'([0-9]{1,8}(?:\.[0-9]+)?)\s*TON\b',raw_all,re.I)
-        if m:
-            ton=float(m.group(1))
-    name=None
-    if slug:
-        name=slug.rsplit('-',1)[0].replace('-',' ')
-        if re.search(r'-\d+$',slug):
-            name=name.title()
-    return {'slug':slug,'name':name,'stars':stars,'ton':ton}
-
-
-def _gift_star_count_from_page(url):
-    data=_gift_data_from_pages(url)
-    return data.get('stars')
-
-
 def send_gift_price(message, url):
-    data=_gift_data_from_pages(url)
-    stars=data.get('stars')
-    gift_ton=data.get('ton')
-    if stars is None and gift_ton is None:
-        bot.reply_to(message,
-            '‹ الهدية ›\nتعذر قراءة بيانات الهدية من الرابط. تأكد أن الرابط بصيغة t.me/nft/اسم-رقم.')
+    stars = _gift_star_count_from_page(url)
+    if stars is None:
+        bot.reply_to(message, "‹ الهدية ›\nتعذر قراءة سعر الهدية من الرابط حاليًا.")
         return True
-
-    usd_egp, ton_usd=get_currency_rates()
-    egp=None
-    usd=None
-    ton_from_stars=None
-    if stars is not None and usd_egp and ton_usd and usd_egp>0 and ton_usd>0:
-        egp,usd,ton_from_stars=_star_prices(float(stars))
-
-    lines=[]
-    if egp is not None:
-        lines.append(f"<blockquote>• EGP  {format_money(egp, 2)} جنيه</blockquote>")
-    if usd is not None:
-        lines.append(f"<blockquote>• UsT  {format_money(usd, 4)} USDT</blockquote>")
-    if ton_from_stars is not None:
-        lines.append(f"<blockquote>• ToN  {format_money(ton_from_stars, 4)} TON</blockquote>")
-    if stars is not None:
-        lines.append(f"<blockquote>• StaRS  {format_money(stars, 0)}</blockquote>")
-
-    bot.reply_to(message,'\n'.join(lines),parse_mode='HTML')
+    prices = _star_prices(float(stars))
+    if not prices:
+        bot.reply_to(message, "‹ الهدية ›\nتم العثور على سعر الهدية بالنجوم، لكن أسعار العملات غير متاحة الآن.")
+        return True
+    egp, usd, ton = prices
+    text = (
+        f"<blockquote><i>• EGP  {format_money(egp, 2)} جنيه</i></blockquote>\n"
+        f"<blockquote><i>• UsT  {format_money(usd, 4)} USDT</i></blockquote>\n"
+        f"<blockquote><i>• ToN  {format_money(ton, 4)} TON</i></blockquote>\n"
+        f"<blockquote><i>• StaRS  {stars}</i></blockquote>"
+    )
+    bot.reply_to(message, text, parse_mode="HTML")
     return True
 
 
@@ -2280,13 +2197,11 @@ def handle_transfer_code_request(message, phone, amount):
     amount_text = str(amount).rstrip("0").rstrip(".") if isinstance(amount, float) else str(amount)
     if not re.fullmatch(r"01\d{9}", phone) or float(amount) <= 0:
         return False
-    # أكواد التحويل الرسمية لكل شبكة.
-    # أورنچ كاش يدعم صيغة التحويل المباشر، لكنها تتطلب الرقم السري للمحفظة،
-    # لذلك نضع PIN كعنصر نائب ولا نطلب أو نحفظ الرقم السري داخل البوت.
+    # Vodafone لديه صيغة مباشرة؛ باقي الشركات تعتمد على قائمة التحويل الرسمية.
     codes = [
+        ("Etsleat", "*777*1#"),
         ("Vodafone", f"*9*7*{phone}*{amount_text}#"),
-        ("Orange", f"#7115*1*1*1*{phone}*{amount_text}#"),
-        ("Etsleat", f"*777*2*{phone}*{amount_text}#"),
+        ("Orange", "#7115#"),
         ("WE", "*7*2#"),
     ]
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -2296,7 +2211,7 @@ def handle_transfer_code_request(message, phone, amount):
             markup.add(btn)
     bot.reply_to(
         message,
-        f"‹ أكواد التحويل ›\nالرقم: <code>{phone}</code>\nالمبلغ: <code>{amount_text}</code>",
+        f"‹ أكواد التحويل ›\nالرقم: <code>{phone}</code>\nالمبلغ: <code>{amount_text}</code>\n\nVodafone يمكنه استخدام الكود المباشر، بينما Etsleat / Orange / WE يفتحون قائمة التحويل الرسمية.",
         reply_markup=markup
     )
     return True
@@ -2329,9 +2244,9 @@ def handle_extra_utilities(message):
     if star_amount is not None:
         return send_star_price(message, star_amount)
 
-    gift_links = _gift_links_from_text(raw)
-    if gift_links:
-        return send_gift_price(message, gift_links[0])
+    # هدايا Telegram: NFT وغير NFT بروابط Telegram العامة.
+    if re.search(r"https?://(?:t\.me|telegram\.me)/(?:nft|gift|giftcode)/", raw, re.I):
+        return send_gift_price(message, raw)
     return False
 
 
@@ -2837,12 +2752,13 @@ def target_is_admin(chat_id, user_id):
 
 
 def get_rank(chat_id, user_id):
-    """ترجع رتبة نظام البوت فقط.
+    # المطور هو مالك البوت، وتكون رتبته "المالك" في كل مجموعة.
+    if is_developer(user_id):
+        return "owner"
 
-    مهم: مشرف Telegram لا يتحول تلقائيًا إلى رتبة ``admin`` داخل
-    قاعدة بيانات البوت. صلاحيات مشرف Telegram للمجموعة تُحسب بشكل
-    منفصل عبر ``get_group_access_rank``.
-    """
+    if is_creator(chat_id, user_id):
+        return "owner"
+
     cursor.execute(
         """
         SELECT rank
@@ -2853,29 +2769,8 @@ def get_rank(chat_id, user_id):
     )
 
     row = cursor.fetchone()
+
     return row["rank"] if row else "member"
-
-
-def get_group_access_rank(chat_id, user_id):
-    """رتبة الصلاحيات الفعلية لأوامر المجموعة فقط.
-
-    - مالك البوت: صلاحيات كاملة داخل المجموعة.
-    - مالك المجموعة/مشرف Telegram: صلاحيات إدارة المجموعة.
-    - الرتب المحفوظة داخل البوت تبقى كما هي ولا يتم إنشاء رتبة جديدة.
-    """
-    stored_rank = get_rank(chat_id, user_id)
-
-    if is_developer(user_id):
-        return "owner"
-
-    if is_creator(chat_id, user_id):
-        return "owner"
-
-    member = get_member(chat_id, user_id)
-    if member and getattr(member, "status", "") == "administrator":
-        return "admin" if rank_level(stored_rank) < rank_level("admin") else stored_rank
-
-    return stored_rank
 
 
 def rank_level(rank):
@@ -2953,15 +2848,6 @@ def can_manage_rank(actor_rank, target_rank, action):
         return target_rank != "assistant_owner"
 
     if actor_rank == "manager":
-        return target_rank in (
-            "admin",
-            "moderator",
-            "animal"
-        )
-
-    # كل أدمن Telegram / رتبة أدمن يملك صلاحيات إدارة المشرفين
-    # والرتب الأدنى، لكن لا يستطيع تعديل المدير أو مساعد المالك.
-    if actor_rank == "admin":
         return target_rank in (
             "admin",
             "moderator",
@@ -3103,12 +2989,12 @@ def target_protected(message, target):
     if not target:
         return True
 
-    tr = get_group_access_rank(
+    tr = get_rank(
         message.chat.id,
         target.id
     )
 
-    ar = get_group_access_rank(
+    ar = get_rank(
         message.chat.id,
         message.from_user.id
     )
@@ -3129,7 +3015,7 @@ def admin_required(message):
     ):
         return False
 
-    ar = get_group_access_rank(
+    ar = get_rank(
         message.chat.id,
         message.from_user.id
     )
@@ -3182,85 +3068,87 @@ def log_action(
 # استخراج الهدف
 # =========================================================
 def get_target(message, argument=""):
-
-    # إذا تم تحديد هدف صريح بعد الأمر (@username أو ID) نستخدمه أولًا.
-    # هذا يسمح مثلًا بكتابة: "طرد 123456" حتى لو كانت الرسالة ردًا على شخص آخر.
+    """Resolve a moderation target by reply, @username, numeric ID, or t.me/user link."""
     argument = (argument or "").strip()
 
+    # Explicit target always wins over the replied-to user.
     if argument:
-        target_token = argument.split(maxsplit=1)[0].strip()
+        # Accept the first meaningful token; also accept a Telegram user link.
+        token = argument.split(maxsplit=1)[0].strip().strip("<>()[]")
+        token = token.rstrip(".,،؛;:")
 
-        if re.fullmatch(r"-?\d+", target_token):
+        link_match = re.search(r"(?:https?://)?t\.me/(?:user/)?([A-Za-z0-9_]{4,64})/?$", token, re.I)
+        if link_match:
+            token = "@" + link_match.group(1)
 
-            m = get_member(
-                message.chat.id,
-                int(target_token)
-            )
+        if re.fullmatch(r"-?\d+", token):
+            uid = int(token)
+            try:
+                member = get_member(message.chat.id, uid)
+                if member and getattr(member, "user", None):
+                    return member.user
+            except Exception as exc:
+                print("[Target ID Resolve Error]", repr(exc))
+            # Keep a DB copy for users who are currently banned/left.
+            try:
+                row = _get_thread_db().execute(
+                    "SELECT user_id,first_name,last_name,username FROM group_users WHERE chat_id=? AND user_id=? LIMIT 1",
+                    (int(message.chat.id), uid)
+                ).fetchone()
+                if row:
+                    return types.User(
+                        id=int(row["user_id"]),
+                        is_bot=False,
+                        first_name=row["first_name"] or "User",
+                        last_name=row["last_name"] or None,
+                        username=row["username"] or None
+                    )
+            except Exception as exc:
+                print("[Target DB Resolve Error]", repr(exc))
+            return None
 
-            return m.user if m else None
+        username = token.lstrip("@").lower()
+        if username:
+            # First use the local member cache; it works even for users who are now banned.
+            try:
+                row = _get_thread_db().execute(
+                    "SELECT user_id,first_name,last_name,username FROM group_users "
+                    "WHERE chat_id=? AND LOWER(username)=? LIMIT 1",
+                    (int(message.chat.id), username)
+                ).fetchone()
+                if row:
+                    try:
+                        member = get_member(message.chat.id, int(row["user_id"]))
+                        if member and getattr(member, "user", None):
+                            return member.user
+                    except Exception:
+                        pass
+                    return types.User(
+                        id=int(row["user_id"]),
+                        is_bot=False,
+                        first_name=row["first_name"] or username,
+                        last_name=row["last_name"] or None,
+                        username=row["username"] or username
+                    )
+            except Exception as exc:
+                print("[Target Username DB Error]", repr(exc))
 
-        username = target_token.lstrip("@").lower()
+            # Fallback to Telegram's public username resolver, then verify membership.
+            try:
+                chat = bot.get_chat("@" + username)
+                user_obj = getattr(chat, "user", None) or chat
+                uid = getattr(user_obj, "id", None)
+                if uid:
+                    member = get_member(message.chat.id, int(uid))
+                    if member and getattr(member, "user", None):
+                        return member.user
+            except Exception as exc:
+                print("[Target Username API Resolve]", repr(exc))
 
-        cursor.execute("""
-            SELECT user_id
-            FROM group_users
-            WHERE chat_id=?
-            AND LOWER(username)=?
-            LIMIT 1
-        """, (
-            message.chat.id,
-            username
-        ))
-
-        row = cursor.fetchone()
-
-        if row:
-
-            m = get_member(
-                message.chat.id,
-                row["user_id"]
-            )
-
-            return m.user if m else None
-
-        # fallback: لو اليوزر غير مسجل في قاعدة البيانات، نحاول جلبه مباشرة من Telegram.
-        try:
-            chat_obj = bot.get_chat("@" + username)
-            m = get_member(message.chat.id, chat_obj.id)
-            return m.user if m else None
-        except Exception:
-            pass
-
-    # بدون هدف صريح: استخدم المستخدم الذي تم الرد عليه.
-    if (
-        message.reply_to_message
-        and message.reply_to_message.from_user
-    ):
-        return message.reply_to_message.from_user
-
-    return None
-
-    cursor.execute("""
-        SELECT user_id
-        FROM group_users
-        WHERE chat_id=?
-        AND LOWER(username)=?
-        LIMIT 1
-    """, (
-        message.chat.id,
-        username
-    ))
-
-    row = cursor.fetchone()
-
-    if row:
-
-        m = get_member(
-            message.chat.id,
-            row["user_id"]
-        )
-
-        return m.user if m else None
+    # No explicit target: use the replied-to user.
+    replied = getattr(message, "reply_to_message", None)
+    if replied and getattr(replied, "from_user", None):
+        return replied.from_user
 
     return None
 
@@ -3573,6 +3461,18 @@ def kick_user(chat_id, user_id):
         chat_id,
         user_id
     )
+
+
+def moderation_unban_markup(user_id):
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        button(
+            "رفع قيود",
+            callback_data=f"quick_unban:{int(user_id)}",
+            style="primary"
+        )
+    )
+    return markup
 
 
 def is_global_banned(user_id):
@@ -3906,7 +3806,6 @@ COMMAND_BUTTONS = {
     "ton": ["1ton", "1تون", "يوستيد", "usdt", "تحليل تون", "تحليل دولار", "محفظة"],
     "music": ["يوت", "يوتيوب", "اغنية", "تنزيل", "تنزيل + رابط الفيديو"],
     "images": ["صور", "زخرف"],
-    "extra": ["الاذان", "الأذان", "همسه", "همسة", "رفع مشرف"],
 }
 
 COMMAND_BUTTONS["all"] = list(dict.fromkeys(
@@ -3917,7 +3816,7 @@ COMMAND_CATEGORY_TITLES = {
     "groups": "أوامر المجموعات", "protection": "أوامر الحماية", "locks": "أوامر القفل",
     "unlocks": "أوامر الفتح", "admin": "أوامر الإدارة", "ranks": "أوامر الرتب",
     "replies": "أوامر الردود", "ton": "أوامر TON", "music": "أوامر الأغاني",
-    "images": "أوامر الصور", "extra": "أوامر إضافية",
+    "images": "أوامر الصور",
 }
 
 def command_buttons_markup(category, viewer_id=None, chat_id=None):
@@ -3930,7 +3829,7 @@ def command_category_allowed(category, viewer_id, chat_id=None):
     """يحدد الأقسام التي يحق للمستخدم رؤيتها، والمالك له كامل الأقسام."""
     if not viewer_id:
         return category in ("groups", "music", "images", "replies", "ton")
-    rank = get_group_access_rank(chat_id, viewer_id) if chat_id is not None and chat_id < 0 else "member"
+    rank = get_rank(chat_id, viewer_id) if chat_id is not None and chat_id < 0 else "member"
     level = rank_level(rank)
     if is_developer(viewer_id):
         return True
@@ -3966,7 +3865,6 @@ def commands_menu_markup(viewer_id=None, chat_id=None):
         button("أوامر الصور", callback_data=f"cmdcat:{token}:images", style="primary"),
         button("أوامر الردود", callback_data=f"cmdcat:{token}:replies", style="primary")
     )
-    markup.row(button("أوامر إضافية", callback_data=f"cmdcat:{token}:extra", style="primary"))
     markup.row(button("كل الأوامر", callback_data=f"cmdcat:{token}:all", style="primary"))
     return markup
 
@@ -3984,7 +3882,6 @@ def command_category_text(category, viewer_id=None, chat_id=None):
         "ton": "<b>أوامر TON</b>\n<code>1ton</code>\n<code>1تون</code>\n<code>يوستيد</code>\n<code>usdt</code>\n<code>تحليل تون</code>\n<code>تحليل دولار</code>\n<code>محفظة</code>",
         "music": "<b>أوامر الأغاني والتنزيل</b>\n<code>يوت</code>\n<code>يوتيوب</code>\n<code>اغنية</code>\n<code>تنزيل</code>\n<code>تنزيل + رابط الفيديو</code>",
         "images": "<b>أوامر الصور والزخرفة</b>\n<code>صور</code>\n<code>زخرف</code>",
-        "extra": "<b>أوامر إضافية</b>\n<code>الاذان</code>\n<code>الأذان</code>\n<code>همسه</code>\n<code>همسة</code>\n<code>رفع مشرف</code>",
     }
     return texts.get(category, "<b>قائمة أوامر البوت</b>")
 
@@ -4048,8 +3945,7 @@ def commands_text(owner=None, viewer_id=None, chat_id=None):
         "<code>كشف</code> • <code>رتبتي</code> • <code>معلومات</code> • <code>البوت</code> • <code>المطور</code> • <code>المالك</code>",
         "<code>الساعة</code> • <code>صور</code> • <code>زخرف</code> • <code>تنزيل</code>",
         "<code>اضف رد</code> • <code>حذف رد</code> • <code>قائمة الردود</code>",
-        "<code>همسة</code> • <code>همسة مستخدم</code> • <code>همسه</code> — أوامر الهمسة",
-        "<code>الاذان</code> • <code>الأذان</code> — عرض مواقيت الصلاة",
+        "<code>همسة</code> • <code>همسة مستخدم</code> — همسة سرية للمستلم",
         "<code>بوتات</code> • <code>البوتات</code> — عرض البوتات المكتشفة",
         "<code>1تون</code> • <code>1يوستيد</code> • <code>150ن</code> • <code>150نجمه</code>",
         "<code>محفظة</code> — كشف محفظة TON أو اسم TON/Fragment",
@@ -5418,7 +5314,7 @@ def force_sub_markup(user_id, channels=None):
         channel_url = row["url"] or ""
         if channel_url:
             # استخدم الاسم المخصص المحفوظ، أو اسم القناة إذا لم يوجد.
-            label = "‹  UpdATed ReEm  ›"
+            label = (row["button_text"] or row["title"] or row["username"] or "القناة").strip()
             subscribe_btn = transparent_url_button(label, channel_url, emoji_id=None)
             if subscribe_btn:
                 markup.add(subscribe_btn)
@@ -5443,8 +5339,11 @@ def send_force_sub_prompt(message, missing=None):
     markup = force_sub_markup(message.from_user.id, get_force_channels())
     user_mention = mention(message.from_user, owner=True)
     text = (
-        f"You must subscribe {user_mention}\n"
-        "BoT R e e m  Protecting the best groups on Telegram"
+        f"{user_mention}\n"
+        "<b>BoT • 𝗥 𝗲 𝗲 𝗺eCo</b>  Protecting the best groups on Telegram\n"
+        "\n"
+        "لازم تشترك في القنوات المطلوبة قبل التحدث في المجموعة.\n"
+        "اشترك من الأزرار بالأسفل، وبعدها اضغط على <b>تحقق من الاشتراك</b>."
     )
     try:
         sent = bot.send_message(message.chat.id, text, reply_markup=markup)
@@ -5944,7 +5843,7 @@ def search_youtube_songs(query, limit=8):
             "extract_flat": True,
         }
         base.update(_youtube_runtime_options(yt_dlp, use_cookies=True))
-        client_sets = [["web_embedded"], ["tv"], ["web_safari"], ["default"], None]
+        client_sets = [["web_embedded"], ["web_safari"], ["mweb"], ["web"], None]
         last_error = None
         for clients in client_sets:
             try:
@@ -6134,7 +6033,9 @@ def download_youtube_song(query):
             search_clients = [
                 None,
                 ["web"],
-                ["tv"],
+                ["web_embedded"],
+                ["web_safari"],
+                ["mweb"],
             ]
             for clients in search_clients:
                 try:
@@ -6181,22 +6082,41 @@ def download_youtube_song(query):
                 )
             return None, "لم يتم العثور على نتيجة قابلة للتنزيل حاليًا."
 
-        # تنزيل الرابط الذي تم اختياره مباشرة بدل إعادة البحث بالاسم.
-        download_clients = [None, ["web"], ["tv"]]
-        for clients in download_clients:
+        # تنزيل الرابط الذي تم اختياره مباشرة.
+        # لا نستخدم عميل tv هنا؛ بعض جلسات YouTube الحديثة تعطي معه
+        # "The page needs to be reloaded" ثم يفشل اختيار الصيغة.
+        # نجرب أولًا الإعدادات المعتادة مع cookies.txt، ثم محاولات عامة بدون
+        # cookies حتى لا تتحول جلسة cookies تالفة/منتهية إلى سبب فشل التنزيل.
+        download_profiles = [
+            (True, None),
+            (True, ["web"]),
+            (True, ["web_embedded"]),
+            (False, ["web_embedded"]),
+            (False, ["web_safari"]),
+            (False, ["mweb"]),
+            (False, ["web"]),
+            (False, None),
+        ]
+        for use_cookies, clients in download_profiles:
             try:
-                opts = dict(base)
+                opts = dict(base) if use_cookies else {
+                    k: v for k, v in base.items() if k != "cookiefile"
+                }
+                if not use_cookies:
+                    opts.update(_youtube_runtime_options(yt_dlp, use_cookies=False))
                 opts["extract_flat"] = False
+                opts["format"] = "bestaudio/best"
                 if clients:
                     opts["extractor_args"] = {"youtube": {"player_client": clients}}
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(webpage_url, download=True)
                     title = info.get("title") or title
                 last_error = None
+                print("[YouTube Download OK] cookies=%s clients=%r" % (use_cookies, clients))
                 break
             except Exception as exc:
                 last_error = exc
-                print("[YouTube Download Retry] clients=%r error=%r" % (clients, exc))
+                print("[YouTube Download Retry] cookies=%s clients=%r error=%r" % (use_cookies, clients, exc))
 
         if last_error is not None:
             raise last_error
@@ -6591,173 +6511,82 @@ def send_youtube_song(message, query, processing_message=None):
     return True
 
 def handle_music_command(message, query):
-    """يوت + اسم الأغنية: يبحث تلقائيًا عن أول نتيجة مناسبة ويرسلها كرسالة صوتية."""
+    """
+    الأمر: يوت + اسم الأغنية.
+    يبحث في YouTube ويعرض النتائج، وبعد اختيار نتيجة ينزلها ويرسلها كرسالة صوتية OGG/Opus.
+    """
     query = (query or "").strip()
     if not query:
-        bot.reply_to(message, "استخدم: <code>يوت اسم الأغنية</code>")
+        bot.reply_to(
+            message,
+            "استخدم: <code>يوت اسم الأغنية</code>\n"
+            "أو: <code>تنزيل اسم الأغنية</code>"
+        )
         return True
 
-    processing = bot.reply_to(message, "جاري البحث عن الأغنية في YouTube...")
+    # البحث في خيط مستقل حتى لا يتوقف البوت أثناء انتظار YouTube.
+    processing = bot.reply_to(message, "🔎 جاري البحث عن الأغنية...")
 
     def worker():
         try:
-            results, error = search_youtube_songs(query, limit=1)
-            if error or not results:
-                raise RuntimeError(error or "لم يتم العثور على الأغنية.")
-            item = results[0]
-            send_youtube_song(
-                message,
-                item.get("url") or query,
-                processing_message=processing
+            results, error = search_youtube_songs(query, limit=8)
+            if error:
+                try:
+                    bot.edit_message_text(
+                        html.escape(error),
+                        message.chat.id,
+                        processing.message_id,
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    bot.send_message(message.chat.id, error)
+                return
+
+            token = _store_music_search(
+                message.from_user.id if message.from_user else 0,
+                message.chat.id,
+                query,
+                results
             )
+
+            try:
+                bot.delete_message(
+                    message.chat.id,
+                    processing.message_id
+                )
+            except Exception:
+                pass
+
+            send_youtube_search_results(
+                message,
+                query,
+                results,
+                token
+            )
+
         except Exception as e:
-            print("[Direct YouTube Music Error]", repr(e))
+            print("[YouTube Search Worker Error]", repr(e))
             try:
                 bot.edit_message_text(
-                    f"تعذر تنزيل الأغنية حاليًا: {html.escape(str(e))}",
+                    "تعذر البحث عن الأغنية حاليًا. جرّب مرة أخرى.",
                     message.chat.id,
                     processing.message_id,
                     parse_mode="HTML"
                 )
             except Exception:
                 try:
-                    bot.send_message(message.chat.id, "تعذر تنزيل الأغنية حاليًا. جرّب اسمًا آخر.")
+                    bot.send_message(
+                        message.chat.id,
+                        "تعذر البحث عن الأغنية حاليًا. جرّب مرة أخرى."
+                    )
                 except Exception:
                     pass
 
-    Thread(target=worker, daemon=True, name="YouTubeDirectMusic").start()
-    return True
-
-
-def download_youtube_video(query):
-    """يبحث في YouTube وينزل أول نتيجة كفيديو مناسب لـ Telegram."""
-    query = (query or "").strip()
-    if not query:
-        return None, "اكتب اسم الفيديو بعد فيد."
-    yt_dlp = _ensure_ytdlp()
-    if yt_dlp is None:
-        return None, "تعذر تشغيل yt-dlp."
-
-    temp_dir = tempfile.mkdtemp(prefix="reemvideo_")
-    output = os.path.join(temp_dir, "%(id)s.%(ext)s")
-    base = {
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "socket_timeout": 40,
-        "retries": 4,
-        "fragment_retries": 4,
-        "extractor_retries": 3,
-        "file_access_retries": 3,
-        "outtmpl": output,
-        "geo_bypass": True,
-        "format": "bv*[height<=720]+ba/b[height<=720]/b",
-        "merge_output_format": "mp4",
-        "max_filesize": 49 * 1024 * 1024,
-    }
-    base.update(_youtube_runtime_options(yt_dlp, use_cookies=True))
-
-    try:
-        url = query
-        title = query
-        if not re.match(r"https?://(?:www\.)?(?:youtube\.com|youtu\.be)/", query, re.I):
-            found = None
-            for clients in (["web_embedded"], ["tv"], ["web_safari"], None):
-                try:
-                    opts = dict(base)
-                    opts["extract_flat"] = True
-                    if clients:
-                        opts["extractor_args"] = {"youtube": {"player_client": clients}}
-                    with yt_dlp.YoutubeDL(opts) as ydl:
-                        data = ydl.extract_info("ytsearch1:" + query, download=False)
-                    entry = next((x for x in (data or {}).get("entries") or [] if x), None)
-                    if entry:
-                        vid = entry.get("id")
-                        url = entry.get("webpage_url") or (f"https://www.youtube.com/watch?v={vid}" if vid else "")
-                        title = entry.get("title") or query
-                        if url:
-                            found = True
-                            break
-                except Exception as exc:
-                    print("[Video Search Retry]", repr(exc))
-            if not found or not url:
-                fallback = _web_youtube_search(query, limit=1)
-                if fallback:
-                    url = fallback[0].get("url") or ""
-                    title = fallback[0].get("title") or query
-                if not url:
-                    raise RuntimeError("لم يتم العثور على فيديو في YouTube.")
-
-        opts = dict(base)
-        opts["outtmpl"] = output
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            title = str(info.get("title") or title).strip()
-            requested = info.get("requested_downloads") or []
-            candidates = [x.get("filepath") for x in requested if x.get("filepath")]
-            candidates += [str(x) for x in __import__("glob").glob(os.path.join(temp_dir, "*"))]
-            video_path = next((x for x in candidates if os.path.isfile(x) and os.path.getsize(x) > 1024), None)
-            if not video_path:
-                raise RuntimeError("تم التنزيل لكن لم يتم العثور على ملف الفيديو.")
-            if os.path.getsize(video_path) > 49 * 1024 * 1024:
-                raise RuntimeError("الفيديو أكبر من الحد الذي يمكن إرساله إلى Telegram.")
-            return (video_path, title, temp_dir), None
-    except Exception as e:
-        print("[YouTube Video Download Error]", repr(e))
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        return None, str(e)
-
-
-def handle_video_command(message, query):
-    """فيد + اسم: يبحث تلقائيًا في YouTube ويرسل فيديو بدل الصوت."""
-    query = (query or "").strip()
-    if not query:
-        bot.reply_to(message, "استخدم: <code>فيد اسم الأغنية أو الفيلم</code>")
-        return True
-    processing = bot.reply_to(message, "جاري البحث عن الفيديو في YouTube...")
-
-    def worker():
-        result, error = download_youtube_video(query)
-        if error:
-            try:
-                bot.edit_message_text(
-                    f"تعذر تنزيل الفيديو: {html.escape(str(error))}",
-                    message.chat.id,
-                    processing.message_id,
-                    parse_mode="HTML"
-                )
-            except Exception:
-                pass
-            return
-        path, title, temp_dir = result
-        try:
-            try:
-                bot.edit_message_text("جاري إرسال الفيديو...", message.chat.id, processing.message_id)
-            except Exception:
-                pass
-            with open(path, "rb") as video_file:
-                bot.send_video(
-                    message.chat.id,
-                    video_file,
-                    caption=f'<b>{html.escape(title)}</b>\n\n• <b>DeV</b> | <a href="{SOURCE_DEVELOPER_URL}">@L1_D_R</a>',
-                    parse_mode="HTML",
-                    supports_streaming=True,
-                    reply_to_message_id=message.message_id,
-                )
-            try:
-                bot.delete_message(message.chat.id, processing.message_id)
-            except Exception:
-                pass
-        except Exception as e:
-            print("[YouTube Video Send Error]", repr(e))
-            try:
-                bot.edit_message_text("تعذر إرسال الفيديو إلى Telegram. جرّب نتيجة أخرى.", message.chat.id, processing.message_id)
-            except Exception:
-                pass
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-    Thread(target=worker, daemon=True, name="YouTubeDirectVideo").start()
+    Thread(
+        target=worker,
+        daemon=True,
+        name="YouTubeSearch"
+    ).start()
     return True
 
 
@@ -7477,7 +7306,7 @@ def handle_start_keyboard_button(message):
         return True
 
     if raw == "يوت":
-        bot.send_message(message.chat.id, "أرسل الآن اسم الأغنية، وسأبحث عنها في YouTube وأرسلها صوتية تلقائيًا.")
+        bot.send_message(message.chat.id, "أرسل الآن اسم الأغنية، وسأبحث عنها في YouTube وأرسلها صوتية.")
         music_pending[message.from_user.id] = message.chat.id
         return True
 
@@ -7939,7 +7768,7 @@ def broadcast_recipients(scope="all"):
     return sorted(private_ids | group_ids | channel_ids)
 
 
-def perform_broadcast(source_message, scope="all", reply_markup=None, progress_chat_id=None):
+def perform_broadcast(source_message, scope="all", reply_markup=None, progress_chat_id=None, pin=True):
     recipients = broadcast_recipients(scope)
     total = len(recipients)
     ok = failed = 0
@@ -7964,8 +7793,16 @@ def perform_broadcast(source_message, scope="all", reply_markup=None, progress_c
             }
             if reply_markup is not None:
                 kwargs["reply_markup"] = reply_markup
-            bot.copy_message(**kwargs)
+            copied = bot.copy_message(**kwargs)
             ok += 1
+            # الإذاعة تُثبّت الرسالة تلقائيًا في الجروبات والقنوات فقط.
+            if pin and int(target_id) < 0:
+                try:
+                    copied_id = getattr(copied, "message_id", None)
+                    if copied_id:
+                        bot.pin_chat_message(int(target_id), int(copied_id), disable_notification=True)
+                except Exception as pin_exc:
+                    print("[Broadcast Pin]", scope, target_id, repr(pin_exc))
             time.sleep(0.03)
         except Exception as e:
             failed += 1
@@ -8083,8 +7920,14 @@ def perform_updates_broadcast(source_message, reply_markup=None, progress_chat_i
         }
         if reply_markup is not None:
             kwargs["reply_markup"] = reply_markup
-        bot.copy_message(**kwargs)
+        copied = bot.copy_message(**kwargs)
         ok = 1
+        try:
+            copied_id = getattr(copied, "message_id", None)
+            if copied_id:
+                bot.pin_chat_message(target_id, copied_id, disable_notification=True)
+        except Exception as pin_exc:
+            print("[Updates Broadcast Pin]", repr(pin_exc))
     except Exception as exc:
         last_error = str(exc)
         print("[Updates Broadcast Copy Error]", repr(exc))
@@ -8097,10 +7940,16 @@ def perform_updates_broadcast(source_message, reply_markup=None, progress_chat_i
             }
             if reply_markup is not None:
                 kwargs["reply_markup"] = reply_markup
-            bot.forward_message(**kwargs)
+            forwarded = bot.forward_message(**kwargs)
             ok = 1
             failed = 0
             last_error = ""
+            try:
+                forwarded_id = getattr(forwarded, "message_id", None)
+                if forwarded_id:
+                    bot.pin_chat_message(target_id, forwarded_id, disable_notification=True)
+            except Exception as pin_exc:
+                print("[Updates Broadcast Forward Pin]", repr(pin_exc))
         except Exception as exc2:
             failed = 1
             last_error = str(exc2)
@@ -8148,23 +7997,9 @@ def broadcast_scope_markup():
 def broadcast_button_choice(uid):
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.row(
-        button("إضافة زر", callback_data=f"broadcast_btn_yes:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI),
+        button("زر شفاف", callback_data=f"broadcast_btn_yes:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI),
         button("إرسال الآن", callback_data=f"broadcast_btn_no:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI)
     )
-    return markup
-
-
-def broadcast_buttons_more_choice(uid, count):
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    if count < 30:
-        markup.row(
-            button("إضافة زر آخر", callback_data=f"broadcast_btn_yes:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI),
-            button("إرسال الآن", callback_data=f"broadcast_btn_finish:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI)
-        )
-    else:
-        markup.row(
-            button("إرسال الآن", callback_data=f"broadcast_btn_finish:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI)
-        )
     return markup
 
 
@@ -8269,28 +8104,6 @@ def fetch_cairo_prayer_times():
         print("[Adhan API Error]", repr(e))
         return {}
 
-def send_manual_adhan(message):
-    timings = fetch_cairo_prayer_times()
-    if not timings:
-        bot.reply_to(message, "❌ تعذر جلب مواقيت الصلاة حاليًا.")
-        return True
-    prayers = (("Fajr", "الفجر"), ("Dhuhr", "الظهر"), ("Asr", "العصر"), ("Maghrib", "المغرب"), ("Isha", "العشاء"))
-    lines = ["<b>مواقيت الصلاة اليوم</b>", ""]
-    copy_lines = []
-    for key, arabic in prayers:
-        raw = str(timings.get(key, ""))[:5]
-        if raw:
-            shown = _time_12h(raw)
-            lines.append(f"• <b>{arabic}</b> › <code>{shown}</code>")
-            copy_lines.append(f"{arabic}: {shown}")
-    text = "\n".join(lines)
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    if copy_lines:
-        markup.add(copy_text_button("نسخ مواقيت الصلاة", "\n".join(copy_lines)))
-    bot.reply_to(message, text, parse_mode="HTML", reply_markup=markup)
-    return True
-
-
 def send_adhan_notifications():
     rows = _get_thread_db().execute("SELECT chat_id FROM settings WHERE setting='adhan_enabled' AND value='1'").fetchall()
     if not rows:
@@ -8311,14 +8124,7 @@ def send_adhan_notifications():
             if val == current:
                 e=tg_emoji(ADHAN_EMOJI,"•")
                 try:
-                    bot.send_message(
-                        chat_id,
-                        f"{e} <b>تنبيه الأذان</b> {e}\n\n"
-                        f"🔔 حان الآن موعد أذان <b>{arabic}</b>\n"
-                        f"الوقت: <code>{_time_12h(val)}</code>\n\n"
-                        f"نسأل الله أن يتقبل منا ومنكم.",
-                        parse_mode="HTML"
-                    )
+                    bot.send_message(chat_id, f"{e} حان الآن أذان {arabic} — {_time_12h(val)} {e}", parse_mode="HTML")
                 except Exception as exc:
                     print("[Adhan Send Error]", repr(exc))
                 break
@@ -8548,10 +8354,10 @@ def main_handler(message):
 
             if message.from_user and message.from_user.id == DEVELOPER_ID and str(admin_pending.get(message.from_user.id, "")).startswith("broadcast_message:"):
                 pending_scope = str(admin_pending.pop(message.from_user.id)).split(":", 1)[1]
-                broadcast_pending[message.from_user.id] = {"message": message, "scope": pending_scope, "buttons": []}
+                broadcast_pending[message.from_user.id] = {"message": message, "scope": pending_scope}
                 bot.send_message(
                     message.chat.id,
-                    "تم تجهيز رسالة الإذاعة. يمكنك إضافة أكثر من زر شفاف، حتى 30 زرًا.",
+                    "تم تجهيز رسالة الإذاعة. هل تريد إضافة زر شفاف؟",
                     reply_markup=broadcast_button_choice(message.from_user.id)
                 )
                 return
@@ -8616,36 +8422,16 @@ def main_handler(message):
                     emoji_id = extract_custom_emoji_id(message)
                     if raw and clean_text(raw) in ("تخطي", "بدون", "لا"):
                         emoji_id = ""
-
-                    buttons = data.setdefault("buttons", [])
-                    buttons.append({
-                        "text": data.get("button_text", "زر"),
-                        "url": data.get("button_url", ""),
-                        "emoji_id": emoji_id or ""
-                    })
-                    data.pop("button_text", None)
-                    data.pop("button_url", None)
-                    data.pop("button_emoji_id", None)
-
+                    data["button_emoji_id"] = emoji_id or ""
                     admin_pending.pop(message.from_user.id, None)
-                    count = len(buttons)
-                    if count >= 30:
-                        source = data["message"]
-                        markup = types.InlineKeyboardMarkup(row_width=2)
-                        for item in buttons:
-                            b = transparent_url_button(item["text"], item["url"], item.get("emoji_id") or None)
-                            if b:
-                                markup.add(b)
-                        ok, failed = perform_broadcast(source, data.get("scope", "all"), markup if markup.keyboard else None)
-                        broadcast_pending.pop(message.from_user.id, None)
-                        bot.send_message(message.chat.id, f"تمت الإذاعة إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
-                        return
-
-                    bot.send_message(
-                        message.chat.id,
-                        f"تمت إضافة الزر رقم <b>{count}</b>. اختر ما تريد الآن:",
-                        reply_markup=broadcast_buttons_more_choice(message.from_user.id, count)
-                    )
+                    source = data["message"]
+                    b = transparent_url_button(data.get("button_text", "زر"), data.get("button_url", ""), data.get("button_emoji_id") or None)
+                    markup = types.InlineKeyboardMarkup()
+                    if b:
+                        markup.add(b)
+                    ok, failed = perform_broadcast(source, data.get("scope", "all"), markup if markup.keyboard else None)
+                    broadcast_pending.pop(message.from_user.id, None)
+                    bot.send_message(message.chat.id, f"تمت الإذاعة إلى <b>{ok}</b> جهة مع محاولة تثبيت الرسالة. تعذر الإرسال إلى <b>{failed}</b>.")
                     return
 
             if message.from_user and message.from_user.id == DEVELOPER_ID and message.document and admin_pending.get(message.from_user.id) == "restore_members":
@@ -8772,11 +8558,6 @@ def main_handler(message):
                 handle_social_download(message, _command_arg)
                 return
 
-            if _clean_command in ("فيد", "فيديو", "فديو"):
-                if message.chat.type in ("group", "supergroup", "channel", "private"):
-                    handle_video_command(message, _command_arg)
-                    return
-
             if _clean_command in ("يوت", "يوتيوب", "اغنية", "أغنية"):
                 if message.chat.type in ("group", "supergroup", "channel", "private"):
                     handle_music_command(message, _command_arg)
@@ -8815,17 +8596,12 @@ def main_handler(message):
                 if resolved_fragment_wallet:
                     if send_ton_wallet_info(message, resolved_fragment_wallet, fragment_username=fragment_user):
                         return
-                else:
-                    mk = types.InlineKeyboardMarkup(row_width=1)
-                    b = transparent_url_button("R e e m", SOURCE_CHANNEL_URL, CE_DEV_BUTTON)
-                    if b:
-                        mk.add(b)
-                    bot.reply_to(
-                        message,
-                        "<blockquote>اليوزر مش منصة ياروحي</blockquote>",
-                        reply_markup=mk
-                    )
-                    return
+            if 'fragment.com/username/' in wallet_text.lower() or 'fragment.com/user/' in wallet_text.lower():
+                fragment_user = _extract_fragment_username(wallet_text)
+                if fragment_user:
+                    resolved_fragment_wallet = _resolve_fragment_username(fragment_user)
+                    if resolved_fragment_wallet and send_ton_wallet_info(message, resolved_fragment_wallet, fragment_username=fragment_user):
+                        return
 
         if handle_extra_utilities(message):
             return
@@ -9016,13 +8792,11 @@ def rank_action(
 
     actor = message.from_user
 
-    actor_rank = get_group_access_rank(
+    actor_rank = get_rank(
         chat_id,
         actor.id
     )
 
-    # الهدف يُقرأ من رتب البوت فقط، حتى لا يتحول مشرف Telegram
-    # تلقائيًا إلى رتبة داخل نظام الرتب.
     target_rank = get_rank(
         chat_id,
         target.id
@@ -9101,8 +8875,7 @@ def rank_action(
         and actor_rank not in (
             "owner",
             "assistant_owner",
-            "manager",
-            "admin"
+            "manager"
         )
     ):
 
@@ -9334,7 +9107,7 @@ def send_secret_whisper(message, session, secret_text):
     mk.add(button("‹ فتح الهمسة ›", callback_data=f"whisperopen:{token}", style="primary"))
     bot.send_message(
         int(session["group_chat_id"]),
-        f"وصلتك همسة يا <a href=\"tg://user?id={target_id}\">{target_name}</a>",
+        f"‹ ︙وصلتك همسه سرية يـ <a href=\"tg://user?id={target_id}\">{target_name}</a>",
         reply_markup=mk
     )
     return True
@@ -9390,11 +9163,11 @@ def handle_command(
         start_url = f"https://t.me/{BOT_USERNAME}?start=prox{token}"
         target_name = html.escape(full_name(target))
         mk = types.InlineKeyboardMarkup(row_width=1)
-        mk.add(button("‹ دخول للبوت وكتابة الهمسة ›", url=start_url, style="primary"))
+        mk.add(button("‹ ︙اضغط لي ارسال همستك السرية ›", url=start_url, style="primary"))
         bot.reply_to(
             message,
-            f"‹ ︙تم تحديد الهمسه لـ <a href=\"tg://user?id={target.id}\">{target_name}</a>\n"
-            f"‹ ︙اضغط الزر لكتابة الهمسة",
+            f"‹ ︙تم تحديد الهمسه الى <a href=\"tg://user?id={target.id}\">{target_name}</a>\n"
+            f"‹ ︙اضغط لي ارسال همستك السرية",
             reply_markup=mk
         )
         return True
@@ -9506,121 +9279,30 @@ def handle_command(
 
         return True
 
-    # أوامر المشرف الصريحة
+    # أوامر المشرف الصريحة؛ الهدف يمكن أن يكون ردًا أو @username أو ID.
     if command in ("تنزيل_مشرف", "تنزيلمشرف") or (
         command == "تنزيل" and clean_text(argument).startswith("مشرف")
     ):
-        target_arg = re.sub(r"^مشرف\s*", "", argument or "", flags=re.I).strip()
-        target = get_target(message, target_arg)
+        rank_arg = argument
+        if command == "تنزيل":
+            rank_arg = argument[len("مشرف"):].strip()
+        target = get_target(message, rank_arg)
         if not target:
-            bot.reply_to(message, "استخدم الأمر بالرد على العضو أو اكتب: <code>تنزيل مشرف @username</code> أو <code>تنزيل مشرف ID</code>")
+            bot.reply_to(message, "استخدم الأمر بالرد أو: <code>تنزيل مشرف @username</code> أو <code>تنزيل مشرف ID</code>")
             return True
         return rank_action(message, "تنزيل", "moderator", target)
 
     if command in ("رفع_مشرف", "رفعمشرف") or (
         command == "رفع" and clean_text(argument).startswith("مشرف")
     ):
-        target_arg = re.sub(r"^مشرف\s*", "", argument or "", flags=re.I).strip()
-        target = get_target(message, target_arg)
+        rank_arg = argument
+        if command == "رفع":
+            rank_arg = argument[len("مشرف"):].strip()
+        target = get_target(message, rank_arg)
         if not target:
-            bot.reply_to(message, "استخدم الأمر بالرد على العضو أو اكتب: <code>رفع مشرف @username</code> أو <code>رفع مشرف ID</code>")
+            bot.reply_to(message, "استخدم الأمر بالرد أو: <code>رفع مشرف @username</code> أو <code>رفع مشرف ID</code>")
             return True
         return rank_action(message, "رفع", "moderator", target)
-
-    # المطور
-    if command == "المطور":
-        try:
-            dev = bot.get_chat(DEVELOPER_ID)
-            dev_name = html.escape(full_name(dev))
-            dev_username = "@" + html.escape(dev.username) if getattr(dev, "username", None) else "لا يوجد"
-            dev_bio = html.escape(getattr(dev, "bio", None) or "لا يوجد")
-        except Exception as e:
-            print("[Developer Info Error]", repr(e))
-            dev_name = "المطور"
-            dev_username = "@L1_D_R"
-            dev_bio = "لا يوجد"
-        dev_url = SOURCE_DEVELOPER_URL
-        text = (
-            f"<b>‹ DeVeLoPeR ›</b>\n\n"
-            f"<blockquote>• <b>NeM</b> › <a href=\"{dev_url}\">{dev_name}</a>\n"
-            f"• <b>UsE</b> › {dev_username}\n"
-            f"• <b>Bio</b> › {dev_bio}</blockquote>"
-        )
-        mk = types.InlineKeyboardMarkup(row_width=1)
-        mk.add(button(dev_name[:48], url=dev_url, style="danger"))
-        bot.reply_to(message, text, reply_markup=mk)
-        return True
-
-    if command in ("الاذان", "الأذان", "اذان", "أذان"):
-        return send_manual_adhan(message)
-
-    # أوامر الرتب
-    if command in (
-        "رفع",
-        "تنزيل"
-    ):
-
-        arg = clean_text(
-            argument
-        )
-
-        rank_alias = {
-            "مساعد المالك": "assistant_owner",
-            "مطور اساسي": "assistant_owner",
-            "مطور أساسي": "assistant_owner",
-            "مدير": "manager",
-            "ادمن": "admin",
-            "ادمـن": "admin",
-            "مشرف": "moderator",
-            "حيوان": "animal"
-        }
-
-        found = None
-        target_arg = ""
-
-        for label, rank in rank_alias.items():
-
-            if arg == label:
-
-                found = rank
-                target_arg = ""
-                break
-
-            prefix = label + " "
-
-            if arg.startswith(prefix):
-
-                found = rank
-
-                target_arg = argument[
-                    len(label):
-                ].strip()
-
-                break
-
-        if found:
-
-            target = get_target(
-                message,
-                target_arg
-            )
-
-            if not target:
-
-                bot.reply_to(
-                    message,
-                    "❌ استخدم الأمر بالرد على "
-                    "المستخدم أو اكتب @username أو ID."
-                )
-
-                return True
-
-            return rank_action(
-                message,
-                command,
-                found,
-                target
-            )
 
     if command in ("صورة", "صوره", "صور", "صورة_بنات", "صورة_ولاد"):
         return send_random_bot_image(message)
@@ -9728,6 +9410,28 @@ def handle_command(
             pass
         return True
 
+    # تثبيت الرسائل: ث / تثبيت، بالرد على الرسالة أو بمرور message_id.
+    if command == "تثبيت":
+        if not admin_required(message):
+            return True
+        target_message = getattr(message, "reply_to_message", None)
+        target_message_id = target_message.message_id if target_message else None
+        if not target_message_id and argument:
+            numeric = argument.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")).strip()
+            if numeric.isdigit():
+                target_message_id = int(numeric)
+        if not target_message_id:
+            bot.reply_to(message, "❌ استخدم <code>ث</code> أو <code>تثبيت</code> بالرد على الرسالة المطلوب تثبيتها.")
+            return True
+        try:
+            bot.pin_chat_message(chat_id, target_message_id, disable_notification=True)
+            log_action(chat_id, message.from_user.id, 0, "تثبيت", f"message_id={target_message_id}")
+            bot.reply_to(message, "📌 تم تثبيت الرسالة.")
+        except Exception as exc:
+            print("[Pin Command Error]", repr(exc))
+            bot.reply_to(message, "❌ تعذر تثبيت الرسالة. تأكد أن البوت مشرف ولديه صلاحية تثبيت الرسائل.")
+        return True
+
     # أوامر الإدارة
     admin_commands = {
         "حظر",
@@ -9759,7 +9463,10 @@ def handle_command(
         "طرد_البوتات",
         "طردالبوتات",
         "منشن_المشرفين",
-        "منشن_الجميع"
+        "منشن_الجميع",
+        "تثبيت",
+        "مسح_التحذيرات",
+        "الغاء_تحذير"
     }
 
     if (
@@ -9894,7 +9601,8 @@ def handle_command(
 
             bot.reply_to(
                 message,
-                f"🚫 تم حظر {mention(t)}."
+                f"🚫 تم حظر {mention(t)}.",
+                reply_markup=moderation_unban_markup(t.id)
             )
 
         except Exception:
@@ -10002,7 +9710,8 @@ def handle_command(
 
             bot.reply_to(
                 message,
-                f"👢 تم طرد {mention(t)}."
+                f"👢 تم طرد {mention(t)}.",
+                reply_markup=moderation_unban_markup(t.id)
             )
 
         except Exception:
@@ -10023,10 +9732,11 @@ def handle_command(
         duration = None
         target_argument = argument
         if command == "كتم" and argument:
-            normalized_duration = argument.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")).strip()
-            if normalized_duration.isdigit():
-                duration = int(normalized_duration)
-                target_argument = ""
+            pieces = argument.split()
+            first = pieces[0].translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
+            if first.isdigit():
+                duration = int(first)
+                target_argument = " ".join(pieces[1:]).strip()
         t = get_target(message, target_argument)
 
         if not t:
@@ -10165,15 +9875,9 @@ def handle_command(
         return True
 
     # مسح التحذيرات
-    if (
-        command == "مسح"
-        and clean_text(argument) == "التحذيرات"
-    ):
+    if command == "مسح_التحذيرات":
 
-        t = get_target(
-            message,
-            ""
-        )
+        t = get_target(message, argument)
 
         if not t:
 
@@ -10204,19 +9908,24 @@ def handle_command(
 
         return True
 
+    # إلغاء التحذير بهدف صريح: الغاء تحذير / الغاء تحذير @username / ID.
+    if command == "الغاء_تحذير":
+        t = get_target(message, argument)
+        if not t:
+            bot.reply_to(message, "❌ استخدم الأمر بالرد أو @username أو ID.")
+            return True
+        set_warnings(chat_id, t.id, max(0, get_warnings(chat_id, t.id) - 1))
+        log_action(chat_id, message.from_user.id, t.id, "إلغاء تحذير")
+        bot.reply_to(message, f"✅ تم إلغاء تحذير {mention(t)}.")
+        return True
+
     # الغاء
     if command == "الغاء":
 
-        a = clean_text(
-            argument
-        )
+        a = clean_text(argument)
 
         if a == "تحذير":
-
-            t = get_target(
-                message,
-                ""
-            )
+            t = get_target(message, "")
 
             if not t:
 
@@ -10613,7 +10322,7 @@ def callbacks(call):
             secret_text = str(whisper["text"])
             _get_thread_db().execute("UPDATE whisper_messages SET revealed=1 WHERE token=?", (token,))
             _get_thread_db().commit()
-            # تنبيه callback يظهر لصاحب الضغط فقط، ولا يرسل النص كرسالة للمجموعة.
+            # answer_callback_query يظهر التنبيه لصاحب الضغط فقط.
             bot.answer_callback_query(call.id, secret_text[:195], show_alert=True)
             return
 
@@ -10946,36 +10655,9 @@ def callbacks(call):
             if uid != DEVELOPER_ID or target_uid != uid or uid not in broadcast_pending:
                 bot.answer_callback_query(call.id, "هذه العملية ليست لك أو انتهت.", show_alert=True)
                 return
-            data = broadcast_pending.get(uid)
-            if len(data.get("buttons", [])) >= 30:
-                bot.answer_callback_query(call.id, "وصلت للحد الأقصى 30 زرًا.", show_alert=True)
-                return
             admin_pending[uid] = "broadcast_button_text"
             bot.answer_callback_query(call.id)
-            bot.send_message(chat_id, f"أرسل اسم الزر رقم <b>{len(data.get('buttons', [])) + 1}</b>.")
-            return
-
-        if call.data.startswith("broadcast_btn_finish:"):
-            try:
-                target_uid = int(call.data.split(":", 1)[1])
-            except Exception:
-                target_uid = -1
-            data = broadcast_pending.get(uid)
-            if uid != DEVELOPER_ID or target_uid != uid or not data:
-                bot.answer_callback_query(call.id, "هذه العملية ليست لك أو انتهت.", show_alert=True)
-                return
-            admin_pending.pop(uid, None)
-            source = data["message"]
-            buttons = data.get("buttons", [])
-            markup = types.InlineKeyboardMarkup(row_width=2)
-            for item in buttons:
-                b = transparent_url_button(item.get("text", "زر"), item.get("url", ""), item.get("emoji_id") or None)
-                if b:
-                    markup.add(b)
-            broadcast_pending.pop(uid, None)
-            bot.answer_callback_query(call.id, "جاري الإرسال...")
-            ok, failed = perform_broadcast(source, data.get("scope", "all"), markup if markup.keyboard else None, progress_chat_id=chat_id)
-            bot.send_message(chat_id, f"تمت الإذاعة إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
+            bot.send_message(chat_id, "أرسل اسم الزر الشفاف.")
             return
 
         if call.data.startswith("broadcast_btn_no:"):
@@ -11205,7 +10887,7 @@ def callbacks(call):
         if call.data == "settings":
 
             if not can_use_moderation(
-                get_group_access_rank(
+                get_rank(
                     chat_id,
                     uid
                 )
@@ -11310,8 +10992,8 @@ def callbacks(call):
             target = p["target"]
 
             if not can_manage_rank(
-                get_group_access_rank(chat_id, uid),
-                get_group_access_rank(chat_id, target.id),
+                get_rank(chat_id, uid),
+                get_rank(chat_id, target.id),
                 "رفع"
             ):
 
@@ -11446,13 +11128,39 @@ def callbacks(call):
 
             return
 
+        if call.data.startswith("quick_unban:"):
+            try:
+                target_id = int(call.data.split(":", 1)[1])
+            except Exception:
+                bot.answer_callback_query(call.id, "بيانات غير صحيحة", show_alert=True)
+                return
+            if not can_use_moderation(get_rank(chat_id, uid)):
+                bot.answer_callback_query(call.id, "هذا الزر للأدمن فما فوق.", show_alert=True)
+                return
+            if target_id == DEVELOPER_ID:
+                bot.answer_callback_query(call.id, "لا يمكن رفع قيود المطور.", show_alert=True)
+                return
+            try:
+                unban_user(chat_id, target_id)
+                log_action(chat_id, uid, target_id, "رفع قيود")
+                try:
+                    bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=None)
+                except Exception:
+                    pass
+                bot.answer_callback_query(call.id, "تم رفع القيود")
+                bot.send_message(chat_id, "✅ تم رفع القيود عن المستخدم.", reply_to_message_id=call.message.message_id)
+            except Exception as exc:
+                print("[Quick Unban Error]", repr(exc))
+                bot.answer_callback_query(call.id, "تعذر رفع القيود", show_alert=True)
+            return
+
         if call.data.startswith("quick_unmute:"):
             try:
                 target_id = int(call.data.split(":", 1)[1])
             except Exception:
                 bot.answer_callback_query(call.id, "بيانات غير صحيحة", show_alert=True)
                 return
-            if not can_use_moderation(get_group_access_rank(chat_id, uid)):
+            if not can_use_moderation(get_rank(chat_id, uid)):
                 bot.answer_callback_query(call.id, "هذا الزر للأدمن فما فوق.", show_alert=True)
                 return
             try:
@@ -11472,7 +11180,7 @@ def callbacks(call):
 
         # صلاحيات الإدارة
         if not can_use_moderation(
-            get_group_access_rank(
+            get_rank(
                 chat_id,
                 uid
             )
@@ -11595,7 +11303,7 @@ def protection_engine(message):
     uid = message.from_user.id
 
     if can_use_moderation(
-        get_group_access_rank(
+        get_rank(
             chat_id,
             uid
         )
