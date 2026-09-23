@@ -30,8 +30,8 @@ from threading import Thread, Lock
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8878742478:AAH8GEda3431adptHolRakROxX_VAZea7IE")
 
 DEVELOPER_ID = 8037399518
-BOT_USERNAME = "Reem_Bot"
-BOT_DISPLAY_NAME = "• 𝗥 𝗲 𝗲 𝗺 ✨ "
+BOT_USERNAME = "v_u_kbot"
+BOT_DISPLAY_NAME = "R e e m ✨"
 DB_NAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "protection_bot.db")
 
 # =========================================================
@@ -1002,16 +1002,6 @@ def command_parts(message):
     if command in ("تاك", "منشن") and not argument:
         command = "منشن_الجميع"
         argument = ""
-
-    if command == "صورة" and argument:
-        second = argument.split(maxsplit=1)[0]
-        sc = clean_text(second)
-        if sc in ("بنات", "البنات"):
-            command = "صورة_بنات"
-            argument = argument[len(second):].strip()
-        elif sc in ("ولاد", "اولاد", "الأولاد", "الاولاد"):
-            command = "صورة_ولاد"
-            argument = argument[len(second):].strip()
 
     # أوامر من كلمتين يجب أن تصل للراوتر كأمر واحد،
     # خصوصًا "فك كتم" حتى لا يتم تفسيرها بالخطأ كـ "فك حظر".
@@ -3488,7 +3478,7 @@ def commands_text(owner=None, viewer_id=None, chat_id=None):
         "<b>للجميع:</b>",
         "<code>الاوامر</code> • <code>مساعدة</code> • <code>ا</code> • <code>ايدي</code> • <code>معلوماتي</code>",
         "<code>كشف</code> • <code>رتبتي</code> • <code>معلومات</code> • <code>البوت</code> • <code>المطور</code> • <code>المالك</code>",
-        "<code>الساعة</code> • <code>صور</code> • <code>صورة بنات</code> • <code>صورة ولاد</code> • <code>كات</code> • <code>تنزيل {اسم الأغنية}</code> • <code>تنزيل {اسم الأغنية}</code>",
+        "<code>الساعة</code> • <code>صور</code> • <code>كات</code> • <code>تنزيل {اسم الأغنية}</code>",
         "<code>اضف رد</code> • <code>حذف رد</code> • <code>قائمة الردود</code>",
         "<code>همسة</code> • <code>همسة @username</code> • <code>همسة ID</code> — همسة مشفرة للمستلم",
         "<code>محفظة</code> — كشف محفظة TON أو @username / name.ton",
@@ -5968,44 +5958,40 @@ def _resolve_ton_name(name):
 
 
 def _resolve_fragment_username(username):
-    """محاولة استخراج المحفظة العامة المرتبطة بيوزر Fragment من الصفحة العامة.
-    لا تستخدم جلسات دخول أو بيانات خاصة، وتعيد None إذا لم تكن العلاقة ظاهرة للعامة.
-    """
+    """يحاول حل يوزر Fragment إلى محفظة عامة من البيانات المنشورة فقط."""
     clean = (username or '').strip().lstrip('@')
     clean = re.sub(r'^https?://(?:www\.)?fragment\.com/(?:username|user)/', '', clean, flags=re.I)
     clean = clean.strip('/').split('?', 1)[0].split('#', 1)[0]
     if not re.fullmatch(r'[A-Za-z0-9_\-]{2,64}', clean):
         return None
-    url = 'https://fragment.com/username/' + urllib.parse.quote(clean, safe='')
-    req = urllib.request.Request(
-        url,
-        headers={
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/140 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.8'
-        }
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=12) as response:
-            raw = response.read().decode('utf-8', 'ignore')
-        # نفضّل عنوانًا قريبًا من مفاتيح wallet/owner/recipient إن ظهر في الصفحة.
-        patterns = [
-            r'(?is)(?:owner|wallet|address|recipient)[^\n]{0,500}?(EQ|UQ|kQ|0Q)[A-Za-z0-9_\-]{40,70}',
-            r'(?is)(EQ|UQ|kQ|0Q)[A-Za-z0-9_\-]{40,70}[^\n]{0,500}?(?:owner|wallet|address|recipient)',
-        ]
-        for pattern in patterns:
-            m = re.search(pattern, raw)
-            if m:
-                candidate = m.group(0)
-                wallet = FRAGMENT_WALLET_RE.search(candidate)
-                if wallet:
-                    return wallet.group(0)
-        # fallback: أول عنوان ظاهر في الصفحة إذا كانت الصفحة صفحة username فعلًا.
-        matches = FRAGMENT_WALLET_RE.findall(raw)
-        if matches:
-            return matches[0]
-    except Exception as exc:
-        print('[Fragment Resolve Error]', repr(exc))
+
+    urls = [
+        'https://fragment.com/username/' + urllib.parse.quote(clean, safe=''),
+        'https://fragment.com/user/' + urllib.parse.quote(clean, safe=''),
+    ]
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/140 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.8',
+        'Referer': 'https://fragment.com/',
+    }
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as response:
+                raw = response.read().decode('utf-8', 'ignore')
+            raw = raw.replace('\\/', '/').replace('\\u002F', '/')
+            # ابحث عن UQ/EQ wallet في أي JSON/HTML مضمن، وليس في سطر محدد فقط.
+            matches = re.findall(r'(?<![A-Za-z0-9])(?:EQ|UQ|kQ|0Q)[A-Za-z0-9_\-]{40,70}(?![A-Za-z0-9])', raw)
+            if matches:
+                # إزالة التكرار واختيار أول عنوان واضح.
+                seen = set()
+                for wallet in matches:
+                    if wallet not in seen:
+                        seen.add(wallet)
+                        return wallet
+        except Exception as exc:
+            print('[Fragment Resolve Error]', repr(exc))
     return None
 
 
@@ -6019,11 +6005,37 @@ def _extract_fragment_username(text):
     return None
 
 
+TONAPI_KEY = os.getenv("TONAPI_KEY", "").strip()
+TONCENTER_API_KEY = os.getenv("TONCENTER_API_KEY", "").strip()
+
 def _tonapi_get(path):
+    """قراءة بيانات TON مع دعم TonAPI وبديل TonCenter عند تعطل/تقييد TonAPI."""
     url = "https://tonapi.io/v2" + path
-    req = urllib.request.Request(url, headers={"User-Agent": "• 𝗥 𝗲 𝗲 𝗺Bot/1.0"})
-    with urllib.request.urlopen(req, timeout=15) as response:
-        return json.loads(response.read().decode("utf-8"))
+    headers = {"User-Agent": "v_u_kbot/1.0", "Accept": "application/json"}
+    if TONAPI_KEY:
+        headers["Authorization"] = "Bearer " + TONAPI_KEY
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception as first_error:
+        # TonCenter يدعم قراءة الرصيد الأساسي بدون الاعتماد على نفس مزود TonAPI.
+        if path.startswith("/accounts/") and "/jettons" not in path and "/nfts" not in path:
+            address = urllib.parse.unquote(path[len("/accounts/"):]).split("?", 1)[0]
+            try:
+                q = {"address": address}
+                if TONCENTER_API_KEY:
+                    q["api_key"] = TONCENTER_API_KEY
+                tc_url = "https://toncenter.com/api/v2/getAddressBalance?" + urllib.parse.urlencode(q)
+                tc_req = urllib.request.Request(tc_url, headers={"User-Agent": "v_u_kbot/1.0", "Accept": "application/json"})
+                with urllib.request.urlopen(tc_req, timeout=15) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                if payload.get("ok") and payload.get("result") is not None:
+                    return {"balance": int(payload.get("result") or 0)}
+            except Exception as second_error:
+                print("[TON Fallback Error]", repr(second_error))
+        print("[TONAPI Error]", repr(first_error))
+        raise
 
 
 def _ton_format(value):
@@ -6229,7 +6241,7 @@ def image_menu_markup():
 
 def start_inline_markup(user_id):
     markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.row(button("‹ Updates BoT Reem ›", url=SOURCE_CHANNEL_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
+    markup.row(button("‹ Updates BoT @v_u_kbot ›", url=SOURCE_CHANNEL_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
     markup.row(
         button("‹ LeAaDeR ›", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI),
         button("‹ DeV ›", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI)
@@ -6255,7 +6267,6 @@ def start_keyboard_markup():
     markup.row("اقتباسات")
     markup.row("انصحني", "صور")
     markup.row("انمي", "استوري")
-    markup.row("صور بنات", "صور شباب")
     markup.row("هيدرات")
     return markup
 
@@ -6282,7 +6293,7 @@ def build_welcome_text(user, private=False, chat=None):
     joined = now_eg.strftime("%Y-%m-%d")
     return (
         f"⁣⁣ᯓ˹𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎{group_name}𝐆𝐑𝐎𝐔𝐏  ᯤ˼\n"
-        "°•——————​رغـ ـي الدون الـ ـيـ ـوتـ ـيـوبـر ¹ 𓆗 ,—————•°\n"
+        f"°•——————​{group_name} —————•°\n"
         f"°︙ نورت قروبنا يـ  『{name}』 🥂✨.\n"
         f"°︙ اسمك ⇚『{name}』\n"
         f"°︙ ايديك ⇚『<tg-spoiler>{user.id}</tg-spoiler>』\n"
@@ -6438,7 +6449,7 @@ def handle_start_keyboard_button(message):
         bot.send_message(message.chat.id, random.choice(items))
         return True
 
-    if raw in ("صور", "صور بنات", "صورة بنات", "صور شباب", "صور ولاد", "صورة ولاد"):
+    if raw in ("صور", "صورة", "صوره"):
         return send_random_bot_image(message)
 
     if raw == "انمي":
@@ -6590,23 +6601,38 @@ def group_welcome_caption(message, user):
 
 
 def get_welcome_group_link(chat_id):
-    """إرجاع رابط المجموعة التي انضم إليها العضو للزر الموجود في رسالة الترحيب."""
+    """رابط المجموعة: username إن وجد، وإلا رابط دعوة أنشأه البوت ويحفظه للمجموعة."""
     try:
         chat = bot.get_chat(chat_id)
         username = getattr(chat, "username", None)
         if username:
             return f"https://t.me/{username}"
 
-        invite_link = getattr(chat, "invite_link", None)
-        if invite_link:
-            return invite_link
+        # استعمل رابطًا محفوظًا من إنشاء سابق حتى لا يتم إنشاء رابط جديد مع كل ترحيب.
+        try:
+            cursor.execute("SELECT value FROM settings WHERE chat_id=? AND setting=? LIMIT 1", (chat_id, "welcome_group_invite"))
+            row = cursor.fetchone()
+            saved = row["value"] if row else None
+            if saved:
+                return saved
+        except Exception:
+            pass
 
-        # للمجموعات الخاصة: لا يمكن إنشاء/استخراج رابط دعوة إلا بصلاحية مناسبة.
         if bot_is_admin(chat_id):
             try:
-                return bot.export_chat_invite_link(chat_id)
+                creator = getattr(bot, "create_chat_invite_link", None)
+                if creator:
+                    invite = creator(chat_id, name="Welcome")
+                    link = getattr(invite, "invite_link", None)
+                    if link:
+                        cursor.execute(
+                            "INSERT INTO settings(chat_id,setting,value) VALUES(?,?,?) ON CONFLICT(chat_id,setting) DO UPDATE SET value=excluded.value",
+                            (chat_id, "welcome_group_invite", link)
+                        )
+                        db.commit()
+                        return link
             except Exception as e:
-                print("[Welcome Group Link Export]", repr(e))
+                print("[Welcome Group Link Create]", repr(e))
     except Exception as e:
         print("[Welcome Group Link]", repr(e))
     return None
@@ -6655,22 +6681,18 @@ def new_members_handler(message):
 
         welcome_text = group_welcome_caption(message, u)
 
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.row(button("‹ Updates BoT Reem ›", url=SOURCE_CHANNEL_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
-        markup.row(
-            button("‹ LeAaDeR ›", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI),
-            button("‹ DeV ›", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI)
-        )
-        markup.row(button("‹ Help ›", callback_data=f"cmdcat:{u.id}:all", style="primary", icon_custom_emoji_id=CE_COMMANDS))
-        markup.row(button("‹ Add Me To Your Group ›", url=ADD_TO_GROUP_URL, style="primary", icon_custom_emoji_id="5462943653116792628"))
+        markup = types.InlineKeyboardMarkup(row_width=1)
 
-        # رابط نفس المجموعة التي انضم إليها العضو.
+        # ترحيب الجروبات: يبقى فقط رابط الجروب باسم الجروب + مطور البوت.
         group_link = get_welcome_group_link(message.chat.id)
         if group_link:
-            markup.row(button("‹ رابط الجروب ›", url=group_link, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
-
-        # زر مستقل للمطور أسفل زر رابط المجموعة.
-        markup.row(button("‹ مطور البوت ›", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
+            markup.row(button(
+                getattr(message.chat, "title", None) or "رابط الجروب",
+                url=group_link,
+                style="primary",
+                icon_custom_emoji_id=WELCOME_DEV_EMOJI
+            ))
+        markup.row(button("مطور البوت", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
 
         try:
             sent = send_welcome_with_bot_photo(
@@ -7294,7 +7316,7 @@ def main_handler(message):
                         handle_music_command(message, _command_arg)
                         return
 
-            if _clean_command in ("صورة", "صور", "صوره", "صورة_بنات", "صور_بنات", "بنات", "صورة_ولاد", "صور_ولاد", "ولاد", "اولاد"):
+            if _clean_command in ("صورة", "صور", "صوره"):
                 send_random_bot_image(message)
                 return
 
@@ -9492,6 +9514,15 @@ def callbacks(call):
                 text = commands_text(get_owner_user(chat_id), owner_id, chat_id)
             else:
                 text = command_category_text(category, owner_id, chat_id)
+            # رسالة الترحيب الخاصة قد تكون صورة/فيديو؛ لا يمكن استخدام edit_message_text عليها.
+            if category == "all" and getattr(call.message, "content_type", "") in ("photo", "video"):
+                bot.send_message(
+                    chat_id,
+                    text,
+                    parse_mode="HTML",
+                    reply_markup=command_buttons_markup("all", owner_id, chat_id)
+                )
+                return
             if category == "images":
                 bot.edit_message_text(text, chat_id, call.message.message_id, reply_markup=command_buttons_markup("images", owner_id, chat_id))
                 return
@@ -10142,7 +10173,8 @@ def run_bot_forever():
             ):
                 conflict_count += 1
                 print(
-                    "البوت يعمل جيدايليدررياروحي."
+                    "[POLLING 409] يوجد تشغيل آخر لنفس البوت بنفس التوكن. "
+                    "أغلق النسخة الأخرى أو غيّر التوكن من BotFather."
                 )
                 time.sleep(min(30, 5 + conflict_count * 3))
             else:
