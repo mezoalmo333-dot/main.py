@@ -71,8 +71,6 @@ def configure_bot_profile():
             types.BotCommand("help", "طريقة استعمال البوت"),
             types.BotCommand("يوت", "البحث عن أغنية من يوتيوب"),
             types.BotCommand("صور", "إرسال صور"),
-            types.BotCommand("صور_بنات", "إرسال صور بنات"),
-            types.BotCommand("صور_ولاد", "إرسال صور ولاد"),
             types.BotCommand("همسه", "همسة وأذكار للمجموعة"),
             types.BotCommand("محفظة", "كشف محفظة TON"),
         ]
@@ -102,13 +100,7 @@ def _welcome_media():
 WELCOME_IMAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reem_welcome.jpg")
 
 def send_welcome_with_bot_photo(chat_id, caption, reply_markup=None, reply_to_message_id=None):
-    """إرسال صورة المشروع أولًا، ثم الوسائط المحفوظة، ثم صورة البوت."""
-    if os.path.isfile(WELCOME_IMAGE_PATH):
-        try:
-            with open(WELCOME_IMAGE_PATH, "rb") as photo:
-                return bot.send_photo(chat_id, photo, caption=caption, parse_mode="HTML", reply_markup=reply_markup, reply_to_message_id=reply_to_message_id)
-        except Exception as e:
-            print("[Bundled Welcome Image Error]", repr(e))
+    """إرسال وسائط الترحيب التي اختارها المطور، ثم الصورة المرفقة بالمشروع كبديل."""
     media_type, media_id = _welcome_media()
     try:
         if media_type == 'video':
@@ -117,13 +109,19 @@ def send_welcome_with_bot_photo(chat_id, caption, reply_markup=None, reply_to_me
             return bot.send_photo(chat_id, media_id, caption=caption, parse_mode='HTML', reply_markup=reply_markup, reply_to_message_id=reply_to_message_id)
     except Exception as e:
         print('[Welcome Custom Media Error]', repr(e))
+    if os.path.isfile(WELCOME_IMAGE_PATH):
+        try:
+            with open(WELCOME_IMAGE_PATH, 'rb') as photo:
+                return bot.send_photo(chat_id, photo, caption=caption, parse_mode='HTML', reply_markup=reply_markup, reply_to_message_id=reply_to_message_id)
+        except Exception as e:
+            print("[Bundled Welcome Image Error]", repr(e))
     try:
         me = bot.get_me()
         photos = bot.get_user_profile_photos(me.id, limit=1)
         if photos and photos.total_count:
             return bot.send_photo(chat_id, photos.photos[0][-1].file_id, caption=caption, parse_mode='HTML', reply_markup=reply_markup, reply_to_message_id=reply_to_message_id)
     except Exception as e:
-        print('[Welcome Bot Photo Error]', repr(e))
+        print("[Welcome Bot Photo Error]", repr(e))
     return bot.send_message(chat_id, caption, parse_mode='HTML', reply_markup=reply_markup, reply_to_message_id=reply_to_message_id)
 
 def save_welcome_media(message):
@@ -989,7 +987,7 @@ def command_parts(message):
             command = "قائمة_الردود"
             argument = argument[len(second):].strip()
 
-    if command == "منشن" and argument:
+    if command in ("منشن", "تاك") and argument:
         second = argument.split(maxsplit=1)[0]
         second_clean = clean_text(second)
         if second_clean in ("المشرفين", "مشرفين"):
@@ -998,6 +996,10 @@ def command_parts(message):
         elif second_clean in ("الجميع", "الكل"):
             command = "منشن_الجميع"
             argument = argument[len(second):].strip()
+
+    if command in ("تاك", "منشن") and not argument:
+        command = "منشن_الجميع"
+        argument = ""
 
     if command == "صورة" and argument:
         second = argument.split(maxsplit=1)[0]
@@ -1168,7 +1170,7 @@ def react_heart(chat_id, message_id):
 
 
 def send_plain_emoji_message(chat_id, text, reply_to_message_id=None):
-    kwargs = {"parse_mode": None}
+    kwargs = {"parse_mode": "HTML" if "<tg-emoji" in str(text) else None}
     if reply_to_message_id is not None:
         kwargs["reply_to_message_id"] = reply_to_message_id
     return _original_send_message(chat_id, text, **kwargs)
@@ -1233,7 +1235,7 @@ def button(
 # =========================================================
 CURRENCY_CACHE_SECONDS = 5
 CURRENCY_HTTP_TIMEOUT = 7
-LOVELY_UPDATES_URL = "https://t.me/LeaDeR_E"
+LOVELY_UPDATES_URL = "https://t.me/Ssource_MaX"
 
 _currency_cache = {
     "usd_egp": None,
@@ -2942,15 +2944,15 @@ def set_warnings(chat_id, user_id, count):
     db.commit()
 
 
-def mute_user(chat_id, user_id):
-
-    bot.restrict_chat_member(
-        chat_id,
-        user_id,
-        permissions=types.ChatPermissions(
-            can_send_messages=False
-        )
+def mute_user(chat_id, user_id, minutes=None):
+    kwargs = dict(
+        chat_id=chat_id,
+        user_id=user_id,
+        permissions=types.ChatPermissions(can_send_messages=False)
     )
+    if minutes and minutes > 0:
+        kwargs["until_date"] = int(time.time()) + int(minutes) * 60
+    bot.restrict_chat_member(**kwargs)
 
 
 def unmute_user(chat_id, user_id):
@@ -3339,14 +3341,12 @@ def command_category_allowed(category, viewer_id, chat_id=None):
 def commands_menu_markup(viewer_id=None, chat_id=None):
     markup = types.InlineKeyboardMarkup(row_width=1)
     token = str(viewer_id or 0)
-    markup.add(
-        button(
-            "كل الأوامر",
-            callback_data=f"cmdcat:{token}:all",
-            style="primary",
-            icon_custom_emoji_id=CE_COMMANDS
-        )
+    markup.row(
+        button("أوامر المجموعات", callback_data=f"cmdcat:{token}:groups", style="primary", icon_custom_emoji_id=CE_COMMANDS),
+        button("أوامر الحماية", callback_data=f"cmdcat:{token}:protection", style="primary", icon_custom_emoji_id=CE_PROTECTION)
     )
+    markup.row(button("أوامر الألعاب", callback_data=f"cmdcat:{token}:games", style="primary", icon_custom_emoji_id="5215420556089776398"))
+    markup.row(button("كل الأوامر", callback_data=f"cmdcat:{token}:all", style="primary", icon_custom_emoji_id=CE_COMMANDS))
     return markup
 
 def command_category_text(category, viewer_id=None, chat_id=None):
@@ -3362,7 +3362,8 @@ def command_category_text(category, viewer_id=None, chat_id=None):
         "replies": "💬 <b>أوامر الردود</b>\n\n<code>اضف رد</code>\n<code>حذف رد</code>\n<code>قائمة الردود</code>\n\nالرد الذي تضيفه من داخل المجموعة يُحفظ لهذه المجموعة فقط.",
         "ton": "💎 <b>أوامر TON</b>\n\n<code>1ton</code> أو <code>1تون</code> — سعر TON\n<code>تحليل تون</code> — تحليل آخر 24 ساعة\n<code>تحليل دولار</code> — سعر الدولار مقابل الجنيه",
         "music": "🎵 <b>أوامر الأغاني</b>\n\n<code>تنزيل {اسم الأغنية}</code> — يبحث في YouTube ويرسل الأغنية كملف صوتي.",
-        "images": "أوامر الصور\n\n<code>صور</code> — إرسال صور\n<code>صورة بنات</code> — إرسال صور بنات\n<code>صورة ولاد</code> — إرسال صور ولاد",
+        "images": "أوامر الصور\n\n<code>صور</code> — إرسال صورة من الصور التي أضافها المطور.",
+        "games": "<b>أوامر الألعاب والعملات</b>\n\n<code>انشاء</code> — فتح حساب بنكي جديد و1,000 هدية\n<code>حسابي</code> أو <code>فلوسي</code> — عرض بطاقة حسابك ورصيدك\n<code>حول {رقم}</code> — تحويل أموال لشخص بالرد\n<code>راتب</code> • <code>بخشيش</code> • <code>كنز</code>\n<code>استثمار {رقم}</code> • <code>مضاربه {رقم}</code> • <code>حظ {رقم}</code>\n<code>سرقه</code> • <code>هجوم {رقم}</code> بالرد\n<code>قرض</code> • <code>تسديد القرض</code> • <code>قروضي</code>\n<code>متجر البنك</code> • <code>شراء {اسم}</code> • <code>بيع {اسم}</code>\n<code>مشترياتي</code> • <code>بيع مشترياتي</code>\n<code>زواج {مهر}</code> • <code>زواجي</code> • <code>طالق</code>\n<code>توب الفلوس</code> • <code>توب الحراميه</code> • <code>توب المتزوجين</code>\n<code>قائمه اكشطها</code> • <code>اكشط {رقم}</code> • <code>ميدالياتي</code>",
     }
     return texts.get(category, "📚 <b>قائمة أوامر البوت</b>")
 
@@ -3395,6 +3396,9 @@ def commands_text(owner=None, viewer_id=None, chat_id=None):
         "<code>كشف</code> • <code>رتبتي</code> • <code>معلومات</code> • <code>البوت</code> • <code>المطور</code> • <code>المالك</code>",
         "<code>الساعة</code> • <code>صور</code> • <code>صورة بنات</code> • <code>صورة ولاد</code> • <code>كات</code> • <code>تنزيل {اسم الأغنية}</code> • <code>تنزيل {اسم الأغنية}</code>",
         "<code>اضف رد</code> • <code>حذف رد</code> • <code>قائمة الردود</code>",
+        "<code>همسة</code> • <code>همسة @username</code> • <code>همسة ID</code> — همسة مشفرة للمستلم",
+        "<code>محفظة</code> — كشف محفظة TON أو @username / name.ton",
+        "<code>صور</code> — صورة من مكتبة المطور فقط",
     ]
     if allowed_admin:
         lines += [
@@ -4046,7 +4050,7 @@ def continue_reply_setup(message):
         if step == "button_url":
             url = (message.text or "").strip()
             if not url or not re.match(r"^(?:https?|tg)://\S+$", url, re.I):
-                bot.reply_to(message, "❌ أرسل رابطًا صالحًا مثل: <code>https://t.me/LeaDeR_E</code>")
+                bot.reply_to(message, "❌ أرسل رابطًا صالحًا مثل: <code>https://t.me/Ssource_MaX</code>")
                 return True
             p["button_url"] = url
             p["step"] = "button_emoji"
@@ -4219,6 +4223,10 @@ def admin_panel_markup():
     markup.row(
         button("إضافة صورة ترحيب", callback_data="admin:welcome_photo", style="primary", icon_custom_emoji_id=a),
         button("إضافة فيديو ترحيب", callback_data="admin:welcome_video", style="primary", icon_custom_emoji_id=a)
+    )
+    markup.row(
+        button("صورة ترحيب خاص", callback_data="admin:private_welcome_photo", style="primary", icon_custom_emoji_id=a),
+        button("فيديو ترحيب خاص", callback_data="admin:private_welcome_video", style="primary", icon_custom_emoji_id=a)
     )
     markup.row(
         button("تفعيل الترحيب", callback_data="admin:welcome_enable", style="primary", icon_custom_emoji_id=a)
@@ -4882,7 +4890,7 @@ def bot_images_text():
         "<b>صور البوت</b>\n"
         "\n"
         f"عدد الصور المحفوظة: <code>{count}</code>\n\n"
-        "عند كتابة <code>صورة</code> في مجموعة، يرسل البوت صورة عشوائية من هذه القائمة."
+        "عند كتابة <code>صورة</code> أو <code>صور</code> في مجموعة، يرسل البوت صورة عشوائية من هذه القائمة فقط."
     )
 
 def bot_images_markup():
@@ -4966,30 +4974,11 @@ def send_random_bot_image(message):
 
 # ==================== YouTube Cookies (مكان مخصص) ====================
 # لا تضع بيانات جلسة YouTube الحقيقية في الكود إذا كان الملف سيُشارك.
-YOUTUBE_COOKIES = """# Netscape HTTP Cookie File
-# This file is generated by yt-dlp.  Do not edit.
-
-.youtube.com	TRUE	/	FALSE	1818960679	APISID	ah0KS413n7pwUSJd/A6D2sc55a2FWqb4_J
-.youtube.com	TRUE	/	FALSE	1818960679	HSID	Ao1fh4UMboTy9AiQa
-.youtube.com	TRUE	/	TRUE	1818960679	LOGIN_INFO	AFmmF2swRAIgQXMGC8x3Ii6tzGzXXZiW8AH7GQlgYae_shAx21V5ycoCIGcwYc66kmQbQNhMaRl_jWe5kvY6fWygOG8-XrvxGEBp:QUQ3MjNmdzVOSGc5N3lLY2k3VW9Ba2FpZW1wcWJxMG8wRTFNaUlBYmp2VnJnLXdMU2pnaFFJajFWMms5Uk80RnJaLVo2OU5LU0g4QWFPMXBvNjZhTnZEbUlOUm1rX2E2cW82ZjFLWWtWbnlDZDRQTk9TMU03bzdaT1RaQkF0Vl9zdTNlRmFzMHh5bnJtejRNOThBUEpCNndTMjJzZGJBR2ZB
-.youtube.com	TRUE	/	FALSE	0	PREF	f4=4000000&tz=UTC&f5=30000&hl=en
-.youtube.com	TRUE	/	TRUE	1818960679	SAPISID	X9H-Lk3eCVwj4Iv2/AMKe7l4Ck9Xhjh3dl
-.youtube.com	TRUE	/	FALSE	1818960679	SID	g.a000AgmPipGFfSBu-SboJ4U-KQR3ya9Dku9xeHrvzEZKXH-mdnb5CF-b_GcxIHxt0idLkcURuAACgYKAcISARYSFQHGX2MijbhLDOq6WH61E2aTpaG8bBoVAUF8yKpOuuTeBgbcEXeoToTaNj9f0076
-.youtube.com	TRUE	/	FALSE	1818144354	SIDCC	AKEyXzU4x5L3V_dYwreOkty_3VrKTJpMWGqsIR8ZxYc065JylIaDDYqGH1Iag6FooNfnFbc9
-.youtube.com	TRUE	/	TRUE	1818960679	SSID	Ag61-lxVWB2roN4MJ
-.youtube.com	TRUE	/	TRUE	1820736354	VISITOR_PRIVACY_METADATA	CgJERRIEEgAgVw%3D%3D
-.youtube.com	TRUE	/	TRUE	0	YSC	TGeqw-qTL7s
-.youtube.com	TRUE	/	TRUE	1818960679	__Secure-1PAPISID	X9H-Lk3eCVwj4Iv2/AMKe7l4Ck9Xhjh3dl
-.youtube.com	TRUE	/	TRUE	1818960679	__Secure-1PSID	g.a000AgmPipGFfSBu-SboJ4U-KQR3ya9Dku9xeHrvzEZKXH-mdnb5HVFd8xkvDg09_gS3B7LFPgACgYKARESARYSFQHGX2MibtwleN6dZKotPe1puPGaeRoVAUF8yKr_dYhS9zDQgTqKE3xmspy70076
-.youtube.com	TRUE	/	TRUE	1818144354	__Secure-1PSIDCC	AKEyXzXslFBZFzWgCZhE1yVmH4NBSnQ0nrN4rwf2I511BENoyZrl3Cp1mmTazoiSoRf3LDUI
-.youtube.com	TRUE	/	TRUE	1815936679	__Secure-1PSIDTS	sidts-CjQBPWEu2Q1xGIZjJGhVl_CRXGhz3UYCJyjk9TY9D8QnkQ8Jvg5Q9VBQrr5nIviprzNoAU1hEAA
-.youtube.com	TRUE	/	TRUE	1818960679	__Secure-3PAPISID	X9H-Lk3eCVwj4Iv2/AMKe7l4Ck9Xhjh3dl
-.youtube.com	TRUE	/	TRUE	1818960679	__Secure-3PSID	g.a000AgmPipGFfSBu-SboJ4U-KQR3ya9Dku9xeHrvzEZKXH-mdnb5tG_LGSpQDP3aZjRweD9blQACgYKAcISARYSFQHGX2Mi-3VvVu7MZYwCzwrsIzUZhRoVAUF8yKrat59sXIzOrZ381UT721iq0076
-.youtube.com	TRUE	/	TRUE	1818144354	__Secure-3PSIDCC	AKEyXzXrZ66EEdbgQhNTtGEMkgNfSIRA1HRvsGQ_Phy0xrGb33XnytUZetG7hghJLoCruXo-
-.youtube.com	TRUE	/	TRUE	1815936679	__Secure-3PSIDTS	sidts-CjQBPWEu2Q1xGIZjJGhVl_CRXGhz3UYCJyjk9TY9D8QnkQ8Jvg5Q9VBQrr5nIviprzNoAU1hEAA
-.youtube.com	TRUE	/	TRUE	1802154633	__Secure-ROLLOUT_TOKEN	CIHe4sDo2eaE-wEQoozup_2clgMYvNLauv2clgM%3D
-.youtube.com	TRUE	/	TRUE	1820730593	__Secure-YEC	CgtSMXpxX3Z4cEtOSSji9fXTBjIKCgJERRIEEgAgV2LgAgrdAjE3LllURT1PcnJ3OUxQYkNZMXRjanpzZTRrMUw5Yjl0UmZKRTZiMjJzdkJLaE84N0lScjI5eHlRVHZFdm5RaGNyMWxXdHZ6T0lJckZTSXFTaFhubUNsLWVaRjFhY2hHVzJmMFdnNlpMTXFGZHRCeTNwUmQtR2UtWHYzU2V2Y0wzN1licWpKUnc1MEwxMzRvR2VGeW0tRkxPbnlpeVE2T3dxX3JQQWRJbGMtLVJPX3RLVXZJaWRfRndrR3VvSUVJeF9sWDFvWUg0cTJRNTlTRzVieHlhVjFDeDVSR01HVjdGNDhncFJ4RUJwZ2tEMzZ3elFDdGRDRFpqaXRwZXV5dTRYVzNOZ3pHakZxdUJRVEQ5SmV1OTh4WkhWek5vMXdueDhqWlVUZGVWQkFSTkQxdk1hVGZfYTVDdHU2aWZvSTh1VUZJZm4yYURZSTF3c2x6VV9JMlRjczBJZ09TVVE%3D
-.youtube.com	TRUE	/	TRUE	1820730594	__Secure-YENID	17.YTE=Orrw9LPbCY1tcjzse4k1L9b9tRfJE6b22svBKhO87IRr29xyQTvEvnQhcr1lWtvzOIIrFSIqShXnmCl-eZF1achGW2f0Wg6ZLMqFdtBy3pRd-Ge-Xv3SevcL37YbqjJRw50L134oGeFym-FLOnyiyQ6Owq_rPAdIlc--RO_tKUvIid_FwkGuoIEIx_lX1oYH4q2Q59SG5bxyaV1Cx5RGMGV7F48gpRxEBpgkD36wzQCtdCDZjitpeuyu4XW3NgzGjFquBQTD9Jeu98xZHVzNo1wnx8jZUTdeVBARND1vMaTf_a5Ctu6ifoI8uUFIfn2aDYI1wslzU_I2Tcs0IgOSUQ
+YOUTUBE_COOKIES = """
+# الصق محتوى cookies.txt هنا فقط إذا كان main.py خاصًا بك ولا تشاركه.
+# مثال:
+# # Netscape HTTP Cookie File
+# ...
 """.strip()
 
 _cookie_runtime_file = None
@@ -6038,28 +6027,21 @@ def send_pinterest_image(message, query, label):
 
 
 def image_menu_markup():
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.row(
-        button("صور", callback_data="pinterest:general", icon_custom_emoji_id=CE_COMMANDS),
-        button("صور بنات", callback_data="pinterest:girls", icon_custom_emoji_id=CE_COMMANDS)
-    )
-    markup.row(
-        button("صور ولاد", callback_data="pinterest:boys", icon_custom_emoji_id=CE_COMMANDS),
-        button("صور عشوائية", callback_data="pinterest:random", icon_custom_emoji_id=CE_COMMANDS)
-    )
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(button("صور", callback_data="saved_images:random", style="primary", icon_custom_emoji_id=CE_COMMANDS))
     return markup
 
 
 def start_inline_markup(user_id):
-    """أزرار Inline فقط: Dev + Reem، ثم Add Me."""
     markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.row(button("‹ Updates BoT Reem ›", url=SOURCE_CHANNEL_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
     markup.row(
-        button("⦉ DeV ⦊", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI),
-        button("⦉ 𝗥 𝗲 𝗲 𝗺 ⦊", url=SOURCE_CHANNEL_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI)
+        button("‹ LeAaDeR ›", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI),
+        button("‹ DeV ›", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI)
     )
-    markup.row(button("⦉  Add  Me To Your Group  ⦊", url=ADD_TO_GROUP_URL, style="primary", icon_custom_emoji_id=CE_ADD_TO_GROUP_REQUESTED))
+    markup.row(button("‹ Help ›", callback_data=f"cmdcat:{user_id}:all", style="primary", icon_custom_emoji_id=CE_COMMANDS))
+    markup.row(button("‹ Add Me To Your Group ›", url=ADD_TO_GROUP_URL, style="primary", icon_custom_emoji_id="5462943653116792628"))
     return markup
-
 
 def start_keyboard_markup():
     """لوحة كيبورد فعلية مثل الصورة المرجعية."""
@@ -6089,27 +6071,54 @@ def start_keyboard_markup():
 def build_welcome_text(user, private=False, chat=None):
     name = html.escape(full_name(user))
     now_eg = datetime.now(timezone(timedelta(hours=3)))
-    day_name = {0:"الاثنين",1:"الثلاثاء",2:"الأربعاء",3:"الخميس",4:"الجمعة",5:"السبت",6:"الأحد"}[now_eg.weekday()]
-    date_text = now_eg.strftime("%Y-%m-%d")
-    time_text = now_eg.strftime("%H:%M:%S")
+    time_text = now_eg.strftime("%I:%M %p").lstrip("0")
+    if private:
+        bot_name = html.escape(BOT_DISPLAY_NAME)
+        username = html.escape(username_text(user))
+        return (
+            "• أهلا بك عزيزي المُستخدِم .\n"
+            "      ─ ── ── ── ── ──\n"
+            f"• انا بوت (<a href=\"https://t.me/{BOT_USERNAME}\">{bot_name}</a>) ︕، يمڪنك أستخدامي في حمايه الجروبات من التفليش والروابط والاسبام والاباحي\n"
+            "      ─ ── ── ── ── ──\n"
+            f"• UsE ⦉ <a href=\"tg://user?id={user.id}\">{username}</a> ⦊\n"
+            f"• ID  ⦉ <code>{user.id}</code> ⦊"
+        )
+    group_name = html.escape(getattr(chat, "title", "الجروب") or "الجروب")
+    joined = now_eg.strftime("%Y-%m-%d")
     return (
-        f"{tg_emoji(CE_WELCOME_HELLO, '•')}︙نورت يا  -› ⦉ {name} ⦊\n"
-        f"{tg_emoji(CE_BOT_REPLY, '•')}︙اهلا بك انا بوت اسمي ريم\n"
-        f"{tg_emoji(CE_PROTECTION, '•')}︙وظيفتي حمايه المجموعات\n"
-        f"{tg_emoji(CE_WELCOME_INFO, '•')}︙لتفعيل البوت في مجموعتك اتبع الخطوات التاليه\n"
-        f"{tg_emoji(CE_ADD_TO_GROUP_REQUESTED, '•')}︙اضف البوت إلى مجموعتك\n"
-        f"{tg_emoji(CE_ADMIN, '•')}︙ارفعه » ادمن مشرف\n"
-        f"{tg_emoji(CE_SUCCESS, '•')}︙سيتم تفعيله تلقائيا\n"
-        f"{tg_emoji(CE_RANKS, '•')}︙سيتم ترقيتك مالك في البوت\n"
-        f"{tg_emoji(CE_WELCOME_INFO, '•')}︙اليوم ⋮ ⦉ {day_name} ⦊ الموافق ⋮ ⦉ {date_text} ⦊\n"
-        f"{tg_emoji(CE_START, '•')}︙الساعه ⋮ ⦉ {time_text} ⦊\n"
-        "ـــــــــــــــــــــــــــــــــــــــــــــ"
+        f"⁣⁣ᯓ˹𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎{group_name}𝐆𝐑𝐎𝐔𝐏  ᯤ˼\n"
+        "°•——————​رغـ ـي الدون الـ ـيـ ـوتـ ـيـوبـر ¹ 𓆗 ,—————•°\n"
+        f"°︙ نورت قروبنا يـ  『{name}』 🥂✨.\n"
+        f"°︙ اسمك ⇚『{name}』\n"
+        f"°︙ ايديك ⇚『<tg-spoiler>{user.id}</tg-spoiler>』\n"
+        f"°︙ يوزرك ⇚『<tg-spoiler>{html.escape(username_text(user))}</tg-spoiler>』\n\n"
+        f"°︙ تاريخ انضمامك ☜ {joined}\n"
+        f"°︙ الساعة ☜ {time_text}\n"
+        f"°•——————​{group_name} —————•°"
     )
+
+def _private_welcome_media():
+    media_type = global_setting("private_welcome_media_type", "")
+    media_id = global_setting("private_welcome_media_id", "")
+    return (media_type, media_id) if media_type in ("photo", "video") and media_id else (None, None)
+
+def send_private_welcome(message):
+    user = message.from_user
+    text = build_welcome_text(user, private=True)
+    media_type, media_id = _private_welcome_media()
+    try:
+        if media_type == "photo":
+            return bot.send_photo(message.chat.id, media_id, caption=text, parse_mode="HTML", reply_markup=start_inline_markup(user.id))
+        if media_type == "video":
+            return bot.send_video(message.chat.id, media_id, caption=text, parse_mode="HTML", reply_markup=start_inline_markup(user.id))
+    except Exception as e:
+        print("[Private Welcome Media Error]", repr(e))
+    return bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=start_inline_markup(user.id))
 
 def start_private(message):
     user = message.from_user
     track_private_user(message, notify=True)
-    return send_welcome_with_bot_photo(message.chat.id, build_welcome_text(user, private=True), reply_markup=start_inline_markup(user.id))
+    return send_private_welcome(message)
 
 
 # =========================================================
@@ -6234,14 +6243,8 @@ def handle_start_keyboard_button(message):
         bot.send_message(message.chat.id, random.choice(items))
         return True
 
-    if raw == "صور":
-        return send_pinterest_image(message, "beautiful aesthetic photography", "صور")
-
-    if raw in ("صور بنات", "صورة بنات"):
-        return send_pinterest_image(message, "girls aesthetic portrait", "صور بنات")
-
-    if raw in ("صور شباب", "صور ولاد", "صورة ولاد"):
-        return send_pinterest_image(message, "boys aesthetic portrait", "صور شباب")
+    if raw in ("صور", "صور بنات", "صورة بنات", "صور شباب", "صور ولاد", "صورة ولاد"):
+        return send_random_bot_image(message)
 
     if raw == "انمي":
         return send_pinterest_image(message, "anime aesthetic", "انمي")
@@ -6435,29 +6438,13 @@ def new_members_handler(message):
         welcome_text = group_welcome_caption(message, u)
 
         markup = types.InlineKeyboardMarkup(row_width=2)
-        owner_url = f"tg://user?id={owner.id}" if owner else SOURCE_DEVELOPER_URL
-
-        owner_btn = button(
-            "Dev •",
-            url=SOURCE_DEVELOPER_URL,
-            style="primary",
-            icon_custom_emoji_id=WELCOME_DEV_EMOJI
-        )
-        updates_btn = button(
-            "Source •",
-            url=SOURCE_CHANNEL_URL,
-            style="primary",
-            icon_custom_emoji_id=WELCOME_DEV_EMOJI
-        )
-        markup.row(owner_btn, updates_btn)
+        markup.row(button("‹ Updates BoT Reem ›", url=SOURCE_CHANNEL_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
         markup.row(
-            button(
-                ".Add Me To Your Group .",
-                url=ADD_TO_GROUP_URL,
-                style="danger",
-                icon_custom_emoji_id=CE_ADD_TO_GROUP_REQUESTED
-            )
+            button("‹ LeAaDeR ›", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI),
+            button("‹ DeV ›", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI)
         )
+        markup.row(button("‹ Help ›", callback_data=f"cmdcat:{u.id}:all", style="primary", icon_custom_emoji_id=CE_COMMANDS))
+        markup.row(button("‹ Add Me To Your Group ›", url=ADD_TO_GROUP_URL, style="primary", icon_custom_emoji_id="5462943653116792628"))
 
         try:
             sent = send_welcome_with_bot_photo(
@@ -6473,28 +6460,33 @@ def new_members_handler(message):
 # =========================================================
 # المنشن الجماعي
 # =========================================================
-def _chunk_mentions(users):
-    chunk=[]; current=0
-    for user in users:
-        m=f'<a href="tg://user?id={user.id}">{html.escape(full_name(user))}</a>'
-        if chunk and current+len(m)+1>3500:
-            yield chunk; chunk=[]; current=0
-        chunk.append(m); current+=len(m)+1
-    if chunk: yield chunk
+def _chunk_mentions(users, size=5):
+    for i in range(0, len(users), size):
+        chunk = []
+        for user in users[i:i+size]:
+            m = f'<a href="tg://user?id={user.id}">{html.escape(full_name(user))}</a>'
+            chunk.append(m)
+        if chunk:
+            yield chunk
 
 def mention_admins_with_message(message, extra_text=""):
-    if not admin_required(message): return True
+    if not admin_required(message):
+        return True
     try:
         users=[a.user for a in bot.get_chat_administrators(message.chat.id) if a.user and not getattr(a.user,"is_bot",False)]
     except Exception:
         bot.reply_to(message,"تعذر جلب المشرفين حاليًا."); return True
     prefix=(extra_text or "").strip()
-    for chunk in _chunk_mentions(users):
-        bot.send_message(message.chat.id, ((prefix+"\n\n") if prefix else "")+" ".join(chunk), parse_mode="HTML")
+    for i, chunk in enumerate(_chunk_mentions(users, 5)):
+        body = " ".join(chunk)
+        if prefix and i == 0:
+            body = prefix + "\n\n" + body
+        bot.send_message(message.chat.id, body, parse_mode="HTML")
     return True
 
 def mention_everyone_with_message(message, extra_text=""):
-    if not admin_required(message): return True
+    if not admin_required(message):
+        return True
     cursor.execute("SELECT user_id,first_name,last_name,username FROM group_users WHERE chat_id=? AND user_id>0 ORDER BY last_seen DESC",(message.chat.id,))
     rows=cursor.fetchall(); users=[]; seen=set()
     for row in rows:
@@ -6507,233 +6499,13 @@ def mention_everyone_with_message(message, extra_text=""):
     if not users:
         bot.reply_to(message,"لا يوجد أعضاء مسجلون لمنشنهم."); return True
     prefix=(extra_text or "").strip()
-    for i,chunk in enumerate(_chunk_mentions(users)):
-        bot.send_message(message.chat.id, ((prefix+"\n\n") if prefix and i==0 else "")+" ".join(chunk), parse_mode="HTML")
-        time.sleep(0.2)
+    for i,chunk in enumerate(_chunk_mentions(users, 5)):
+        body = " ".join(chunk)
+        if prefix and i == 0:
+            body = prefix + "\n\n" + body
+        bot.send_message(message.chat.id, body, parse_mode="HTML")
+        time.sleep(0.08)
     return True
-
-
-# =========================================================
-# التتبع والإذاعة وإدارة البوتات
-# =========================================================
-def track_private_user(message, notify=True):
-    if not message or not message.from_user or message.chat.type != "private":
-        return
-    u = message.from_user
-    ts = now()
-    cursor.execute("""
-        INSERT INTO bot_private_users(user_id,first_name,last_name,username,first_seen,last_seen)
-        VALUES(?,?,?,?,?,?)
-        ON CONFLICT(user_id) DO UPDATE SET
-            first_name=excluded.first_name,
-            last_name=excluded.last_name,
-            username=excluded.username,
-            last_seen=excluded.last_seen
-    """, (u.id, u.first_name or "", u.last_name or "", u.username or "", ts, ts))
-    db.commit()
-
-    if not notify or u.id == DEVELOPER_ID:
-        return
-    cursor.execute("SELECT 1 FROM developer_notifications WHERE user_id=?", (u.id,))
-    if cursor.fetchone():
-        return
-    try:
-        notify_text = (
-            f"{tg_emoji(CE_ADMIN, '•')} مستخدم جديد استخدم البوت\n"
-            "\n"
-            f"{tg_emoji(CE_PERSON, '•')} الاسم: <a href=\"tg://user?id={u.id}\">{html.escape(full_name(u))}</a>\n"
-            f"{tg_emoji(CE_USERNAME, '•')} اليوزر: {html.escape(username_text(u))}\n"
-            f"{tg_emoji(CE_ID, '•')} الايدي: <code>{u.id}</code>"
-        )
-        bot.send_message(DEVELOPER_ID, notify_text)
-        cursor.execute(
-            "INSERT OR REPLACE INTO developer_notifications(user_id,notified_at) VALUES(?,?)",
-            (u.id, ts)
-        )
-        db.commit()
-    except Exception as e:
-        print("[Developer User Notification]", e)
-
-
-def register_known_bot(chat_id, user):
-    if not user or not getattr(user, "is_bot", False):
-        return
-    cursor.execute("""
-        INSERT INTO known_bots(chat_id,user_id,first_name,username,discovered_at)
-        VALUES(?,?,?,?,?)
-        ON CONFLICT(chat_id,user_id) DO UPDATE SET
-            first_name=excluded.first_name,
-            username=excluded.username
-    """, (chat_id, user.id, user.first_name or "", user.username or "", now()))
-    db.commit()
-
-
-def get_group_open_link(chat):
-    """إرجاع رابط المجموعة بدل عرض الـID قدر الإمكان."""
-    try:
-        if getattr(chat, "username", None):
-            return f"https://t.me/{chat.username}"
-    except Exception:
-        pass
-
-    try:
-        fresh = bot.get_chat(chat.id)
-        username = getattr(fresh, "username", None)
-        if username:
-            return f"https://t.me/{username}"
-        invite_link = getattr(fresh, "invite_link", None)
-        if invite_link:
-            return invite_link
-
-        # لو كانت المجموعة خاصة ولا يوجد رابط ظاهر، نحاول إنشاء رابط دعوة
-        # من خلال صلاحية البوت، حتى يصل للمالك رابط يمكنه فتح المجموعة.
-        try:
-            created = bot.create_chat_invite_link(chat.id)
-            created_link = getattr(created, "invite_link", None)
-            if created_link:
-                return created_link
-        except Exception as invite_error:
-            print("[Create Group Invite Link Error]", invite_error)
-    except Exception as e:
-        print("[Group Link Error]", e)
-
-    # آخر حل للمجموعات الخاصة التي لا يملك البوت صلاحية إنشاء رابط لها.
-    return f"tg://openmessage?chat_id={chat.id}"
-
-
-def notify_group_event(kind, message):
-    if not message or not message.from_user:
-        return
-    chat = message.chat
-    actor = message.from_user
-    label = "تمت إضافة البوت إلى مجموعة" if kind == "added" else "تمت إزالة البوت من مجموعة"
-    try:
-        group_link = get_group_open_link(chat)
-        text = (
-            f"{tg_emoji(CE_ADMIN, '•')} {label}\n"
-            "\n"
-            f"{tg_emoji(CE_MEMBER, '•')} المجموعة: <b>{html.escape(chat.title or 'بدون اسم')}</b>\n"
-            f"{tg_emoji(CE_MEMBER, '•')} الرابط: <a href=\"{html.escape(group_link, quote=True)}\">فتح المجموعة</a>\n"
-            f"{tg_emoji(CE_PERSON, '•')} بواسطة: <a href=\"tg://user?id={actor.id}\">{html.escape(full_name(actor))}</a>\n"
-            f"{tg_emoji(CE_USERNAME, '•')} اليوزر: {html.escape(username_text(actor))}"
-        )
-        markup = types.InlineKeyboardMarkup()
-        try:
-            markup.add(types.InlineKeyboardButton("فتح المجموعة", url=group_link))
-        except Exception:
-            markup = None
-        bot.send_message(DEVELOPER_ID, text, reply_markup=markup)
-    except Exception as e:
-        print("[Developer Group Notification]", e)
-
-
-def get_known_group_bots(chat_id):
-    bots = {}
-    try:
-        admins = bot.get_chat_administrators(chat_id)
-        for admin in admins:
-            if admin.user and admin.user.is_bot:
-                bots[admin.user.id] = admin.user
-                register_known_bot(chat_id, admin.user)
-    except Exception as e:
-        print("[Bots Admin Scan]", e)
-
-    cursor.execute("SELECT user_id,first_name,username FROM known_bots WHERE chat_id=?", (chat_id,))
-    for row in cursor.fetchall():
-        if row["user_id"] not in bots:
-            class _KnownBot:
-                pass
-            u = _KnownBot()
-            u.id = row["user_id"]
-            u.first_name = row["first_name"] or "Bot"
-            u.last_name = ""
-            u.username = row["username"] or ""
-            u.is_bot = True
-            bots[u.id] = u
-
-    # تأكد أن السجلات القديمة ما زالت تشير لأعضاء موجودين.
-    result = []
-    for u in list(bots.values()):
-        try:
-            m = bot.get_chat_member(chat_id, u.id)
-            if m and m.status not in ("left", "kicked"):
-                result.append(m.user)
-        except Exception:
-            # إذا تعذر الفحص، لا نعرض السجل القديم لتجنب نتائج وهمية.
-            pass
-    return result
-
-
-def format_bot_list(message):
-    bots = get_known_group_bots(message.chat.id)
-    if not bots:
-        return "لا توجد بوتات معروفة حاليًا في المجموعة. Telegram لا يتيح للبوتات قراءة قائمة جميع الأعضاء." 
-    lines = ["<b>البوتات الموجودة</b>", ""]
-    for i, u in enumerate(bots, 1):
-        uname = f"@{html.escape(u.username)}" if getattr(u, "username", None) else "لا يوجد يوزر"
-        lines.append(f"{i}. <a href=\"tg://user?id={u.id}\">{html.escape(full_name(u))}</a> — {uname}")
-    return "\n".join(lines)
-
-
-def kick_all_known_bots(message):
-    bots = get_known_group_bots(message.chat.id)
-    if not bots:
-        bot.reply_to(message, "لا توجد بوتات معروفة يمكن طردها حاليًا.")
-        return True
-    me = bot.get_me()
-    kicked = 0
-    skipped = 0
-    for u in bots:
-        if u.id == me.id:
-            skipped += 1
-            continue
-        try:
-            member = bot.get_chat_member(message.chat.id, u.id)
-            if member.status == "administrator":
-                try:
-                    bot.promote_chat_member(
-                        message.chat.id, u.id,
-                        can_change_info=False,
-                        can_delete_messages=False,
-                        can_invite_users=False,
-                        can_restrict_members=False,
-                        can_pin_messages=False,
-                        can_manage_video_chats=False,
-                        can_manage_topics=False,
-                        can_promote_members=False
-                    )
-                except Exception:
-                    skipped += 1
-                    continue
-            if member.status == "creator":
-                skipped += 1
-                continue
-            kick_user(message.chat.id, u.id)
-            kicked += 1
-        except Exception as e:
-            print("[Kick Bot]", u.id, e)
-            skipped += 1
-    bot.reply_to(message, f"تم طرد <b>{kicked}</b> بوت. تعذر طرد <b>{skipped}</b>.")
-    return True
-
-
-def send_admins_list(message):
-    try:
-        admins = bot.get_chat_administrators(message.chat.id)
-    except Exception:
-        bot.reply_to(message, "تعذر جلب المشرفين حاليًا.")
-        return True
-    lines = ["<b>مشرفو المجموعة</b>", ""]
-    for i, admin in enumerate(admins, 1):
-        u = admin.user
-        uname = f"@{html.escape(u.username)}" if u.username else "لا يوجد يوزر"
-        lines.append(
-            f"{i}. {tg_emoji(CE_ADMIN_USERNAME, '•')} "
-            f"<a href=\"tg://user?id={u.id}\">{html.escape(full_name(u))}</a> — {uname}"
-        )
-    bot.reply_to(message, "\n".join(lines))
-    return True
-
 
 def broadcast_recipients(scope="all"):
     if scope in ("all", "private"):
@@ -6767,7 +6539,7 @@ def perform_broadcast(source_message, scope="all", reply_markup=None, progress_c
     progress_message = None
     if progress_chat_id is not None:
         try:
-            progress_message = bot.send_message(progress_chat_id, f"جاري الارسال <b>{ok}</b>\n<b>{total}</b>")
+            progress_message = bot.send_message(progress_chat_id, f"جاري الاذاعة\nالمرسل: <b>{ok}</b>\nالمتبقي: <b>{total}</b>\nالفشل: <b>{failed}</b>")
         except Exception:
             pass
     for index, target_id in enumerate(recipients, 1):
@@ -6785,7 +6557,7 @@ def perform_broadcast(source_message, scope="all", reply_markup=None, progress_c
             print("[Broadcast]", scope, target_id, e)
         if progress_message and (index==1 or index%20==0 or index==total):
             try:
-                bot.edit_message_text(f"جاري الارسال <b>{ok}</b>\n<b>{max(total-ok-failed,0)}</b>", progress_chat_id, progress_message.message_id)
+                bot.edit_message_text(f"جاري الاذاعة\nالمرسل: <b>{ok}</b>\nالمتبقي: <b>{max(total-ok-failed,0)}</b>\nالفشل: <b>{failed}</b>", progress_chat_id, progress_message.message_id)
             except Exception:
                 pass
     if progress_message:
@@ -6845,15 +6617,35 @@ def start_global_reply(message):
 # الهمسة الإيمانية — أذكار وتسبيح تلقائي للمجموعات
 # =========================================================
 ADHKAR_MESSAGES = [
-    "{b} <b>همسة إيمانية</b>\n\nسبحان الله وبحمده، سبحان الله العظيم.",
-    "{b} <b>ذكر الساعة</b>\n\nأكثروا من الاستغفار والصلاة على النبي ﷺ.",
-    "{b} <b>تسبيح</b>\n\nسبحان الله، والحمد لله، ولا إله إلا الله، والله أكبر.",
-    "{b} <b>همسة</b>\n\nاذكر الله ولو لدقيقة، فذكر الله يطمئن القلب.",
-    "{b} <b>ذكر</b>\n\nاللهم اغفر لنا وارحمنا واهدنا وبارك لنا في يومنا.",
-    "{b} <b>لا تنسَ الذكر</b>\n\nأستغفر الله وأتوب إليه.",
+    "سبحان الله وبحمده، سبحان الله العظيم.",
+    "أكثروا من الاستغفار والصلاة على النبي ﷺ.",
+    "سبحان الله، والحمد لله، ولا إله إلا الله، والله أكبر.",
+    "اذكر الله ولو لدقيقة، فذكر الله يطمئن القلب.",
+    "اللهم اغفر لنا وارحمنا وارحمنا واهدنا وبارك لنا في يومنا.",
+    "أستغفر الله وأتوب إليه.",
 ]
-ADHKAR_EMOJI = "6008263495932448198"
+ADHKAR_EMOJI = "5463404425798240894"
 ADHKAR_INTERVAL = 60 * 60
+ADHAN_EMOJI = "5463404425798240894"
+
+def _adhkar_wrap(text):
+    e = tg_emoji(ADHKAR_EMOJI, "•")
+    return f"{e} {text.strip()} {e}"
+
+def _time_12h(value):
+    try:
+        if isinstance(value, datetime):
+            return value.strftime("%I:%M %p").lstrip("0")
+        raw = str(value).strip()
+        for fmt in ("%H:%M", "%H:%M:%S", "%I:%M %p", "%I:%M:%S %p"):
+            try:
+                return datetime.strptime(raw, fmt).strftime("%I:%M %p").lstrip("0")
+            except ValueError:
+                pass
+    except Exception:
+        pass
+    return str(value)
+
 
 
 def send_adhkar_to_all_groups():
@@ -6868,9 +6660,7 @@ def send_adhkar_to_all_groups():
     for row in rows:
         chat_id = int(row["chat_id"])
         try:
-            msg = random.choice(ADHKAR_MESSAGES).format(
-                b=tg_emoji(ADHKAR_EMOJI, "•")
-            )
+            msg = _adhkar_wrap(random.choice(ADHKAR_MESSAGES))
             bot.send_message(chat_id, msg, parse_mode="HTML")
         except Exception as e:
             # لا نوقف بقية المجموعات إذا كانت مجموعة واحدة غير متاحة.
@@ -6891,11 +6681,58 @@ def hourly_adhkar_worker():
 
 def send_single_adhkar(message):
     """أمر يدوي: همسه / همسة."""
-    text = random.choice(ADHKAR_MESSAGES).format(
-        b=tg_emoji(ADHKAR_EMOJI, "•")
-    )
+    text = _adhkar_wrap(random.choice(ADHKAR_MESSAGES))
     bot.reply_to(message, text, parse_mode="HTML")
+
+def fetch_cairo_prayer_times():
+    today = datetime.now(timezone(timedelta(hours=3))).strftime("%d-%m-%Y")
+    url = "https://api.aladhan.com/v1/timings/" + today + "?latitude=30.0444&longitude=31.2357&method=5"
+    try:
+        data = _http_json(url)
+        return (data.get("data") or {}).get("timings") or {}
+    except Exception as e:
+        print("[Adhan API Error]", repr(e))
+        return {}
+
+def send_adhan_notifications():
+    rows = _get_thread_db().execute("SELECT chat_id FROM settings WHERE setting='adhan_enabled' AND value='1'").fetchall()
+    if not rows:
+        return
+    timings = fetch_cairo_prayer_times()
+    if not timings:
+        return
+    prayers = (("Fajr","الفجر"),("Dhuhr","الظهر"),("Asr","العصر"),("Maghrib","المغرب"),("Isha","العشاء"))
+    now_local = datetime.now(timezone(timedelta(hours=3)))
+    current = now_local.strftime("%H:%M")
+    for row in rows:
+        chat_id=int(row["chat_id"])
+        for key, arabic in prayers:
+            val=str(timings.get(key,""))[:5]
+            if val == current:
+                e=tg_emoji(ADHAN_EMOJI,"•")
+                try:
+                    bot.send_message(chat_id, f"{e} حان الآن أذان {arabic} — {_time_12h(val)} {e}", parse_mode="HTML")
+                except Exception as exc:
+                    print("[Adhan Send Error]", repr(exc))
+                break
+
+def adhan_worker():
+    last_minute = None
+    while True:
+        try:
+            minute = datetime.now(timezone(timedelta(hours=3))).strftime("%Y-%m-%d %H:%M")
+            if minute != last_minute:
+                last_minute = minute
+                send_adhan_notifications()
+        except Exception as e:
+            print("[Adhan Worker Error]", repr(e))
+        time.sleep(5)
     return True
+
+try:
+    Thread(target=adhan_worker, daemon=True, name="AdhanWorker").start()
+except Exception as _e:
+    print("[Adhan Worker Start Error]", repr(_e))
 
 
 # =========================================================
@@ -7046,6 +6883,18 @@ def main_handler(message):
                     bot.send_message(message.chat.id, "تم حفظ وسائط الترحيب." if ok else "أرسل صورة أو فيديو صالحًا.")
                     return
 
+                if pending in ("private_welcome_photo", "private_welcome_video"):
+                    media_type = "photo" if getattr(message, "photo", None) else ("video" if getattr(message, "video", None) else "")
+                    media_id = message.photo[-1].file_id if media_type == "photo" else (message.video.file_id if media_type == "video" else "")
+                    if media_id:
+                        set_global_setting("private_welcome_media_type", media_type)
+                        set_global_setting("private_welcome_media_id", media_id)
+                        admin_pending.pop(message.from_user.id, None)
+                        bot.send_message(message.chat.id, "تم حفظ ترحيب الخاص.")
+                    else:
+                        bot.send_message(message.chat.id, "أرسل صورة أو فيديو صالحًا.")
+                    return
+
                 if pending == "broadcast_button_text":
                     data = broadcast_pending.get(message.from_user.id)
                     if not data:
@@ -7148,13 +6997,13 @@ def main_handler(message):
             try:
                 send_plain_emoji_message(
                     message.chat.id,
-                    "🤍 صلِّ على النبي 🤍",
+                    _adhkar_wrap("صلِّ على النبي"),
                     reply_to_message_id=message.message_id
                 )
             except Exception as e:
                 print("[Dot Reply Error]", repr(e))
                 try:
-                    bot.reply_to(message, "🤍 صلِّ على النبي 🤍")
+                    bot.reply_to(message, _adhkar_wrap("صلِّ على النبي"))
                 except Exception:
                     pass
             if not reacted:
@@ -7192,12 +7041,14 @@ def main_handler(message):
                 address = None
                 if TON_ADDRESS_RE.fullmatch(wallet_text):
                     address = wallet_text
-                elif wallet_text and (wallet_text.startswith('@') or wallet_text.lower().endswith('.ton')):
+                elif wallet_text and (wallet_text.startswith('@') or wallet_text.lower().endswith('.ton') or 'fragment.com' in wallet_text.lower()):
+                    if 'fragment.com' in wallet_text.lower():
+                        wallet_text = wallet_text.rstrip('/').split('/')[-1]
                     address = _resolve_ton_name(wallet_text)
                 if address:
                     send_ton_wallet_info(message, address)
                 else:
-                    bot.reply_to(message, "اكتب عنوان المحفظة أو اسم TON مثل <code>/محفظة EQ...</code> أو <code>/محفظة name.ton</code>.")
+                    bot.reply_to(message, "اكتب عنوان TON أو اسمًا مربوطًا بـ TON/Fragment مثل <code>/محفظة EQ...</code> أو <code>/محفظة name.ton</code> أو رابط Fragment.")
                 return
 
             if _clean_command in ("يوت", "يوتيوب", "اغنية", "أغنية"):
@@ -7217,14 +7068,8 @@ def main_handler(message):
                         handle_music_command(message, _command_arg)
                         return
 
-            if _clean_command in ("صورة", "صور", "صوره"):
-                send_pinterest_image(message, "beautiful aesthetic photography", "صور")
-                return
-            if _clean_command in ("صورة_بنات", "صور_بنات", "بنات"):
-                send_pinterest_image(message, "girls aesthetic portrait", "صور بنات")
-                return
-            if _clean_command in ("صورة_ولاد", "صور_ولاد", "ولاد", "اولاد"):
-                send_pinterest_image(message, "boys aesthetic portrait", "صور ولاد")
+            if _clean_command in ("صورة", "صور", "صوره", "صورة_بنات", "صور_بنات", "بنات", "صورة_ولاد", "صور_ولاد", "ولاد", "اولاد"):
+                send_random_bot_image(message)
                 return
 
             if message.chat.type in ("group", "supergroup") and _clean_command == "كات":
@@ -7897,12 +7742,8 @@ def handle_command(
                 target
             )
 
-    if command in ("صورة", "صوره", "صور"):
-        return send_pinterest_image(message, "beautiful aesthetic photography", "صور")
-    if command == "صورة_بنات":
-        return send_pinterest_image(message, "girls aesthetic portrait", "صور بنات")
-    if command == "صورة_ولاد":
-        return send_pinterest_image(message, "boys aesthetic portrait", "صور ولاد")
+    if command in ("صورة", "صوره", "صور", "صورة_بنات", "صورة_ولاد"):
+        return send_random_bot_image(message)
 
     # الردود التلقائية
     if command == "اضف_رد":
@@ -8297,10 +8138,14 @@ def handle_command(
         "فككتم"
     ):
 
-        t = get_target(
-            message,
-            argument
-        )
+        duration = None
+        target_argument = argument
+        if command == "كتم" and argument:
+            normalized_duration = argument.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")).strip()
+            if normalized_duration.isdigit():
+                duration = int(normalized_duration)
+                target_argument = ""
+        t = get_target(message, target_argument)
 
         if not t:
 
@@ -8329,10 +8174,7 @@ def handle_command(
         try:
 
             if command == "كتم":
-                mute_user(
-                    chat_id,
-                    t.id
-                )
+                mute_user(chat_id, t.id, duration)
             else:
                 unmute_user(
                     chat_id,
@@ -8347,7 +8189,7 @@ def handle_command(
             )
 
             if command == "كتم":
-                base = "تم كتم " + full_name(t) + "."
+                base = "تم كتم " + full_name(t) + (f" لمدة {duration} دقيقة." if duration else ".")
                 caption = base + "✨"
                 entities = _custom_entity_for_suffix(base, MUTE_UI_EMOJI, "✨")
                 mk = types.InlineKeyboardMarkup()
@@ -9105,6 +8947,18 @@ def callbacks(call):
                 bot.send_message(chat_id, "أرسل الآن فيديو الترحيب الجديد.")
                 return
 
+            if action == "private_welcome_photo":
+                admin_pending[uid] = "private_welcome_photo"
+                bot.answer_callback_query(call.id)
+                bot.send_message(chat_id, "أرسل الآن صورة الترحيب الخاص.")
+                return
+
+            if action == "private_welcome_video":
+                admin_pending[uid] = "private_welcome_video"
+                bot.answer_callback_query(call.id)
+                bot.send_message(chat_id, "أرسل الآن فيديو الترحيب الخاص.")
+                return
+
             if action == "welcome_enable":
                 set_global_setting("welcome_enabled", "1")
                 bot.answer_callback_query(call.id, "تم تفعيل الترحيب")
@@ -9307,7 +9161,12 @@ def callbacks(call):
             finalize_reply_without_button(call, token)
             return
 
-        # صور Pinterest
+        if call.data == "saved_images:random":
+            bot.answer_callback_query(call.id)
+            send_random_bot_image(call.message)
+            return
+
+        # صور Pinterest (متروكة للتوافق مع الرسائل القديمة، لكن لا تُستخدم من قائمة الصور الجديدة)
         if call.data.startswith("pinterest:"):
             key = call.data.split(":", 1)[1]
             queries = {
@@ -9316,10 +9175,8 @@ def callbacks(call):
                 "boys": "boys aesthetic portrait",
                 "random": "aesthetic photography"
             }
-            query = queries.get(key, queries["random"])
-            labels = {"general": "صور", "girls": "صور بنات", "boys": "صور ولاد", "random": "صورة"}
-            bot.answer_callback_query(call.id, "جاري جلب الصورة")
-            send_pinterest_image(call.message, query, labels.get(key, "صورة"))
+            bot.answer_callback_query(call.id)
+            send_random_bot_image(call.message)
             return
 
         if call.data == "music_help":
@@ -9895,8 +9752,8 @@ def protection_engine(message):
 def setup_default_force_channel():
     # قناة الاشتراك الإجباري الافتراضية هي قناة السورس.
     try:
-        # إزالة الإعداد القديم الذي كان يشير لقناة LeaDeR_E فقط، ثم ضمان وجود السورس.
-        cursor.execute("DELETE FROM force_sub_channels WHERE username=? OR url=?", ("@LeaDeR_E", "https://t.me/LeaDeR_E"))
+        # إزالة الإعداد القديم الذي كان يشير لقناة Ssource_MaX فقط، ثم ضمان وجود السورس.
+        cursor.execute("DELETE FROM force_sub_channels WHERE username=? OR url=?", ("@Ssource_MaX", "https://t.me/Ssource_MaX"))
         db.commit()
         cursor.execute("SELECT id FROM force_sub_channels WHERE username=? OR url=? LIMIT 1", ("@Ssource_• 𝗥 𝗲 𝗲 𝗺", SOURCE_CHANNEL_URL))
         if not cursor.fetchone():
@@ -10005,7 +9862,7 @@ def run_bot_forever():
             ):
                 conflict_count += 1
                 print(
-                    "[البوت يعمل جيدا. "
+                    "البوت يعمل جيدا يليدرر ياروحي "
                 )
                 time.sleep(min(30, 5 + conflict_count * 3))
             else:
