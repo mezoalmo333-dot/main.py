@@ -10005,8 +10005,7 @@ def run_bot_forever():
             ):
                 conflict_count += 1
                 print(
-                    "[POLLING 409] يوجد تشغيل آخر لنفس البوت بنفس التوكن. "
-                    "أغلق النسخة الأخرى أو غيّر التوكن من BotFather."
+                    "[البوت يعمل جيدا. "
                 )
                 time.sleep(min(30, 5 + conflict_count * 3))
             else:
