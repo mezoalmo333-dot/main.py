@@ -31,7 +31,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "8878742478:AAH8GEda3431adptHolRakROxX_VAZea7
 
 DEVELOPER_ID = 8037399518
 BOT_USERNAME = "Reem_Bot"
-BOT_DISPLAY_NAME = "• 𝗥 𝗲 𝗲 𝗺"
+BOT_DISPLAY_NAME = "• 𝗥 𝗲 𝗲 𝗺 ✨ "
 DB_NAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "protection_bot.db")
 
 # =========================================================
@@ -66,13 +66,15 @@ def configure_bot_profile():
     except Exception as e:
         print("[Bot Description Error]", repr(e))
     try:
+        # Telegram BotCommand يقبل أسماء أوامر لاتينية صغيرة فقط.
+        # الأوامر العربية تظل مدعومة داخل الرسائل، لكنها لا تُسجَّل هنا.
         commands = [
             types.BotCommand("start", "بدء البوت"),
             types.BotCommand("help", "طريقة استعمال البوت"),
-            types.BotCommand("يوت", "البحث عن أغنية من يوتيوب"),
-            types.BotCommand("صور", "إرسال صور"),
-            types.BotCommand("همسه", "همسة وأذكار للمجموعة"),
-            types.BotCommand("محفظة", "كشف محفظة TON"),
+            types.BotCommand("youtube", "البحث عن أغنية من يوتيوب"),
+            types.BotCommand("photos", "إرسال الصور"),
+            types.BotCommand("whisper", "الهمسة"),
+            types.BotCommand("wallet", "كشف محفظة TON"),
         ]
         bot.set_my_commands(commands)
     except Exception as e:
@@ -1235,7 +1237,7 @@ def button(
 # =========================================================
 CURRENCY_CACHE_SECONDS = 5
 CURRENCY_HTTP_TIMEOUT = 7
-LOVELY_UPDATES_URL = "https://t.me/Ssource_MaX"
+LOVELY_UPDATES_URL = "https://t.me/LeaDeR_E"
 
 _currency_cache = {
     "usd_egp": None,
@@ -1380,6 +1382,20 @@ def get_currency_rates():
             )
 
     return None, None
+
+
+def get_live_usdt_usd():
+    """يجلب سعر USDT مقابل الدولار بشكل حي تقريبًا."""
+    try:
+        data = _http_json(
+            "https://api.coingecko.com/api/v3/simple/price"
+            "?ids=tether&vs_currencies=usd"
+        )
+        rate = float((data.get("tether") or {}).get("usd"))
+        return rate if rate > 0 else None
+    except Exception as e:
+        print("[USDT/USD Error]", e)
+        return None
 
 
 def get_live_usdt_egp():
@@ -2131,6 +2147,33 @@ def enforce_group_lock(message):
 # =========================================================
 # المستخدمون
 # =========================================================
+def track_private_user(message, notify=False):
+    """يسجل مستخدمي الخاص ويُخطر المطور مرة واحدة عند أول ظهور."""
+    if not message or not message.from_user or message.chat.type != "private":
+        return False
+    u = message.from_user
+    ts = now()
+    cursor.execute("SELECT user_id, first_seen FROM bot_private_users WHERE user_id=?", (u.id,))
+    row = cursor.fetchone()
+    cursor.execute("""
+        INSERT INTO bot_private_users(user_id, first_name, last_name, username, first_seen, last_seen)
+        VALUES(?,?,?,?,?,?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            first_name=excluded.first_name,
+            last_name=excluded.last_name,
+            username=excluded.username,
+            last_seen=excluded.last_seen
+    """, (u.id, u.first_name or "", u.last_name or "", u.username or "", ts, ts))
+    db.commit()
+    if notify and row is None and u.id != DEVELOPER_ID:
+        try:
+            uname = f"@{html.escape(u.username)}" if u.username else "بدون يوزر"
+            name = html.escape(full_name(u))
+            bot.send_message(DEVELOPER_ID, f"👤 مستخدم جديد فتح البوت\n\n{name}\n{uname}\nID: <code>{u.id}</code>")
+        except Exception as exc:
+            print("[Private User Notify Error]", repr(exc))
+    return True
+
 def register_user(message, count_message=True):
     if (
         not message.from_user
@@ -3321,6 +3364,41 @@ def send_settings(message):
 # =========================================================
 # قائمة الأوامر التفاعلية
 # =========================================================
+# كل أمر له زر مستقل. callback_data قصيرة حتى لا تتجاوز حد Telegram.
+COMMAND_BUTTONS = {
+    "groups": ["رتبتي", "ا", "معلومات", "احصائيات", "السجل", "الاعدادات", "الساعة", "المالك", "المطور"],
+    "protection": ["منع كلمة ...", "الغاء منع كلمة ...", "قائمة الكلمات", "قفل الروابط", "قفل التكرار", "قفل حماية الجدد"],
+    "locks": ["قفل الروابط", "قفل الصور", "قفل الفيديو", "قفل الملفات", "قفل الملصقات", "قفل الصوت", "قفل المتحركات", "قفل التكرار", "قفل حماية الجدد", "قفل الجروب", "قفل الكل"],
+    "unlocks": ["فتح الروابط", "فتح الصور", "فتح الفيديو", "فتح الملفات", "فتح الملصقات", "فتح الصوت", "فتح المتحركات", "فتح التكرار", "فتح حماية الجدد", "فتح الجروب", "فتح الكل"],
+    "admin": ["حظر", "فك حظر", "حظر عام", "طرد", "كتم", "فك كتم", "تحذير", "تحذيرات", "مسح التحذيرات", "الغاء تحذير", "قفل الجروب", "فتح الجروب"],
+    "ranks": ["رفع مطور اساسي", "تنزيل مطور اساسي", "رفع مساعد المالك", "تنزيل مساعد المالك", "رفع مدير", "تنزيل مدير", "رفع ادمن", "تنزيل ادمن", "رفع مشرف", "تنزيل مشرف", "رفع حيوان", "تنزيل حيوان"],
+    "replies": ["اضف رد", "حذف رد", "قائمة الردود"],
+    "ton": ["1ton", "1تون", "تحليل تون", "تحليل دولار", "محفظة"],
+    "music": ["يوت", "يوتيوب", "اغنية", "تنزيل {اسم الأغنية}"],
+    "images": ["صور"],
+    "games": ["انشاء", "حسابي", "فلوسي", "حول {رقم}", "راتب", "بخشيش", "كنز", "استثمار {رقم}", "مضاربه {رقم}", "حظ {رقم}", "سرقه", "هجوم {رقم}", "قرض", "تسديد القرض", "قروضي", "متجر البنك", "شراء {اسم}", "بيع {اسم}", "مشترياتي", "بيع مشترياتي", "زواج {مهر}", "زواجي", "طالق", "توب الفلوس", "توب الحراميه", "توب المتزوجين", "قائمه اكشطها", "اكشط {رقم}", "ميدالياتي"],
+}
+
+COMMAND_BUTTONS["all"] = list(dict.fromkeys(
+    command for category, commands in COMMAND_BUTTONS.items() if category != "all" for command in commands
+))
+
+COMMAND_CATEGORY_TITLES = {
+    "groups": "أوامر المجموعات", "protection": "أوامر الحماية", "locks": "أوامر القفل",
+    "unlocks": "أوامر الفتح", "admin": "أوامر الإدارة", "ranks": "أوامر الرتب",
+    "replies": "أوامر الردود", "ton": "أوامر TON", "music": "أوامر الأغاني",
+    "images": "أوامر الصور", "games": "أوامر الألعاب",
+}
+
+def command_buttons_markup(category, viewer_id=None, chat_id=None):
+    items = COMMAND_BUTTONS.get(category, [])
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    token = str(viewer_id or 0)
+    for index, label in enumerate(items):
+        markup.row(button(label, callback_data=f"cmdpick:{token}:{category}:{index}", style="primary", icon_custom_emoji_id=CE_COMMANDS))
+    markup.row(button("↩️ رجوع للأوامر", callback_data=f"cmdcat:{token}:home", style="danger", icon_custom_emoji_id=CE_COMMANDS))
+    return markup
+
 def command_category_allowed(category, viewer_id, chat_id=None):
     """يحدد الأقسام التي يحق للمستخدم رؤيتها، والمالك له كامل الأقسام."""
     if not viewer_id:
@@ -3339,11 +3417,27 @@ def command_category_allowed(category, viewer_id, chat_id=None):
 
 
 def commands_menu_markup(viewer_id=None, chat_id=None):
-    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup = types.InlineKeyboardMarkup(row_width=2)
     token = str(viewer_id or 0)
     markup.row(
         button("أوامر المجموعات", callback_data=f"cmdcat:{token}:groups", style="primary", icon_custom_emoji_id=CE_COMMANDS),
         button("أوامر الحماية", callback_data=f"cmdcat:{token}:protection", style="primary", icon_custom_emoji_id=CE_PROTECTION)
+    )
+    markup.row(
+        button("أوامر الإدارة", callback_data=f"cmdcat:{token}:admin", style="primary", icon_custom_emoji_id=CE_COMMANDS),
+        button("أوامر الرتب", callback_data=f"cmdcat:{token}:ranks", style="primary", icon_custom_emoji_id=CE_COMMANDS)
+    )
+    markup.row(
+        button("أوامر القفل", callback_data=f"cmdcat:{token}:locks", style="primary", icon_custom_emoji_id=CE_PROTECTION),
+        button("أوامر الفتح", callback_data=f"cmdcat:{token}:unlocks", style="primary", icon_custom_emoji_id=CE_PROTECTION)
+    )
+    markup.row(
+        button("أوامر TON", callback_data=f"cmdcat:{token}:ton", style="primary", icon_custom_emoji_id=CE_TON_WALLET),
+        button("أوامر الأغاني", callback_data=f"cmdcat:{token}:music", style="primary", icon_custom_emoji_id=CE_COMMANDS)
+    )
+    markup.row(
+        button("أوامر الصور", callback_data=f"cmdcat:{token}:images", style="primary", icon_custom_emoji_id=CE_COMMANDS),
+        button("أوامر الردود", callback_data=f"cmdcat:{token}:replies", style="primary", icon_custom_emoji_id=CE_COMMANDS)
     )
     markup.row(button("أوامر الألعاب", callback_data=f"cmdcat:{token}:games", style="primary", icon_custom_emoji_id="5215420556089776398"))
     markup.row(button("كل الأوامر", callback_data=f"cmdcat:{token}:all", style="primary", icon_custom_emoji_id=CE_COMMANDS))
@@ -4050,7 +4144,7 @@ def continue_reply_setup(message):
         if step == "button_url":
             url = (message.text or "").strip()
             if not url or not re.match(r"^(?:https?|tg)://\S+$", url, re.I):
-                bot.reply_to(message, "❌ أرسل رابطًا صالحًا مثل: <code>https://t.me/Ssource_MaX</code>")
+                bot.reply_to(message, "❌ أرسل رابطًا صالحًا مثل: <code>https://t.me/LeaDeR_E</code>")
                 return True
             p["button_url"] = url
             p["step"] = "button_emoji"
@@ -5851,7 +5945,10 @@ def send_cat_question(message):
 # كشف محافظ TON Keeper / TON
 # =========================================================
 TON_ADDRESS_RE = re.compile(r"\b(?:EQ|UQ|kQ|0Q)[A-Za-z0-9_\-]{40,70}\b")
-TON_DOMAIN_RE = re.compile(r"(?<![A-Za-z0-9_])(?:@)?[A-Za-z0-9_\-]{2,64}(?:\.ton)?\b", re.IGNORECASE)
+TON_DOMAIN_RE = re.compile(r"(?<![A-Za-z0-9_])(?:@)?[A-Za-z0-9_\-]{2,64}(?:\.ton)\b", re.IGNORECASE)
+FRAGMENT_URL_RE = re.compile(r"https?://(?:www\.)?fragment\.com/(?:username|user)/([A-Za-z0-9_\-]{2,64})", re.IGNORECASE)
+FRAGMENT_WALLET_RE = re.compile(r"\b(?:EQ|UQ|kQ|0Q)[A-Za-z0-9_\-]{40,70}\b")
+
 
 def _resolve_ton_name(name):
     """محاولة تحويل اسم TON DNS مثل name.ton إلى عنوان محفظة."""
@@ -5869,11 +5966,65 @@ def _resolve_ton_name(name):
         print('[TON DNS Error]', repr(exc))
     return None
 
+
+def _resolve_fragment_username(username):
+    """محاولة استخراج المحفظة العامة المرتبطة بيوزر Fragment من الصفحة العامة.
+    لا تستخدم جلسات دخول أو بيانات خاصة، وتعيد None إذا لم تكن العلاقة ظاهرة للعامة.
+    """
+    clean = (username or '').strip().lstrip('@')
+    clean = re.sub(r'^https?://(?:www\.)?fragment\.com/(?:username|user)/', '', clean, flags=re.I)
+    clean = clean.strip('/').split('?', 1)[0].split('#', 1)[0]
+    if not re.fullmatch(r'[A-Za-z0-9_\-]{2,64}', clean):
+        return None
+    url = 'https://fragment.com/username/' + urllib.parse.quote(clean, safe='')
+    req = urllib.request.Request(
+        url,
+        headers={
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/140 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.8'
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12) as response:
+            raw = response.read().decode('utf-8', 'ignore')
+        # نفضّل عنوانًا قريبًا من مفاتيح wallet/owner/recipient إن ظهر في الصفحة.
+        patterns = [
+            r'(?is)(?:owner|wallet|address|recipient)[^\n]{0,500}?(EQ|UQ|kQ|0Q)[A-Za-z0-9_\-]{40,70}',
+            r'(?is)(EQ|UQ|kQ|0Q)[A-Za-z0-9_\-]{40,70}[^\n]{0,500}?(?:owner|wallet|address|recipient)',
+        ]
+        for pattern in patterns:
+            m = re.search(pattern, raw)
+            if m:
+                candidate = m.group(0)
+                wallet = FRAGMENT_WALLET_RE.search(candidate)
+                if wallet:
+                    return wallet.group(0)
+        # fallback: أول عنوان ظاهر في الصفحة إذا كانت الصفحة صفحة username فعلًا.
+        matches = FRAGMENT_WALLET_RE.findall(raw)
+        if matches:
+            return matches[0]
+    except Exception as exc:
+        print('[Fragment Resolve Error]', repr(exc))
+    return None
+
+
+def _extract_fragment_username(text):
+    text = (text or '').strip()
+    m = FRAGMENT_URL_RE.search(text)
+    if m:
+        return m.group(1)
+    if re.fullmatch(r'@[A-Za-z0-9_\-]{2,64}', text):
+        return text[1:]
+    return None
+
+
 def _tonapi_get(path):
     url = "https://tonapi.io/v2" + path
     req = urllib.request.Request(url, headers={"User-Agent": "• 𝗥 𝗲 𝗲 𝗺Bot/1.0"})
     with urllib.request.urlopen(req, timeout=15) as response:
         return json.loads(response.read().decode("utf-8"))
+
 
 def _ton_format(value):
     try:
@@ -5881,45 +6032,89 @@ def _ton_format(value):
     except Exception:
         return "0.000"
 
-def send_ton_wallet_info(message, address):
+
+def _ton_jetton_lines(address):
+    lines = []
+    try:
+        data = _tonapi_get("/accounts/" + urllib.parse.quote(address, safe="") + "/jettons")
+        jettons = data.get("balances", []) or []
+        for item in jettons[:50]:
+            jetton = item.get("jetton") or {}
+            symbol = jetton.get("symbol") or jetton.get("name") or "JETTON"
+            decimals = int(jetton.get("decimals") or 0)
+            raw_balance = item.get("balance", 0)
+            try:
+                amount = float(raw_balance) / (10 ** decimals) if decimals else float(raw_balance)
+                amount_text = f"{amount:,.6f}".rstrip('0').rstrip('.')
+            except Exception:
+                amount_text = str(raw_balance)
+            lines.append(f"• <b>{html.escape(str(symbol))}</b>: <code>{html.escape(amount_text)}</code>")
+    except Exception as exc:
+        print('[TON Jettons Error]', repr(exc))
+    return lines
+
+
+def send_ton_wallet_info(message, address, fragment_username=None):
     try:
         account = _tonapi_get("/accounts/" + urllib.parse.quote(address, safe=""))
         balance_ton = float(account.get("balance", 0)) / 1_000_000_000
+
         usd_rate = None
+        usd_egp = None
+        usdt_egp = None
         try:
-            market = get_ton_market_data()
-            usd_rate = market[0]
+            usd_egp, usd_ton = get_currency_rates()
+            usd_rate = usd_ton
+        except Exception as exc:
+            print('[TON Currency Rate Error]', repr(exc))
+            usd_egp = usd_egp or None
+        try:
+            usdt_egp = get_live_usdt_egp()
         except Exception:
-            pass
-        usd_text = "غير متاح"
-        if usd_rate:
-            usd_text = f"{balance_ton * float(usd_rate):,.2f} USD"
+            usdt_egp = None
+
+        usdt_usd = get_live_usdt_usd()
+        usdt_value = (balance_ton * float(usd_rate) / usdt_usd) if usd_rate and usdt_usd else (balance_ton * float(usd_rate) if usd_rate else None)
+        egp_value = balance_ton * float(usd_rate) * float(usd_egp) if usd_rate and usd_egp else (usdt_value * float(usdt_egp) if usdt_value and usdt_egp else None)
+
         lines = [
-            f"{tg_emoji(CE_TON_WALLET, '💼')} <b>Wallet :</b> <code>{html.escape(address)}</code>",
+            f"{tg_emoji(CE_TON_WALLET, '💼')} <b>محفظة TON</b>",
+            f"<code>{html.escape(address)}</code>",
             "—————«•»—————",
-            f"{tg_emoji(CE_TON_BALANCE, '💎')} <b>Balance :</b> {_ton_format(balance_ton)} TON ≈ {usd_text}",
-            "—————«•»—————"
+            f"{tg_emoji(CE_TON_BALANCE, '💎')} <b>الرصيد:</b> <code>{_ton_format(balance_ton)} TON</code>",
+            f"{tg_emoji(CE_TON_BALANCE, '💎')} <b>بالـ USDT:</b> <code>{usdt_value:,.2f} USDT</code>" if usdt_value is not None else "بالـ USDT: <code>غير متاح</code>",
+            f"{tg_emoji(CE_TON_BALANCE, '💎')} <b>بالمصري:</b> <code>{egp_value:,.2f} EGP</code>" if egp_value is not None else "بالمصري: <code>غير متاح</code>",
         ]
-        jettons = []
-        try:
-            jettons = _tonapi_get("/accounts/" + urllib.parse.quote(address, safe="") + "/jettons") .get("balances", [])
-        except Exception:
-            jettons = []
-        users = []
-        try:
-            nft_items = _tonapi_get("/accounts/" + urllib.parse.quote(address, safe="") + "/nfts?limit=100").get("nft_items", [])
-        except Exception:
-            nft_items = []
-        lines.append(f"{tg_emoji(CE_TON_USERS, '👤')} <b>Users (0) :</b>\nلا توجد حسابات مرتبطة ظاهرة في البيانات العامة.")
-        lines.append("—————«•»—————")
-        lines.append(f"{tg_emoji(CE_TON_NFT, '🎁')} <b>NFT :</b>")
-        if nft_items:
-            for item in nft_items[:30]:
-                meta = item.get("metadata", {}) or {}
-                name = meta.get("name") or item.get("address") or "NFT"
-                lines.append("- " + html.escape(str(name)))
+        if fragment_username:
+            lines.extend([
+                "—————«•»—————",
+                f"{tg_emoji(CE_TON_USERS, '👤')} <b>Fragment:</b> <code>@{html.escape(fragment_username)}</code>",
+                "<b>الحالة:</b> مرتبط بعنوان المحفظة الظاهر للعامة.",
+            ])
+
+        jetton_lines = _ton_jetton_lines(address)
+        lines.extend(["—————«•»—————", f"{tg_emoji(CE_TON_USERS, '👤')} <b>الأصول المرتبطة:</b>"])
+        if jetton_lines:
+            lines.extend(jetton_lines)
         else:
-            lines.append("لا توجد هدايا أو NFT ظاهرة.")
+            lines.append("لا توجد Jettons ظاهرة في البيانات العامة.")
+
+        nft_items = []
+        try:
+            nft_items = _tonapi_get("/accounts/" + urllib.parse.quote(address, safe="") + "/nfts?limit=100").get("nft_items", []) or []
+        except Exception as exc:
+            print('[TON NFT Error]', repr(exc))
+        lines.append("—————«•»—————")
+        lines.append(f"{tg_emoji(CE_TON_NFT, '🎁')} <b>NFT / الهدايا:</b> <code>{len(nft_items)}</code>")
+        for item in nft_items[:30]:
+            meta = item.get("metadata", {}) or {}
+            name = meta.get("name") or item.get("address") or "NFT"
+            lines.append("• " + html.escape(str(name)))
+
+        # لا يمكن إثبات كل حسابات Telegram/Fragment الخاصة بالمالك من عنوان TON وحده.
+        lines.append("—————«•»—————")
+        lines.append("<b>ملاحظة:</b> المعروض هنا هو الأصول والروابط العامة التي يمكن قراءتها من TON/Fragment؛ الحسابات الخاصة أو الروابط غير العامة لا يمكن استخراجها بدون صلاحية صاحبها.")
+
         markup = types.InlineKeyboardMarkup()
         btn = transparent_url_button("• 𝗥 𝗲 𝗲 𝗺", "https://t.me/Ssource_MaX", emoji_id=CE_TON_DEV_BUTTON)
         if btn:
@@ -6394,6 +6589,29 @@ def group_welcome_caption(message, user):
     return build_welcome_text(user, private=False, chat=message.chat)
 
 
+def get_welcome_group_link(chat_id):
+    """إرجاع رابط المجموعة التي انضم إليها العضو للزر الموجود في رسالة الترحيب."""
+    try:
+        chat = bot.get_chat(chat_id)
+        username = getattr(chat, "username", None)
+        if username:
+            return f"https://t.me/{username}"
+
+        invite_link = getattr(chat, "invite_link", None)
+        if invite_link:
+            return invite_link
+
+        # للمجموعات الخاصة: لا يمكن إنشاء/استخراج رابط دعوة إلا بصلاحية مناسبة.
+        if bot_is_admin(chat_id):
+            try:
+                return bot.export_chat_invite_link(chat_id)
+            except Exception as e:
+                print("[Welcome Group Link Export]", repr(e))
+    except Exception as e:
+        print("[Welcome Group Link]", repr(e))
+    return None
+
+
 @bot.message_handler(
     content_types=["new_chat_members"]
 )
@@ -6445,6 +6663,14 @@ def new_members_handler(message):
         )
         markup.row(button("‹ Help ›", callback_data=f"cmdcat:{u.id}:all", style="primary", icon_custom_emoji_id=CE_COMMANDS))
         markup.row(button("‹ Add Me To Your Group ›", url=ADD_TO_GROUP_URL, style="primary", icon_custom_emoji_id="5462943653116792628"))
+
+        # رابط نفس المجموعة التي انضم إليها العضو.
+        group_link = get_welcome_group_link(message.chat.id)
+        if group_link:
+            markup.row(button("‹ رابط الجروب ›", url=group_link, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
+
+        # زر مستقل للمطور أسفل زر رابط المجموعة.
+        markup.row(button("‹ مطور البوت ›", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
 
         try:
             sent = send_welcome_with_bot_photo(
@@ -7075,6 +7301,26 @@ def main_handler(message):
             if message.chat.type in ("group", "supergroup") and _clean_command == "كات":
                 send_cat_question(message)
                 return
+
+        # كشف محفظة TON أو يوزر Fragment مباشرة داخل الجروب، بدون الحاجة لأمر.
+        if message.text and message.chat.type in ("group", "supergroup"):
+            wallet_text = message.text.strip()
+            wallet_match = TON_ADDRESS_RE.search(wallet_text)
+            if wallet_match:
+                if send_ton_wallet_info(message, wallet_match.group(0)):
+                    return
+            fragment_user = _extract_fragment_username(wallet_text)
+            if fragment_user:
+                resolved_fragment_wallet = _resolve_fragment_username(fragment_user)
+                if resolved_fragment_wallet:
+                    if send_ton_wallet_info(message, resolved_fragment_wallet, fragment_username=fragment_user):
+                        return
+            if 'fragment.com/username/' in wallet_text.lower() or 'fragment.com/user/' in wallet_text.lower():
+                fragment_user = _extract_fragment_username(wallet_text)
+                if fragment_user:
+                    resolved_fragment_wallet = _resolve_fragment_username(fragment_user)
+                    if resolved_fragment_wallet and send_ton_wallet_info(message, resolved_fragment_wallet, fragment_username=fragment_user):
+                        return
 
         if automatic_currency_conversion(message):
             return
@@ -9195,6 +9441,34 @@ def callbacks(call):
             )
             return
 
+        if call.data.startswith("cmdpick:"):
+            parts = call.data.split(":", 3)
+            if len(parts) != 4:
+                return
+            owner_id = int(parts[1]) if parts[1].isdigit() else 0
+            category = parts[2]
+            try:
+                index = int(parts[3])
+            except Exception:
+                return
+            if owner_id and owner_id != uid:
+                bot.answer_callback_query(call.id, "هذه الأوامر ليست لك.", show_alert=True)
+                return
+            items = COMMAND_BUTTONS.get(category, [])
+            if index < 0 or index >= len(items):
+                bot.answer_callback_query(call.id, "الأمر غير موجود.", show_alert=True)
+                return
+            command_label = items[index]
+            bot.answer_callback_query(call.id, command_label[:180])
+            bot.send_message(
+                chat_id,
+                f"<b>{html.escape(COMMAND_CATEGORY_TITLES.get(category, 'الأمر'))}</b>\n\n"
+                f"<code>{html.escape(command_label)}</code>\n\n"
+                "اضغط الزر لاختيار الأمر، ثم نفّذه بالصيغة الظاهرة في المجموعة.",
+                reply_markup=command_buttons_markup(category, uid, chat_id)
+            )
+            return
+
         if call.data.startswith("cmdcat:"):
             parts = call.data.split(":", 2)
             if len(parts) != 3:
@@ -9219,7 +9493,13 @@ def callbacks(call):
             else:
                 text = command_category_text(category, owner_id, chat_id)
             if category == "images":
-                bot.edit_message_text(text, chat_id, call.message.message_id, reply_markup=image_menu_markup())
+                bot.edit_message_text(text, chat_id, call.message.message_id, reply_markup=command_buttons_markup("images", owner_id, chat_id))
+                return
+            if category in COMMAND_BUTTONS:
+                bot.edit_message_text(
+                    text, chat_id, call.message.message_id,
+                    reply_markup=command_buttons_markup(category, owner_id, chat_id)
+                )
                 return
             bot.edit_message_text(
                 text, chat_id, call.message.message_id,
@@ -9752,8 +10032,8 @@ def protection_engine(message):
 def setup_default_force_channel():
     # قناة الاشتراك الإجباري الافتراضية هي قناة السورس.
     try:
-        # إزالة الإعداد القديم الذي كان يشير لقناة Ssource_MaX فقط، ثم ضمان وجود السورس.
-        cursor.execute("DELETE FROM force_sub_channels WHERE username=? OR url=?", ("@Ssource_MaX", "https://t.me/Ssource_MaX"))
+        # إزالة الإعداد القديم الذي كان يشير لقناة LeaDeR_E فقط، ثم ضمان وجود السورس.
+        cursor.execute("DELETE FROM force_sub_channels WHERE username=? OR url=?", ("@LeaDeR_E", "https://t.me/LeaDeR_E"))
         db.commit()
         cursor.execute("SELECT id FROM force_sub_channels WHERE username=? OR url=? LIMIT 1", ("@Ssource_• 𝗥 𝗲 𝗲 𝗺", SOURCE_CHANNEL_URL))
         if not cursor.fetchone():
@@ -9862,7 +10142,7 @@ def run_bot_forever():
             ):
                 conflict_count += 1
                 print(
-                    "البوت يعمل جيدا يليدرر ياروحي "
+                    "البوت يعمل جيدايليدررياروحي."
                 )
                 time.sleep(min(30, 5 + conflict_count * 3))
             else:
