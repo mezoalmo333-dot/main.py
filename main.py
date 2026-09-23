@@ -2139,45 +2139,146 @@ def send_star_price(message, amount):
     return True
 
 
-def _gift_star_count_from_page(url):
+def _gift_links_from_text(text):
+    if not text:
+        return []
+    pattern = r'(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me)/(?:nft|gift|giftcode)/[^\s<>()]+'
+    links=[]
+    for raw in re.findall(pattern, text, re.I):
+        raw=raw.rstrip('.,!?؛،)]}')
+        if not raw.lower().startswith(('http://','https://')):
+            raw='https://'+raw
+        if raw not in links:
+            links.append(raw)
+    return links
+
+
+def _gift_slug_from_url(url):
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US,en;q=0.8"})
-        with urllib.request.urlopen(req, timeout=15) as response:
-            raw = response.read().decode("utf-8", "ignore")
-        raw = raw.replace("\\/", "/")
-        patterns = [
-            r'"star_count"\s*:\s*(\d+)',
-            r'"starCount"\s*:\s*(\d+)',
-            r'"stars"\s*:\s*(\d+)',
-            r'(?<![A-Za-z])([0-9]{1,6})\s*Stars',
-            r'Stars[^0-9]{0,40}([0-9]{1,6})'
-        ]
-        for pat in patterns:
-            m = re.search(pat, raw, re.I)
-            if m:
-                return int(m.group(1))
-    except Exception as e:
-        print("[Gift Page Error]", repr(e))
+        parsed=urllib.parse.urlparse(url)
+        parts=[urllib.parse.unquote(x) for x in parsed.path.split('/') if x]
+        if len(parts)>=2 and parts[0].lower() in ('nft','gift','giftcode'):
+            return parts[1]
+    except Exception:
+        pass
     return None
 
 
-def send_gift_price(message, url):
-    stars = _gift_star_count_from_page(url)
+def _fetch_text(url):
+    try:
+        req=urllib.request.Request(url,headers={
+            'User-Agent':'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/140 Safari/537.36',
+            'Accept-Language':'en-US,en;q=0.9,ar;q=0.8',
+            'Accept':'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8'
+        })
+        with urllib.request.urlopen(req,timeout=12) as response:
+            return response.read().decode('utf-8','ignore')
+    except Exception as e:
+        print('[Gift Fetch Error]',url,repr(e))
+        return ''
+
+
+def _gift_numeric_values(raw):
+    values=[]
+    if not raw:
+        return values
+    raw=raw.replace('\\/','/')
+    patterns=[
+        r'"(?:star_count|starCount|stars|price_stars|priceStars|resale_price_stars)"\s*:\s*([0-9]{1,8}(?:\.[0-9]+)?)',
+        r'"(?:price_ton|priceTon|ton_price|tonPrice|resale_price_ton)"\s*:\s*([0-9]{1,8}(?:\.[0-9]+)?)',
+        r'(?<![A-Za-z0-9])([0-9]{1,8}(?:\.[0-9]+)?)\s*(?:⭐|Stars?|STARS?)',
+        r'(?:Stars?|STARS?|⭐)[^0-9]{0,50}([0-9]{1,8}(?:\.[0-9]+)?)',
+        r'(?<![A-Za-z0-9])([0-9]{1,8}(?:\.[0-9]+)?)\s*(?:TON|Ton|ton)\b',
+        r'(?:TON|Ton|ton)[^0-9]{0,50}([0-9]{1,8}(?:\.[0-9]+)?)'
+    ]
+    for i,pat in enumerate(patterns):
+        for m in re.finditer(pat,raw,re.I):
+            try:
+                value=float(m.group(1))
+                if value<=0: continue
+                kind='stars' if i<4 else 'ton'
+                values.append((kind,value))
+            except Exception:
+                pass
+    return values
+
+
+def _gift_data_from_pages(url):
+    slug=_gift_slug_from_url(url)
+    pages=[url]
+    if slug:
+        pages += [f'https://fragment.com/gift/{slug}', f'https://nft.fragment.com/gift/{slug}']
+    stars=None
+    ton=None
+    raw_all=''
+    for page in pages:
+        raw=_fetch_text(page)
+        if not raw: continue
+        raw_all += '\n'+raw
+        vals=_gift_numeric_values(raw)
+        for kind,val in vals:
+            if kind=='stars' and stars is None:
+                stars=int(val) if float(val).is_integer() else val
+            elif kind=='ton' and ton is None:
+                ton=val
+        if stars is not None and ton is not None:
+            break
     if stars is None:
-        bot.reply_to(message, "‹ الهدية ›\nتعذر قراءة سعر الهدية من الرابط حاليًا.")
+        # بعض صفحات الهدايا تعرض السعر في النص بصيغة مثل 999 Stars.
+        m=re.search(r'([0-9]{1,8})\s*(?:⭐|Stars?)\b',raw_all,re.I)
+        if m:
+            stars=int(m.group(1))
+    if ton is None:
+        m=re.search(r'([0-9]{1,8}(?:\.[0-9]+)?)\s*TON\b',raw_all,re.I)
+        if m:
+            ton=float(m.group(1))
+    name=None
+    if slug:
+        name=slug.rsplit('-',1)[0].replace('-',' ')
+        if re.search(r'-\d+$',slug):
+            name=name.title()
+    return {'slug':slug,'name':name,'stars':stars,'ton':ton}
+
+
+def _gift_star_count_from_page(url):
+    data=_gift_data_from_pages(url)
+    return data.get('stars')
+
+
+def send_gift_price(message, url):
+    data=_gift_data_from_pages(url)
+    stars=data.get('stars')
+    gift_ton=data.get('ton')
+    if stars is None and gift_ton is None:
+        bot.reply_to(message,
+            '‹ الهدية ›\nتعذر قراءة بيانات الهدية من الرابط. تأكد أن الرابط بصيغة t.me/nft/اسم-رقم.')
         return True
-    prices = _star_prices(float(stars))
-    if not prices:
-        bot.reply_to(message, "‹ الهدية ›\nتم العثور على سعر الهدية بالنجوم، لكن أسعار العملات غير متاحة الآن.")
-        return True
-    egp, usd, ton = prices
-    text = (
-        f"<blockquote>• EGP  {format_money(egp, 2)} جنيه</blockquote>\n"
-        f"<blockquote>• UsT  {format_money(usd, 4)} USDT</blockquote>\n"
-        f"<blockquote>• ToN  {format_money(ton, 4)} TON</blockquote>\n"
-        f"<blockquote>• StaRS  {stars}</blockquote>"
-    )
-    bot.reply_to(message, text, parse_mode="HTML")
+
+    usd_egp, ton_usd=get_currency_rates()
+    egp=None
+    usd=None
+    ton_from_stars=None
+    if stars is not None and usd_egp and ton_usd and usd_egp>0 and ton_usd>0:
+        egp,usd,ton_from_stars=_star_prices(float(stars))
+
+    lines=['<blockquote>‹ تحليل الهدية ›</blockquote>']
+    if data.get('name'):
+        lines.append(f"<blockquote>• Gift  {html.escape(data['name'])}</blockquote>")
+    if stars is not None:
+        lines.append(f"<blockquote>• StaRS  {format_money(stars, 0)} ⭐</blockquote>")
+        if egp is not None:
+            lines.append(f"<blockquote>• EGP  {format_money(egp, 2)} جنيه</blockquote>")
+            lines.append(f"<blockquote>• UsT  {format_money(usd, 4)} USDT</blockquote>")
+            lines.append(f"<blockquote>• ToN  {format_money(ton_from_stars, 4)} TON</blockquote>")
+    if gift_ton is not None:
+        lines.append(f"<blockquote>• Market  {format_money(gift_ton, 4)} TON</blockquote>")
+        if usd_egp and ton_usd and usd_egp>0 and ton_usd>0:
+            market_usd=gift_ton*ton_usd
+            market_egp=market_usd*usd_egp
+            lines.append(f"<blockquote>• Market USD  {format_money(market_usd, 4)} USDT</blockquote>")
+            lines.append(f"<blockquote>• Market EGP  {format_money(market_egp, 2)} جنيه</blockquote>")
+
+    bot.reply_to(message,'\n'.join(lines),parse_mode='HTML')
     return True
 
 
@@ -2235,9 +2336,9 @@ def handle_extra_utilities(message):
     if star_amount is not None:
         return send_star_price(message, star_amount)
 
-    # هدايا Telegram: NFT وغير NFT بروابط Telegram العامة.
-    if re.search(r"https?://t\.me/(?:nft|gift|giftcode|collectible)/", raw, re.I):
-        return send_gift_price(message, raw)
+    gift_links = _gift_links_from_text(raw)
+    if gift_links:
+        return send_gift_price(message, gift_links[0])
     return False
 
 
@@ -3812,6 +3913,7 @@ COMMAND_BUTTONS = {
     "ton": ["1ton", "1تون", "يوستيد", "usdt", "تحليل تون", "تحليل دولار", "محفظة"],
     "music": ["يوت", "يوتيوب", "اغنية", "تنزيل", "تنزيل + رابط الفيديو"],
     "images": ["صور", "زخرف"],
+    "extra": ["الاذان", "الأذان", "همسه", "همسة", "رفع مشرف"],
 }
 
 COMMAND_BUTTONS["all"] = list(dict.fromkeys(
@@ -3822,7 +3924,7 @@ COMMAND_CATEGORY_TITLES = {
     "groups": "أوامر المجموعات", "protection": "أوامر الحماية", "locks": "أوامر القفل",
     "unlocks": "أوامر الفتح", "admin": "أوامر الإدارة", "ranks": "أوامر الرتب",
     "replies": "أوامر الردود", "ton": "أوامر TON", "music": "أوامر الأغاني",
-    "images": "أوامر الصور",
+    "images": "أوامر الصور", "extra": "أوامر إضافية",
 }
 
 def command_buttons_markup(category, viewer_id=None, chat_id=None):
@@ -3835,7 +3937,7 @@ def command_category_allowed(category, viewer_id, chat_id=None):
     """يحدد الأقسام التي يحق للمستخدم رؤيتها، والمالك له كامل الأقسام."""
     if not viewer_id:
         return category in ("groups", "music", "images", "replies", "ton")
-    rank = get_rank(chat_id, viewer_id) if chat_id is not None and chat_id < 0 else "member"
+    rank = get_group_access_rank(chat_id, viewer_id) if chat_id is not None and chat_id < 0 else "member"
     level = rank_level(rank)
     if is_developer(viewer_id):
         return True
@@ -3871,6 +3973,7 @@ def commands_menu_markup(viewer_id=None, chat_id=None):
         button("أوامر الصور", callback_data=f"cmdcat:{token}:images", style="primary"),
         button("أوامر الردود", callback_data=f"cmdcat:{token}:replies", style="primary")
     )
+    markup.row(button("أوامر إضافية", callback_data=f"cmdcat:{token}:extra", style="primary"))
     markup.row(button("كل الأوامر", callback_data=f"cmdcat:{token}:all", style="primary"))
     return markup
 
@@ -3888,6 +3991,7 @@ def command_category_text(category, viewer_id=None, chat_id=None):
         "ton": "<b>أوامر TON</b>\n<code>1ton</code>\n<code>1تون</code>\n<code>يوستيد</code>\n<code>usdt</code>\n<code>تحليل تون</code>\n<code>تحليل دولار</code>\n<code>محفظة</code>",
         "music": "<b>أوامر الأغاني والتنزيل</b>\n<code>يوت</code>\n<code>يوتيوب</code>\n<code>اغنية</code>\n<code>تنزيل</code>\n<code>تنزيل + رابط الفيديو</code>",
         "images": "<b>أوامر الصور والزخرفة</b>\n<code>صور</code>\n<code>زخرف</code>",
+        "extra": "<b>أوامر إضافية</b>\n<code>الاذان</code>\n<code>الأذان</code>\n<code>همسه</code>\n<code>همسة</code>\n<code>رفع مشرف</code>",
     }
     return texts.get(category, "<b>قائمة أوامر البوت</b>")
 
@@ -3951,7 +4055,8 @@ def commands_text(owner=None, viewer_id=None, chat_id=None):
         "<code>كشف</code> • <code>رتبتي</code> • <code>معلومات</code> • <code>البوت</code> • <code>المطور</code> • <code>المالك</code>",
         "<code>الساعة</code> • <code>صور</code> • <code>زخرف</code> • <code>تنزيل</code>",
         "<code>اضف رد</code> • <code>حذف رد</code> • <code>قائمة الردود</code>",
-        "<code>همسة</code> • <code>همسة مستخدم</code> — همسة سرية للمستلم",
+        "<code>همسة</code> • <code>همسة مستخدم</code> • <code>همسه</code> — أوامر الهمسة",
+        "<code>الاذان</code> • <code>الأذان</code> — عرض مواقيت الصلاة",
         "<code>بوتات</code> • <code>البوتات</code> — عرض البوتات المكتشفة",
         "<code>1تون</code> • <code>1يوستيد</code> • <code>150ن</code> • <code>150نجمه</code>",
         "<code>محفظة</code> — كشف محفظة TON أو اسم TON/Fragment",
@@ -8174,6 +8279,28 @@ def fetch_cairo_prayer_times():
         print("[Adhan API Error]", repr(e))
         return {}
 
+def send_manual_adhan(message):
+    timings = fetch_cairo_prayer_times()
+    if not timings:
+        bot.reply_to(message, "❌ تعذر جلب مواقيت الصلاة حاليًا.")
+        return True
+    prayers = (("Fajr", "الفجر"), ("Dhuhr", "الظهر"), ("Asr", "العصر"), ("Maghrib", "المغرب"), ("Isha", "العشاء"))
+    lines = ["<b>مواقيت الصلاة اليوم</b>", ""]
+    copy_lines = []
+    for key, arabic in prayers:
+        raw = str(timings.get(key, ""))[:5]
+        if raw:
+            shown = _time_12h(raw)
+            lines.append(f"• <b>{arabic}</b> › <code>{shown}</code>")
+            copy_lines.append(f"{arabic}: {shown}")
+    text = "\n".join(lines)
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    if copy_lines:
+        markup.add(copy_text_button("نسخ مواقيت الصلاة", "\n".join(copy_lines)))
+    bot.reply_to(message, text, parse_mode="HTML", reply_markup=markup)
+    return True
+
+
 def send_adhan_notifications():
     rows = _get_thread_db().execute("SELECT chat_id FROM settings WHERE setting='adhan_enabled' AND value='1'").fetchall()
     if not rows:
@@ -8194,7 +8321,14 @@ def send_adhan_notifications():
             if val == current:
                 e=tg_emoji(ADHAN_EMOJI,"•")
                 try:
-                    bot.send_message(chat_id, f"{e} حان الآن أذان {arabic} — {_time_12h(val)} {e}", parse_mode="HTML")
+                    bot.send_message(
+                        chat_id,
+                        f"{e} <b>تنبيه الأذان</b> {e}\n\n"
+                        f"🔔 حان الآن موعد أذان <b>{arabic}</b>\n"
+                        f"الوقت: <code>{_time_12h(val)}</code>\n\n"
+                        f"نسأل الله أن يتقبل منا ومنكم.",
+                        parse_mode="HTML"
+                    )
                 except Exception as exc:
                     print("[Adhan Send Error]", repr(exc))
                 break
@@ -8427,7 +8561,7 @@ def main_handler(message):
                 broadcast_pending[message.from_user.id] = {"message": message, "scope": pending_scope, "buttons": []}
                 bot.send_message(
                     message.chat.id,
-                    "تم تجهيز رسالة الإذاعة. هل تريد إضافة زر شفاف؟",
+                    "تم تجهيز رسالة الإذاعة. يمكنك إضافة أكثر من زر شفاف، حتى 30 زرًا.",
                     reply_markup=broadcast_button_choice(message.from_user.id)
                 )
                 return
@@ -9426,6 +9560,9 @@ def handle_command(
         mk.add(button(dev_name[:48], url=dev_url, style="danger"))
         bot.reply_to(message, text, reply_markup=mk)
         return True
+
+    if command in ("الاذان", "الأذان", "اذان", "أذان"):
+        return send_manual_adhan(message)
 
     # أوامر الرتب
     if command in (
