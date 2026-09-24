@@ -800,6 +800,33 @@ CREATE TABLE IF NOT EXISTS known_bots (
 """)
 db.commit()
 
+# تتبع الحسابات المحذوفة والمستخدمين المكتومين لإظهار قوائمهم داخل المجموعة.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS deleted_users (
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    first_name TEXT DEFAULT '',
+    last_name TEXT DEFAULT '',
+    username TEXT DEFAULT '',
+    discovered_at INTEGER DEFAULT 0,
+    PRIMARY KEY(chat_id,user_id)
+)
+""")
+db.commit()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS muted_users (
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    first_name TEXT DEFAULT '',
+    last_name TEXT DEFAULT '',
+    username TEXT DEFAULT '',
+    muted_at INTEGER DEFAULT 0,
+    PRIMARY KEY(chat_id,user_id)
+)
+""")
+db.commit()
+
 # منع تكرار إشعار المطور عند أول استخدام للخاص.
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS developer_notifications (
@@ -1131,6 +1158,14 @@ def command_parts(message):
         if clean_text(second) == "التحذيرات":
             command = "مسح_التحذيرات"
             argument = argument[len(second):].strip()
+
+    if command in ("المحذوف", "المحذوفين", "المحذوفه", "المحذوفة"):
+        command = "المحذوف"
+        argument = ""
+
+    if command in ("المكتومين", "المكتوم", "المكتومه", "المكتومة"):
+        command = "المكتومين"
+        argument = ""
 
     if command == "الغاء" and argument:
         second = argument.split(maxsplit=1)[0]
@@ -2245,7 +2280,7 @@ def handle_extra_utilities(message):
         return send_star_price(message, star_amount)
 
     # هدايا Telegram: NFT وغير NFT بروابط Telegram العامة.
-    if re.search(r"https?://(?:t\.me|telegram\.me)/(?:nft|gift|giftcode)/", raw, re.I):
+    if re.search(r"https?://(?:t\.me|telegram\.me)/(?:nft|gift|giftcode|gifts?)/", raw, re.I):
         return send_gift_price(message, raw)
     return False
 
@@ -3414,6 +3449,16 @@ def mute_user(chat_id, user_id, minutes=None):
     if minutes and minutes > 0:
         kwargs["until_date"] = int(time.time()) + int(minutes) * 60
     bot.restrict_chat_member(**kwargs)
+    try:
+        member = bot.get_chat_member(chat_id, user_id)
+        remember_muted_user(chat_id, getattr(member, 'user', None))
+    except Exception:
+        try:
+            row=_get_thread_db().execute("SELECT first_name,last_name,username FROM group_users WHERE chat_id=? AND user_id=?",(int(chat_id),int(user_id))).fetchone()
+            if row:
+                remember_muted_user(chat_id, types.User(id=int(user_id), is_bot=False, first_name=row['first_name'] or 'مستخدم', last_name=row['last_name'] or None, username=row['username'] or None))
+        except Exception:
+            pass
 
 
 def unmute_user(chat_id, user_id):
@@ -3434,6 +3479,7 @@ def unmute_user(chat_id, user_id):
             can_add_web_page_previews=True
         )
     )
+    forget_muted_user(chat_id, user_id)
 
 
 def ban_user(chat_id, user_id):
@@ -3796,7 +3842,7 @@ def send_settings(message):
 # =========================================================
 # كل أمر له زر مستقل. callback_data قصيرة حتى لا تتجاوز حد Telegram.
 COMMAND_BUTTONS = {
-    "groups": ["رتبتي", "ا", "معلومات", "احصائيات", "السجل", "الاعدادات", "الساعة", "المالك", "المطور"],
+    "groups": ["رتبتي", "ا", "معلومات", "احصائيات", "السجل", "الاعدادات", "الساعة", "المالك", "المطور", "يوت"],
     "protection": ["منع كلمة ...", "الغاء منع كلمة ...", "قائمة الكلمات", "قفل الروابط", "قفل التكرار", "قفل حماية الجدد"],
     "locks": ["قفل الروابط", "قفل الصور", "قفل الفيديو", "قفل الملفات", "قفل الملصقات", "قفل الصوت", "قفل المتحركات", "قفل التكرار", "قفل حماية الجدد", "قفل الجروب", "قفل الكل"],
     "unlocks": ["فتح الروابط", "فتح الصور", "فتح الفيديو", "فتح الملفات", "فتح الملصقات", "فتح الصوت", "فتح المتحركات", "فتح التكرار", "فتح حماية الجدد", "فتح الجروب", "فتح الكل"],
@@ -3804,7 +3850,6 @@ COMMAND_BUTTONS = {
     "ranks": ["رفع مطور اساسي", "تنزيل مطور اساسي", "رفع مساعد المالك", "تنزيل مساعد المالك", "رفع مدير", "تنزيل مدير", "رفع ادمن", "تنزيل ادمن", "رفع مشرف", "تنزيل مشرف", "رفع حيوان", "تنزيل حيوان"],
     "replies": ["اضف رد", "حذف رد", "قائمة الردود"],
     "ton": ["1ton", "1تون", "يوستيد", "usdt", "تحليل تون", "تحليل دولار", "محفظة"],
-    "music": ["يوت", "يوتيوب", "اغنية", "تنزيل", "تنزيل + رابط الفيديو"],
     "images": ["صور", "زخرف"],
 }
 
@@ -3815,7 +3860,7 @@ COMMAND_BUTTONS["all"] = list(dict.fromkeys(
 COMMAND_CATEGORY_TITLES = {
     "groups": "أوامر المجموعات", "protection": "أوامر الحماية", "locks": "أوامر القفل",
     "unlocks": "أوامر الفتح", "admin": "أوامر الإدارة", "ranks": "أوامر الرتب",
-    "replies": "أوامر الردود", "ton": "أوامر TON", "music": "أوامر الأغاني",
+    "replies": "أوامر الردود", "ton": "أوامر TON",
     "images": "أوامر الصور",
 }
 
@@ -3828,12 +3873,12 @@ def command_buttons_markup(category, viewer_id=None, chat_id=None):
 def command_category_allowed(category, viewer_id, chat_id=None):
     """يحدد الأقسام التي يحق للمستخدم رؤيتها، والمالك له كامل الأقسام."""
     if not viewer_id:
-        return category in ("groups", "music", "images", "replies", "ton")
+        return category in ("groups", "images", "replies", "ton")
     rank = get_rank(chat_id, viewer_id) if chat_id is not None and chat_id < 0 else "member"
     level = rank_level(rank)
     if is_developer(viewer_id):
         return True
-    if category in ("groups", "music", "images", "replies", "ton"):
+    if category in ("groups", "images", "replies", "ton"):
         return True
     if category in ("locks", "unlocks", "protection", "admin"):
         return level >= rank_level("admin")
@@ -3859,11 +3904,11 @@ def commands_menu_markup(viewer_id=None, chat_id=None):
     )
     markup.row(
         button("أوامر TON", callback_data=f"cmdcat:{token}:ton", style="primary"),
-        button("أوامر الأغاني", callback_data=f"cmdcat:{token}:music", style="primary")
+        button("أوامر الصور", callback_data=f"cmdcat:{token}:images", style="primary")
     )
     markup.row(
-        button("أوامر الصور", callback_data=f"cmdcat:{token}:images", style="primary"),
-        button("أوامر الردود", callback_data=f"cmdcat:{token}:replies", style="primary")
+        button("أوامر الردود", callback_data=f"cmdcat:{token}:replies", style="primary"),
+        button("المكتومين", callback_data=f"cmdpick:{token}:المكتومين", style="primary")
     )
     markup.row(button("كل الأوامر", callback_data=f"cmdcat:{token}:all", style="primary"))
     return markup
@@ -3874,13 +3919,12 @@ def command_category_text(category, viewer_id=None, chat_id=None):
     texts = {
         "locks": "<b>أوامر القفل</b>\n<code>قفل الروابط</code>\n<code>قفل الصور</code>\n<code>قفل الفيديو</code>\n<code>قفل الملفات</code>\n<code>قفل الملصقات</code>\n<code>قفل الصوت</code>\n<code>قفل المتحركات</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>\n<code>قفل الجروب</code>\n<code>قفل الكل</code>",
         "unlocks": "<b>أوامر الفتح</b>\n<code>فتح الروابط</code>\n<code>فتح الصور</code>\n<code>فتح الفيديو</code>\n<code>فتح الملفات</code>\n<code>فتح الملصقات</code>\n<code>فتح الصوت</code>\n<code>فتح المتحركات</code>\n<code>فتح التكرار</code>\n<code>فتح حماية الجدد</code>\n<code>فتح الجروب</code>\n<code>فتح الكل</code>",
-        "groups": "<b>أوامر المجموعات</b>\n<code>رتبتي</code>\n<code>ا</code>\n<code>معلومات</code>\n<code>احصائيات</code>\n<code>السجل</code>\n<code>الاعدادات</code>\n<code>الساعة</code>\n<code>المالك</code>\n<code>المطور</code>",
-        "admin": "<b>أوامر الإدارة</b>\n<code>حظر</code>\n<code>فك حظر</code>\n<code>حظر عام</code>\n<code>طرد</code>\n<code>طرد البوتات</code>\n<code>كتم</code>\n<code>فك كتم</code>\n<code>تحذير</code>\n<code>تحذيرات</code>\n<code>مسح التحذيرات</code>\n<code>الغاء تحذير</code>\n<code>مسح</code>\n<code>حذف</code>\n<code>منشن</code>\n<code>تاك</code>\n<code>منشن الجميع</code>\n<code>منشن المشرفين</code>\n<code>قفل الجروب</code>\n<code>فتح الجروب</code>",
+        "groups": "<b>أوامر المجموعات</b>\n<code>رتبتي</code>\n<code>ا</code>\n<code>معلومات</code>\n<code>احصائيات</code>\n<code>السجل</code>\n<code>الاعدادات</code>\n<code>الساعة</code>\n<code>المالك</code>\n<code>المطور</code>\n<code>يوت اسم الأغنية</code>",
+        "admin": "<b>أوامر الإدارة</b>\n<code>حظر</code>\n<code>فك حظر</code>\n<code>حظر عام</code>\n<code>طرد</code>\n<code>طرد البوتات</code>\n<code>كتم</code>\n<code>فك كتم</code>\n<code>تحذير</code>\n<code>تحذيرات</code>\n<code>مسح التحذيرات</code>\n<code>الغاء تحذير</code>\n<code>المحذوف</code>\n<code>المكتومين</code>\n<code>مسح</code>\n<code>حذف</code>\n<code>منشن</code>\n<code>تاك</code>\n<code>منشن الجميع</code>\n<code>منشن المشرفين</code>\n<code>قفل الجروب</code>\n<code>فتح الجروب</code>",
         "protection": "<b>أوامر الحماية</b>\n<code>منع كلمة</code>\n<code>الغاء منع كلمة</code>\n<code>قائمة الكلمات</code>\n<code>قفل الروابط</code>\n<code>قفل التكرار</code>\n<code>قفل حماية الجدد</code>",
         "ranks": "<b>أوامر الرتب</b>\n<code>رفع مساعد المالك</code>\n<code>تنزيل مساعد المالك</code>\n<code>رفع مدير</code>\n<code>تنزيل مدير</code>\n<code>رفع ادمن</code>\n<code>تنزيل ادمن</code>\n<code>رفع مشرف</code>\n<code>تنزيل مشرف</code>\n<code>رفع حيوان</code>\n<code>تنزيل حيوان</code>",
         "replies": "<b>أوامر الردود</b>\n<code>اضف رد</code>\n<code>حذف رد</code>\n<code>قائمة الردود</code>",
         "ton": "<b>أوامر TON</b>\n<code>1ton</code>\n<code>1تون</code>\n<code>يوستيد</code>\n<code>usdt</code>\n<code>تحليل تون</code>\n<code>تحليل دولار</code>\n<code>محفظة</code>",
-        "music": "<b>أوامر الأغاني والتنزيل</b>\n<code>يوت</code>\n<code>يوتيوب</code>\n<code>اغنية</code>\n<code>تنزيل</code>\n<code>تنزيل + رابط الفيديو</code>",
         "images": "<b>أوامر الصور والزخرفة</b>\n<code>صور</code>\n<code>زخرف</code>",
     }
     return texts.get(category, "<b>قائمة أوامر البوت</b>")
@@ -7306,16 +7350,7 @@ def handle_start_keyboard_button(message):
         return True
 
     if raw == "يوت":
-        bot.send_message(message.chat.id, "أرسل الآن اسم الأغنية، وسأبحث عنها في YouTube وأرسلها صوتية.")
-        music_pending[message.from_user.id] = message.chat.id
-        return True
-
-    if raw in ("تحميل", "غنائي"):
-        bot.send_message(message.chat.id, "استخدم: <code>يوت اسم الأغنية</code>")
-        return True
-
-    if raw == "غنائي":
-        bot.send_message(message.chat.id, "استخدم: <code>تنزيل اسم الأغنية</code> للبحث عن الأغنية وتنزيلها.")
+        bot.send_message(message.chat.id, "اكتب: يوت اسم الأغنية")
         return True
 
     if raw == "تويت":
@@ -7436,6 +7471,28 @@ def enforce_global_ban(message):
 # =========================================================
 # الأعضاء الجدد
 # =========================================================
+
+@bot.chat_member_handler()
+def user_chat_membership_handler(message):
+    try:
+        chat=message.chat
+        if chat.type not in ("group","supergroup"):
+            return
+        new_member=getattr(message,'new_chat_member',None)
+        user=getattr(new_member,'user',None)
+        if not user:
+            return
+        if getattr(user,'is_deleted',False) or (getattr(user,'first_name',None) == 'Deleted Account' and not getattr(user,'username',None)):
+            remember_deleted_user(chat.id,user)
+        status=getattr(new_member,'status','')
+        permissions=getattr(new_member,'permissions',None)
+        if status=='restricted' and permissions is not None and getattr(permissions,'can_send_messages',True) is False:
+            remember_muted_user(chat.id,user)
+        elif status in ('member','administrator','creator','left','kicked'):
+            forget_muted_user(chat.id,user.id)
+    except Exception as e:
+        print('[Chat Member Tracking Error]',repr(e))
+
 
 @bot.my_chat_member_handler()
 def bot_chat_membership_handler(message):
@@ -8161,9 +8218,9 @@ def channel_post_handler(message):
         )
         db.commit()
         command, argument = command_parts(message)
-        if command in ("يوت", "يوتيوب"):
+        if command == "يوت":
             if not argument:
-                bot.send_message(message.chat.id, "استخدم الأمر هكذا: <code>يوت {اسم الأغنية}</code>")
+                bot.send_message(message.chat.id, "اكتب اسم الأغنية بعد يوت.")
             else:
                 send_youtube_song(message, argument)
     except Exception as e:
@@ -8558,22 +8615,14 @@ def main_handler(message):
                 handle_social_download(message, _command_arg)
                 return
 
-            if _clean_command in ("يوت", "يوتيوب", "اغنية", "أغنية"):
+            if _clean_command == "يوت":
                 if message.chat.type in ("group", "supergroup", "channel", "private"):
-                    handle_music_command(message, _command_arg)
+                    query = (_command_arg or "").strip()
+                    if query:
+                        send_youtube_song(message, query)
+                    else:
+                        bot.reply_to(message, "اكتب اسم الأغنية بعد يوت.")
                     return
-
-            # "تنزيل" مستخدم أيضًا للرتب؛ إذا لم يكن المقصود "تنزيل مشرف/ادمن..."
-            # اعتبره أمر تنزيل أغنية.
-            if _clean_command == "تنزيل":
-                _rank_words = {
-                    "مشرف", "ادمن", "ادمـن", "مدير",
-                    "حيوان", "مساعد المالك", "مطور اساسي", "مطور أساسي"
-                }
-                if clean_text(_command_arg) not in {clean_text(x) for x in _rank_words}:
-                    if message.chat.type in ("group", "supergroup", "channel", "private"):
-                        handle_music_command(message, _command_arg)
-                        return
 
             if _clean_command in ("صورة", "صور", "صوره"):
                 send_random_bot_image(message)
@@ -8704,12 +8753,6 @@ def handle_private(message):
                 bot.send_message(message.chat.id, "‹ تم إرسال همستك السرية إلى المجموعة. ›")
             return
 
-    if message.text and message.from_user and message.from_user.id in music_pending:
-        pending_chat = music_pending.pop(message.from_user.id, None)
-        if pending_chat == message.chat.id and not message.text.startswith("/"):
-            handle_music_command(message, message.text.strip())
-            return
-
     if handle_start_keyboard_button(message):
         return
 
@@ -8730,18 +8773,13 @@ def handle_private(message):
         send_commands_menu(message)
         return
 
-    if command in ("يوت", "يوتيوب", "اغنية", "أغنية"):
-        handle_music_command(message, argument)
+    if command == "يوت":
+        query = (argument or "").strip()
+        if query:
+            send_youtube_song(message, query)
+        else:
+            bot.reply_to(message, "اكتب اسم الأغنية بعد يوت.")
         return
-
-    if command == "تنزيل":
-        _rank_words = {
-            "مشرف", "ادمن", "ادمـن", "مدير",
-            "حيوان", "مساعد المالك", "مطور اساسي", "مطور أساسي"
-        }
-        if clean_text(argument) not in {clean_text(x) for x in _rank_words}:
-            handle_music_command(message, argument)
-            return
 
     if command in ("ايدي", "ا"):
         return show_member_card(message)
@@ -9130,6 +9168,12 @@ def handle_command(
         bot.reply_to(message, return_command)
         return True
 
+    if command == "المحذوف":
+        return send_deleted_users(message)
+
+    if command == "المكتومين":
+        return send_muted_users(message)
+
     if command in ("طرد_البوتات", "طردالبوتات"):
         if not admin_required(message):
             return True
@@ -9466,7 +9510,9 @@ def handle_command(
         "منشن_الجميع",
         "تثبيت",
         "مسح_التحذيرات",
-        "الغاء_تحذير"
+        "الغاء_تحذير",
+        "المحذوف",
+        "المكتومين"
     }
 
     if (
@@ -9483,7 +9529,11 @@ def handle_command(
     if command in ("قفل_التوجيه", "فتح_التوجيه"):
         state=command=="قفل_التوجيه"
         set_group_setting(chat_id,"forwarding",state)
-        bot.reply_to(message,"تم قفل التوجيه." if state else "تم فتح التوجيه.")
+        if state:
+            set_lock_action(chat_id,"forwarding",get_lock_action(chat_id,"forwarding"))
+            bot.reply_to(message,"تم قفل التوجيه. اختر الإجراء:",reply_markup=lock_action_markup("forwarding"))
+        else:
+            bot.reply_to(message,"تم فتح التوجيه.")
         return True
     if command in ("قفل_الترحيب", "فتح_الترحيب"):
         state=command=="فتح_الترحيب"
@@ -10026,16 +10076,12 @@ def handle_command(
                 command == "قفل"
             )
 
-            bot.reply_to(
-                message,
-                (
-                    "🔒 تم قفل الكل."
-                    if command == "قفل"
-                    else
-                    "🔓 تم فتح الكل."
-                )
-            )
-
+            if command == "قفل":
+                for _setting in ("links","photos","videos","documents","stickers","audio","animations","repeat_messages","swearing"):
+                    set_lock_action(chat_id, _setting, get_lock_action(chat_id, _setting))
+                bot.reply_to(message, "تم قفل الكل. اختر طريقة التعامل مع المخالفة:", reply_markup=lock_action_markup("all"))
+            else:
+                bot.reply_to(message, "تم فتح الكل.")
             return True
 
         if a in (
@@ -10063,24 +10109,18 @@ def handle_command(
 
         if a in lm:
 
+            setting_name = lm[a]
             set_group_setting(
                 chat_id,
-                lm[a],
+                setting_name,
                 command == "قفل"
             )
 
-            bot.reply_to(
-                message,
-                (
-                    "🔒 تم قفل "
-                    if command == "قفل"
-                    else
-                    "🔓 تم فتح "
-                )
-                + argument
-                + "."
-            )
-
+            if command == "قفل":
+                set_lock_action(chat_id, setting_name, get_lock_action(chat_id, setting_name))
+                bot.reply_to(message, "تم قفل " + argument + ". اختر طريقة التعامل مع المخالفة:", reply_markup=lock_action_markup(setting_name))
+            else:
+                bot.reply_to(message, "تم فتح " + argument + ".")
             return True
 
     # منع كلمة
@@ -11194,6 +11234,45 @@ def callbacks(call):
 
             return
 
+        # اختيار إجراء القفل: حذف / كتم / طرد.
+        if call.data.startswith("lockaction:"):
+            parts = call.data.split(":")
+            if len(parts) != 3:
+                return
+            setting, action = parts[1], parts[2]
+            if setting == "all":
+                for _setting in ("links","photos","videos","documents","stickers","audio","animations","repeat_messages","swearing"):
+                    set_lock_action(chat_id, _setting, action)
+            else:
+                set_lock_action(chat_id, setting, action)
+            bot.answer_callback_query(call.id, "تم اختيار: " + {"delete":"حذف","mute":"كتم","kick":"طرد"}.get(action, action))
+            try:
+                bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=lock_action_markup(setting))
+            except Exception:
+                pass
+            return
+
+        if call.data.startswith("clear_muted:"):
+            if not can_use_moderation(get_rank(chat_id, uid)):
+                bot.answer_callback_query(call.id, "هذا للأدمن فما فوق.", show_alert=True)
+                return
+            cleared=0
+            rows=_get_thread_db().execute("SELECT user_id FROM muted_users WHERE chat_id=?",(chat_id,)).fetchall()
+            for r in rows:
+                try:
+                    unmute_user(chat_id,int(r['user_id']))
+                    cleared += 1
+                except Exception:
+                    pass
+            _get_thread_db().execute("DELETE FROM muted_users WHERE chat_id=?",(chat_id,))
+            _get_thread_db().commit()
+            bot.answer_callback_query(call.id, f"تم فك كتم {cleared} عضو")
+            try:
+                bot.edit_message_text("تم مسح المكتومين وفك القيود عن القابلين للفك.", chat_id, call.message.message_id)
+            except Exception:
+                pass
+            return
+
         # قفل الكل / فتح الكل
         if call.data in (
             "lock_all",
@@ -11289,6 +11368,123 @@ def callbacks(call):
 
 
 # =========================================================
+# إجراء القفل: حذف / كتم / طرد
+# =========================================================
+def lock_action_markup(setting):
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    for action, label, style in (("delete", "حذف", "primary"), ("mute", "كتم", "primary"), ("kick", "طرد", "primary")):
+        markup.add(button(label, callback_data=f"lockaction:{setting}:{action}", style=style))
+    return markup
+
+def set_lock_action(chat_id, setting, action):
+    if action not in ("delete", "mute", "kick"):
+        action = "delete"
+    set_setting(chat_id, f"lock_action_{setting}", action)
+    return action
+
+def get_lock_action(chat_id, setting):
+    action = get_setting(chat_id, f"lock_action_{setting}", "delete")
+    return action if action in ("delete", "mute", "kick") else "delete"
+
+def remember_muted_user(chat_id, user):
+    if not user:
+        return
+    try:
+        conn=_get_thread_db()
+        conn.execute("INSERT INTO muted_users(chat_id,user_id,first_name,last_name,username,muted_at) VALUES(?,?,?,?,?,?) ON CONFLICT(chat_id,user_id) DO UPDATE SET first_name=excluded.first_name,last_name=excluded.last_name,username=excluded.username,muted_at=excluded.muted_at",
+                     (int(chat_id), int(user.id), getattr(user,'first_name','') or '', getattr(user,'last_name','') or '', getattr(user,'username','') or '', now()))
+        conn.commit()
+    except Exception as e:
+        print('[Muted User Track Error]', repr(e))
+
+def forget_muted_user(chat_id, user_id):
+    try:
+        conn=_get_thread_db()
+        conn.execute('DELETE FROM muted_users WHERE chat_id=? AND user_id=?',(int(chat_id),int(user_id)))
+        conn.commit()
+    except Exception as e:
+        print('[Muted User Delete Error]', repr(e))
+
+def remember_deleted_user(chat_id, user):
+    if not user:
+        return
+    try:
+        conn=_get_thread_db()
+        conn.execute("INSERT INTO deleted_users(chat_id,user_id,first_name,last_name,username,discovered_at) VALUES(?,?,?,?,?,?) ON CONFLICT(chat_id,user_id) DO UPDATE SET first_name=excluded.first_name,last_name=excluded.last_name,username=excluded.username,discovered_at=excluded.discovered_at",
+                     (int(chat_id), int(user.id), getattr(user,'first_name','') or 'Deleted Account', getattr(user,'last_name','') or '', getattr(user,'username','') or '', now()))
+        conn.commit()
+    except Exception as e:
+        print('[Deleted User Track Error]', repr(e))
+
+def apply_lock_action(message, setting):
+    action = get_lock_action(message.chat.id, setting)
+    uid = getattr(getattr(message, 'from_user', None), 'id', None)
+    try:
+        if action == 'mute' and uid:
+            mute_user(message.chat.id, uid)
+            remember_muted_user(message.chat.id, message.from_user)
+        elif action == 'kick' and uid:
+            kick_user(message.chat.id, uid)
+            forget_muted_user(message.chat.id, uid)
+        else:
+            delete_message_safe(message)
+    except Exception as e:
+        print('[Lock Action Error]', setting, action, repr(e))
+        # الحذف هو fallback الآمن إذا تعذر الكتم/الطرد.
+        delete_message_safe(message)
+    return True
+
+def send_deleted_users(message):
+    if message.chat.type not in ('group','supergroup'):
+        bot.reply_to(message, '‹ المحذوف ›\nهذا الأمر يعمل داخل المجموعات فقط.')
+        return True
+    rows=_get_thread_db().execute('SELECT * FROM deleted_users WHERE chat_id=? ORDER BY discovered_at DESC',(int(message.chat.id),)).fetchall()
+    if not rows:
+        bot.reply_to(message, '‹ المحذوف ›\nلا توجد حسابات محذوفة تم اكتشافها في هذه المجموعة.')
+        return True
+    lines=['<b>المستخدمون المحذوفة حساباتهم</b>','']
+    for i,r in enumerate(rows,1):
+        name=html.escape((r['first_name'] or 'Deleted Account') + ((' '+r['last_name']) if r['last_name'] else ''))
+        username='@'+html.escape(r['username']) if r['username'] else 'بدون يوزر'
+        lines.append(f'{i}. <a href="tg://user?id={int(r["user_id"])}">{name}</a> | {username} | <code>{int(r["user_id"])}</code>')
+    bot.reply_to(message,'\n'.join(lines),parse_mode='HTML')
+    return True
+
+def send_muted_users(message):
+    if message.chat.type not in ('group','supergroup'):
+        bot.reply_to(message, '‹ المكتومين ›\nهذا الأمر يعمل داخل المجموعات فقط.')
+        return True
+    # نعيد التحقق من الحالات الحالية للأعضاء المعروفين، ثم نعرض المكتومين الفعليين.
+    known=_get_thread_db().execute('SELECT user_id,first_name,last_name,username FROM group_users WHERE chat_id=?',(int(message.chat.id),)).fetchall()
+    found={}
+    for r in known:
+        uid=int(r['user_id'])
+        try:
+            member=bot.get_chat_member(message.chat.id,uid)
+            status=getattr(member,'status','')
+            can_send=getattr(getattr(member,'permissions',None),'can_send_messages',None)
+            if status=='restricted' and can_send is False:
+                found[uid]=(r['first_name'] or 'مستخدم',r['last_name'] or '',r['username'] or '')
+        except Exception:
+            pass
+    # أضف ما سجله البوت سابقًا حتى لو لم يعد Telegram يسمح بالاستعلام عنه.
+    for r in _get_thread_db().execute('SELECT user_id,first_name,last_name,username FROM muted_users WHERE chat_id=?',(int(message.chat.id),)).fetchall():
+        found[int(r['user_id'])]=(r['first_name'] or 'مستخدم',r['last_name'] or '',r['username'] or '')
+    if not found:
+        bot.reply_to(message,'‹ المكتومين ›\nلا يوجد أعضاء مكتومون حاليًا.')
+        return True
+    lines=['<b>المكتومين في المجموعة</b>','']
+    for i,(uid,data) in enumerate(found.items(),1):
+        first,last,username=data
+        name=html.escape((first or 'مستخدم') + ((' '+last) if last else ''))
+        user='@'+html.escape(username) if username else 'بدون يوزر'
+        lines.append(f'{i}. <a href="tg://user?id={uid}">{name}</a> | {user} | <code>{uid}</code>')
+    markup=types.InlineKeyboardMarkup(row_width=1)
+    markup.add(button('مسح المكتومين',callback_data=f'clear_muted:{message.chat.id}',style='primary'))
+    bot.reply_to(message,'\n'.join(lines),reply_markup=markup,parse_mode='HTML')
+    return True
+
+# =========================================================
 # محرك الحماية
 # =========================================================
 def protection_engine(message):
@@ -11326,16 +11522,16 @@ def protection_engine(message):
     # قفل السب: قائمة أساسية قابلة للتوسعة من خلال نظام منع الكلمات.
     swear_words = ("كس", "شرموط", "عرص", "خول", "متناك", "قحبة", "زب", "نيك")
     if row["swearing"] and any(w in clean_text(text) for w in swear_words):
-        delete_message_safe(message)
+        apply_lock_action(message, "swearing")
         return
 
     # التوجيه
     if row["forwarding"] and is_forwarded_message(message):
-        delete_message_safe(message)
+        apply_lock_action(message, "forwarding")
         return
 
     if is_blacklisted(chat_id, text):
-        delete_message_safe(message)
+        apply_lock_action(message, "blacklist")
         try:
             sender_name=html.escape(full_name(message.from_user))
             bot.reply_to(message, f"عذرا يـ {sender_name} ممنوع {mention(message.from_user)} هنا !")
@@ -11344,7 +11540,7 @@ def protection_engine(message):
         return
 
     if row["links"] and contains_link(text):
-        delete_message_safe(message)
+        apply_lock_action(message, "links")
         return
 
     # Flood
@@ -11356,16 +11552,7 @@ def protection_engine(message):
         )
     ):
 
-        try:
-
-            mute_user(
-                chat_id,
-                uid
-            )
-
-        except Exception:
-            pass
-
+        apply_lock_action(message, "flood")
         return
 
     # التكرار
@@ -11379,10 +11566,7 @@ def protection_engine(message):
         )
     ):
 
-        delete_message_safe(
-            message
-        )
-
+        apply_lock_action(message, "repeat_messages")
         return
 
     ct = message.content_type
@@ -11423,9 +11607,18 @@ def protection_engine(message):
         )
     ):
 
-        delete_message_safe(
-            message
-        )
+        _setting = {
+            "photo": "photos",
+            "video": "videos",
+            "document": "documents",
+            "sticker": "stickers",
+            "audio": "audio",
+            "voice": "audio",
+            "video_note": "audio",
+            "animation": "animations"
+        }.get(ct, "delete")
+        if _setting != "delete":
+            apply_lock_action(message, _setting)
 
 
 # =========================================================
