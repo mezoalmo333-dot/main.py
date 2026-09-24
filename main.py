@@ -3072,11 +3072,25 @@ def target_protected(message, target):
 
 
 def admin_required(message):
+    """
+    التحقق من مشرف المجموعة الحقيقي.
+
+    مهم: مشرف Telegram قد لا يكون مسجلًا داخل جدول group_ranks،
+    لذلك لا نعتمد على الرتبة الداخلية وحدها. مالك/مشرف المجموعة
+    يجب أن يستطيع استخدام أوامر الإدارة وإدارة قنوات الاشتراك.
+    """
     if message.chat.type not in (
         "group",
         "supergroup"
     ):
         return False
+
+    try:
+        uid = message.from_user.id
+        if is_admin(message.chat.id, uid):
+            return True
+    except Exception as e:
+        print("[Admin Check Error]", repr(e))
 
     ar = get_rank(
         message.chat.id,
@@ -3084,12 +3098,10 @@ def admin_required(message):
     )
 
     if not can_use_moderation(ar):
-
         bot.reply_to(
             message,
             "⦉لست مشرفا⦊"
         )
-
         return False
 
     return True
@@ -6824,15 +6836,19 @@ def new_members_handler_legacy_original(message):
 
 
 def build_welcome_text(user, private=False, chat=None):
-    """يبني رسالة البداية/الترحيب بشكل آمن حتى لا يتعطل /start."""
+    """رسالة الترحيب الخاصة الجديدة."""
     name = html.escape(full_name(user))
-    username = html.escape(username_text(user)) if username_text(user) else "بدون يوزر"
+    raw_username = username_text(user) or "بدون يوزر"
+    username = html.escape(raw_username)
     if private:
         return (
-            f"<b>أهلاً بك يا <a href=\"tg://user?id={user.id}\">{name}</a></b>\n\n"
-            f"<b>أنا بوت <a href=\"https://t.me/{BOT_USERNAME}\">{html.escape(BOT_USERNAME)}</a> لحماية وإدارة المجموعات.</b>\n\n"
-            f"<b>اليوزر: @{username.lstrip('@')}</b>\n"
-            f"<b>الآيدي: <code>{user.id}</code></b>"
+            f"<b>• أهلا بك عزيزي المُستخدِم <a href=\"tg://user?id={user.id}\">{name}</a> .</b>\n"
+            f"<b>─ ── ── ── ── ──</b>\n"
+            f"<b>• انا بوت (<a href=\"https://t.me/{BOT_USERNAME}\">{html.escape(BOT_USERNAME)}</a>) ︕، يمڪنك أستخدامي في حمايه الجروبات من التفليش والروابط والاسبام والاباحي</b>\n"
+            f"<b>─ ── ── ── ── ──</b>\n"
+            f"<b>ضيف البوت في جروبك وي اطمن وتقدر كمان تضيف اجباري لي جروبك</b>\n"
+            f"<b>• UsE ⦉ {username} ⦊</b>\n"
+            f"<b>• ID  ⦉ <code>{user.id}</code> ⦊</b>"
         )
     group_name = html.escape(getattr(chat, "title", None) or "الجروب")
     group_username = getattr(chat, "username", None)
@@ -6862,15 +6878,33 @@ def build_welcome_text(user, private=False, chat=None):
 
 
 def start_private(message):
-    """معالجة /start في الخاص، مع مسار احتياطي إذا فشل إرسال الصورة."""
+    """معالجة /start في الخاص بالترحيب والواجهة المطلوبة."""
     user = message.from_user
     if not user:
         return
     text = build_welcome_text(user, private=True)
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.row(button("إضافة البوت إلى جروب", url=f"https://t.me/{BOT_USERNAME}?startgroup=true", style="primary"))
-    markup.row(button("السورس", url=SOURCE_CHANNEL_URL, style="primary"))
-    markup.row(button("المطور", url=SOURCE_DEVELOPER_URL, style="primary"))
+    markup = types.InlineKeyboardMarkup(row_width=2)
+
+    # Developer + Source في صف واحد باللون الأزرق.
+    markup.row(
+        button("‹ Developer ›", url=SOURCE_DEVELOPER_URL, style="primary"),
+        button("‹ Source ›", url=SOURCE_CHANNEL_URL, style="primary")
+    )
+
+    # Help باللون الأحمر ويعرض قائمة الأوامر الحالية عند الضغط.
+    markup.row(
+        button("‹ Help ›", callback_data="show_commands", style="danger")
+    )
+
+    # إضافة البوت إلى الجروب في صف مستقل باللون الأزرق، مع الـ Custom Emoji المطلوب.
+    markup.row(
+        button(
+            "‹ Add Me To Your Group ›",
+            url=ADD_TO_GROUP_URL,
+            style="primary",
+            icon_custom_emoji_id="5201842613983917014"
+        )
+    )
     try:
         return send_welcome_with_bot_photo(
             message.chat.id,
@@ -6896,7 +6930,32 @@ def start_private(message):
 
 
 def group_welcome_caption(message, user):
-    return build_welcome_text(user, private=False, chat=message.chat)
+    """ترحيب الجروبات المستقل عن ترحيب الخاص."""
+    group_name = html.escape(getattr(message.chat, "title", None) or "الجروب")
+    name = html.escape(full_name(user))
+    username = getattr(user, "username", None)
+    username_display = html.escape("@" + username if username else "لا يوجد")
+    bio = html.escape(user_bio(user.id))
+
+    now_eg = datetime.now(timezone(timedelta(hours=3)))
+    joined_date = now_eg.strftime("%Y-%m-%d")
+    joined_time = now_eg.strftime("%I:%M %p").lstrip("0")
+
+    # اسم العضو يكون رابطًا مباشرًا إلى حسابه.
+    user_link = f'<a href="tg://user?id={user.id}">{name}</a>'
+
+    return (
+        f"<b>🔹 ⁣⁣ᯓ˹𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 『{group_name}』 𝐆𝐑𝐎𝐔𝐏 ᯤ˼</b>\n"
+        f"<b>🔹 °•—————— ​​『{group_name}』 —————•°</b>\n"
+        f"<b>🔹 °︙ نورت قروبنا يـ 『{name}』 .</b>\n"
+        f"<b>🔹 °︙ اسمك ⇚『{user_link}』</b>\n"
+        f"<b>🔹 °︙ ايديك ⇚『<code>{user.id}</code>』</b>\n"
+        f"<b>🔹 °︙ يوزرك ⇚『{username_display}』</b>\n\n"
+        f"<b>🔹 °︙ تاريخ انضمامك ⇚ 『{joined_date}』</b>\n"
+        f"<b>🔹 °︙ الساعة ⇚ 『{joined_time}』</b>\n"
+        f"<b>° ︙البايو ⇚ 『{bio}』</b>\n"
+        f"<b>🔹 °•—————— ​‹ 『{group_name}』 › —————•°</b>"
+    )
 
 
 def get_welcome_group_link(chat_id):
@@ -6982,16 +7041,21 @@ def new_members_handler(message):
 
         markup = types.InlineKeyboardMarkup(row_width=1)
 
-        # ترحيب الجروبات: يبقى فقط رابط الجروب باسم الجروب + مطور البوت.
+        # أزرار ترحيب الجروب: اسم الجروب كرابط + Developer.
         group_link = get_welcome_group_link(message.chat.id)
         if group_link:
             markup.row(button(
-                getattr(message.chat, "title", None) or "رابط الجروب",
+                getattr(message.chat, "title", None) or "الجروب",
                 url=group_link,
-                style="primary",
-                icon_custom_emoji_id=WELCOME_DEV_EMOJI
+                style="primary"
             ))
-        markup.row(button("مطور البوت", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
+        markup.row(
+            button(
+                "Developer",
+                url=SOURCE_DEVELOPER_URL,
+                style="primary"
+            )
+        )
 
         try:
             sent = send_welcome_with_bot_photo(
@@ -10241,7 +10305,7 @@ def callbacks(call):
                 group_id = int(parts[2])
             except Exception:
                 group_id = chat_id
-            if group_id != chat_id or not admin_required(call.message):
+            if group_id != chat_id or not is_admin(chat_id, uid):
                 bot.answer_callback_query(call.id, "هذا الإعداد لمشرفي المجموعة فقط.", show_alert=True)
                 return
             action = parts[1]
