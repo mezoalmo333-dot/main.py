@@ -7697,6 +7697,20 @@ def main_handler(message):
 
         # معالجة /start بعد فحص الصيانة حتى لا يتجاوز المستخدم وضع الصيانة.
         if message.chat and message.chat.type == "private":
+            # فتح لوحة الأدمن مباشرة من /admin أو /panel للمطور.
+            # هذا الفحص يتم قبل أي راوتر آخر حتى لا يلتقط الأمر أمرٌ آخر.
+            try:
+                _admin_command, _admin_argument = command_parts(message)
+                if (
+                    message.from_user
+                    and message.from_user.id == DEVELOPER_ID
+                    and _admin_command in ("admin", "panel")
+                ):
+                    send_admin_panel(message.chat.id)
+                    return
+            except Exception as _admin_open_error:
+                print("[Admin Command Error]", repr(_admin_open_error))
+
             _start_command, _start_argument = command_parts(message)
             if _start_command == "start":
                 if _start_argument.startswith("prox") and message.from_user:
@@ -8162,7 +8176,8 @@ def handle_private(message):
             "لوحة الادمن",
             "لوحه الادمن",
             "admin",
-            "panel"
+            "panel",
+            "لوحه الادمن"
         )
     ):
         send_admin_panel(message.chat.id)
@@ -8622,6 +8637,10 @@ def group_force_admin_markup(chat_id):
     markup.row(
         button("إضافة قناة", callback_data=f"gforce:add:{int(chat_id)}", style="primary", icon_custom_emoji_id=CE_FORCE_SUB),
         button("حذف قناة", callback_data=f"gforce:delmenu:{int(chat_id)}", style="primary", icon_custom_emoji_id=CE_ERROR)
+    )
+    # زر رجوع مستقل أسفل أزرار إضافة/حذف القنوات.
+    markup.row(
+        button("رجوع", callback_data=f"gforce:back:{int(chat_id)}", style="primary", icon_custom_emoji_id=ADMIN_BACK_EMOJI)
     )
     return markup
 
@@ -10316,6 +10335,16 @@ def callbacks(call):
                     bot.edit_message_text(group_force_text(group_id), chat_id, call.message.message_id, reply_markup=group_force_admin_markup(group_id), parse_mode="HTML")
                 except Exception:
                     pass
+                return
+            if action == "back":
+                bot.answer_callback_query(call.id)
+                try:
+                    bot.delete_message(chat_id, call.message.message_id)
+                except Exception:
+                    try:
+                        bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=None)
+                    except Exception:
+                        pass
                 return
             if action == "add":
                 group_force_pending[(int(chat_id), int(uid))] = True
