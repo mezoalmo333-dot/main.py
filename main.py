@@ -506,8 +506,17 @@ def _plain_fallback_text(text):
     return strip_non_custom_emoji(value).strip()
 
 
+def _force_all_bold(text):
+    if not isinstance(text, str) or not text.strip():
+        return text
+    # لا نضيف طبقة جديدة إذا كان النص بالفعل مغلفًا بالكامل بـ <b>.
+    stripped = text.strip()
+    if stripped.startswith("<b>") and stripped.endswith("</b>"):
+        return text
+    return f"<b>{text}</b>"
+
 def _send_message_decorated(chat_id, text, *args, **kwargs):
-    decorated = decorate_text(text)
+    decorated = _force_all_bold(decorate_text(text))
     # Custom emoji tags (<tg-emoji>) require Telegram HTML parsing.
     # Force HTML here so they can never be sent as literal text.
     kwargs = dict(kwargs)
@@ -533,7 +542,7 @@ def _send_message_decorated(chat_id, text, *args, **kwargs):
 def _decorate_caption_kwargs(kwargs):
     kwargs = dict(kwargs)
     if kwargs.get("caption"):
-        kwargs["caption"] = decorate_text(kwargs["caption"])
+        kwargs["caption"] = _force_all_bold(decorate_text(kwargs["caption"]))
         kwargs["parse_mode"] = "HTML"
     return kwargs
 
@@ -562,7 +571,7 @@ def _edit_message_text_decorated(text, chat_id=None, message_id=None, *args, **k
     kwargs = dict(kwargs)
     kwargs["parse_mode"] = "HTML"
     return _original_edit_message_text(
-        decorate_text(text),
+        _force_all_bold(decorate_text(text)),
         chat_id,
         message_id,
         *args,
@@ -974,6 +983,23 @@ CREATE TABLE IF NOT EXISTS force_sub_channels (
     emoji_id TEXT DEFAULT '5271801931814165886',
     enabled INTEGER DEFAULT 1,
     UNIQUE(chat_id)
+)
+""")
+db.commit()
+
+# اشتراك إجباري خاص بكل مجموعة؛ لا يتم خلط قنوات مجموعة مع مجموعة أخرى.
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS group_force_sub_channels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_chat_id INTEGER NOT NULL,
+    channel_chat_id INTEGER NOT NULL,
+    username TEXT DEFAULT '',
+    title TEXT DEFAULT '',
+    url TEXT DEFAULT '',
+    button_text TEXT DEFAULT 'اشترك في القناة',
+    emoji_id TEXT DEFAULT '',
+    enabled INTEGER DEFAULT 1,
+    UNIQUE(group_chat_id, channel_chat_id)
 )
 """)
 db.commit()
@@ -3215,7 +3241,11 @@ def _known_bots(chat_id):
         print("[Known Bots Read Error]", repr(e))
 
     try:
-        for admin in bot.get_chat_administrators(chat_id):
+        try:
+            admins_list = bot.get_chat_administrators(chat_id, return_bots=True)
+        except TypeError:
+            admins_list = bot.get_chat_administrators(chat_id)
+        for admin in admins_list:
             u = getattr(admin, "user", None)
             if u and getattr(u, "is_bot", False):
                 found[int(u.id)] = {
@@ -5267,11 +5297,60 @@ def send_admin_section(call, text):
 # =========================================================
 # الاشتراك الإجباري للمجموعات
 # =========================================================
-def get_force_channels():
-    cursor.execute(
-        "SELECT * FROM force_sub_channels WHERE enabled=1 ORDER BY id"
-    )
-    return cursor.fetchall()
+def get_force_channels(group_chat_id=None):
+    """قنوات الاشتراك الإجباري.
+    داخل المجموعة نقرأ القنوات الخاصة بهذه المجموعة فقط؛ خارجها نستخدم قائمة المطور العامة.
+    """
+    conn = _get_thread_db()
+    if group_chat_id is not None:
+        return conn.execute(
+            "SELECT id,channel_chat_id AS chat_id,username,title,url,button_text,emoji_id,enabled "
+            "FROM group_force_sub_channels WHERE group_chat_id=? AND enabled=1 ORDER BY id",
+            (int(group_chat_id),)
+        ).fetchall()
+    return conn.execute("SELECT * FROM force_sub_channels WHERE enabled=1 ORDER BY id").fetchall()
+
+
+def add_group_force_channel(group_chat_id, value):
+    ref = normalize_channel_ref(value)
+    if not ref:
+        return False, "أرسل @username أو رابط القناة العام."
+    try:
+        chat = bot.get_chat(ref)
+    except Exception:
+        return False, "تعذر الوصول للقناة. تأكد من اليوزر والرابط."
+    if getattr(chat, "type", "") != "channel":
+        return False, "المصدر المضاف يجب أن يكون قناة Telegram."
+    username = getattr(chat, "username", None) or ""
+    url = f"https://t.me/{username}" if username else ""
+    if not url:
+        return False, "القناة يجب أن تكون عامة ولها @username."
+    conn = _get_thread_db()
+    conn.execute("""
+        INSERT INTO group_force_sub_channels
+        (group_chat_id,channel_chat_id,username,title,url,button_text,emoji_id,enabled)
+        VALUES(?,?,?,?,?,?,?,1)
+        ON CONFLICT(group_chat_id,channel_chat_id) DO UPDATE SET
+            username=excluded.username,title=excluded.title,url=excluded.url,
+            button_text=excluded.button_text,emoji_id=excluded.emoji_id,enabled=1
+    """, (int(group_chat_id), int(chat.id), username, chat.title or "", url, "اشترك في القناة", CE_FORCE_SUB))
+    conn.commit()
+    return True, chat.title or username
+
+
+def remove_group_force_channel(group_chat_id, row_id):
+    conn = _get_thread_db()
+    cur = conn.execute("DELETE FROM group_force_sub_channels WHERE group_chat_id=? AND id=?", (int(group_chat_id), int(row_id)))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def ensure_group_force_source(group_chat_id):
+    """يضيف قناة السورس للمجموعة مرة واحدة عند إضافة البوت إليها."""
+    try:
+        add_group_force_channel(group_chat_id, SOURCE_CHANNEL_URL)
+    except Exception as e:
+        print("[Group Force Source Error]", repr(e))
 
 
 def normalize_channel_ref(value):
@@ -5296,7 +5375,7 @@ def add_force_channel(value):
         return False, "أرسل @username أو رابط القناة العام."
     try:
         chat = bot.get_chat(ref)
-    except Exception as e:
+    except Exception:
         return False, "تعذر الوصول للقناة. تأكد أن اليوزر صحيح وأن البوت موجود في القناة."
     if chat.type != "channel":
         return False, "المصدر المضاف يجب أن يكون قناة Telegram."
@@ -5308,46 +5387,15 @@ def add_force_channel(value):
         INSERT INTO force_sub_channels(chat_id,username,title,url,button_text,emoji_id,enabled)
         VALUES(?,?,?,?,?,?,1)
         ON CONFLICT(chat_id) DO UPDATE SET
-            username=excluded.username,
-            title=excluded.title,
-            url=excluded.url,
-            enabled=1
+            username=excluded.username,title=excluded.title,url=excluded.url,enabled=1
     """, (chat.id, username, chat.title or "", url, "Update • 𝗥 𝗲 𝗲 𝗺", CE_FORCE_SUB))
     db.commit()
     return True, chat.title or username
 
 
 def ensure_default_force_channel():
-    try:
-        cursor.execute(
-            "SELECT 1 FROM force_sub_channels WHERE username=? OR url=? LIMIT 1",
-            ("Ssource_MaX", SOURCE_CHANNEL_URL)
-        )
-        if cursor.fetchone():
-            return
-        chat = bot.get_chat("@Ssource_MaX")
-        if getattr(chat, "type", "") != "channel":
-            return
-        username = getattr(chat, "username", None) or "Ssource_MaX"
-        url = f"https://t.me/{username}"
-        cursor.execute(
-            """
-            INSERT OR IGNORE INTO force_sub_channels
-            (chat_id, username, title, url, button_text, emoji_id, enabled)
-            VALUES (?, ?, ?, ?, ?, ?, 1)
-            """,
-            (
-                chat.id,
-                username,
-                getattr(chat, "title", "") or "Ssource_MaX",
-                url,
-                "اشترك في السورس",
-                CE_FORCE_SUB
-            )
-        )
-        db.commit()
-    except Exception as e:
-        print("[Default Force Sub]", repr(e))
+    # القائمة العامة للمطور لا تُفرض على الجروبات؛ الجروبات لها قائمة مستقلة.
+    return True
 
 
 def remove_force_channel(channel_id):
@@ -5361,62 +5409,49 @@ def user_subscribed_to_channel(user_id, row):
         member = bot.get_chat_member(row["chat_id"], user_id)
         return member.status in ("creator", "administrator", "member")
     except Exception as e:
-        # لا نحذف رسائل المجموعة ولا نعطل الأوامر إذا كانت قناة الاشتراك
-        # غير قابلة للفحص مؤقتًا (البوت ليس أدمن فيها، القناة حُذفت، 429...).
-        # يسجل الخطأ ونعتبر الفحص غير قابل للحسم بدل حظر المستخدم خطأً.
         print("[Force Sub Check Warning - fail open]", row["chat_id"], repr(e))
         return True
 
 
-def force_sub_missing(user_id):
+def force_sub_missing(user_id, group_chat_id=None):
     missing = []
-    for row in get_force_channels():
+    for row in get_force_channels(group_chat_id):
         if not user_subscribed_to_channel(user_id, row):
             missing.append(row)
     return missing
 
 
-def force_sub_markup(user_id, channels=None):
-    channels = channels if channels is not None else get_force_channels()
+def force_sub_markup(user_id, channels=None, group_chat_id=None):
+    channels = channels if channels is not None else get_force_channels(group_chat_id)
     markup = types.InlineKeyboardMarkup(row_width=1)
-
-    # تصميم بسيط: زر رابط مستقل لكل قناة، ثم زر تحقق واحد.
     missing_ids = []
     for row in channels:
         if not user_subscribed_to_channel(user_id, row):
             missing_ids.append(str(row["id"]))
-
         channel_url = row["url"] or ""
         if channel_url:
-            # استخدم الاسم المخصص المحفوظ، أو اسم القناة إذا لم يوجد.
             label = (row["button_text"] or row["title"] or row["username"] or "القناة").strip()
             subscribe_btn = transparent_url_button(label, channel_url, emoji_id=None)
             if subscribe_btn:
                 markup.add(subscribe_btn)
-
     check_text = "تحقق من الاشتراك" if missing_ids else "تم التحقق"
     check_style = "primary" if missing_ids else "success"
-    markup.add(button(
-        check_text,
-        callback_data=f"force_sub_check:{user_id}:all",
-        style=check_style,
-        icon_custom_emoji_id=CE_FORCE_VERIFY
-    ))
+    markup.add(button(check_text, callback_data=f"force_sub_check:{user_id}:all", style=check_style, icon_custom_emoji_id=CE_FORCE_VERIFY))
     return markup
 
 
 def send_force_sub_prompt(message, missing=None):
     if not message.from_user:
         return True
-    missing = missing if missing is not None else force_sub_missing(message.from_user.id)
+    group_id = message.chat.id if message.chat.type in ("group", "supergroup") else None
+    missing = missing if missing is not None else force_sub_missing(message.from_user.id, group_id)
     if not missing:
         return False
-    markup = force_sub_markup(message.from_user.id, get_force_channels())
+    markup = force_sub_markup(message.from_user.id, missing, group_id)
     user_mention = mention(message.from_user, owner=True)
     text = (
         f"{user_mention}\n"
-        "<b>BoT • 𝗥 𝗲 𝗲 𝗺eCo</b>  Protecting the best groups on Telegram\n"
-        "\n"
+        "<b>BoT • 𝗥 𝗲 𝗲 𝗺</b> Protecting the best groups on Telegram\n\n"
         "لازم تشترك في القنوات المطلوبة قبل التحدث في المجموعة.\n"
         "اشترك من الأزرار بالأسفل، وبعدها اضغط على <b>تحقق من الاشتراك</b>."
     )
@@ -5429,32 +5464,19 @@ def send_force_sub_prompt(message, missing=None):
 
 
 def enforce_force_subscription(message):
-    if (not message.from_user or message.from_user.is_bot or
-            message.chat.type not in ("group", "supergroup")):
+    if (not message.from_user or message.from_user.is_bot or message.chat.type not in ("group", "supergroup")):
         return False
-
-    # رسائل القنوات/الرسائل المرسلة نيابة عن قناة لا تُحذف،
-    # خصوصًا منشورات القناة المرتبطة بالمجموعة.
     sender_chat = getattr(message, "sender_chat", None)
-    if sender_chat is not None:
-        sender_type = getattr(sender_chat, "type", "")
-        # منشورات القنوات والرسائل المرسلة باسم القناة لا تخص العضو، فلا نحذفها.
-        if sender_type == "channel":
-            return False
-
-    # الاشتراك الإجباري يطبّق على الرسائل التي لها مرسل مستخدم فقط.
-    if not message.from_user:
+    if sender_chat is not None and getattr(sender_chat, "type", "") == "channel":
         return False
-
-    # حماية إضافية: أي رسالة مصدرها قناة لا تدخل في الاشتراك الإجباري.
     if getattr(message, "is_automatic_forward", False) and sender_chat is not None:
         return False
-    if not get_force_channels():
+    channels = get_force_channels(message.chat.id)
+    if not channels:
         return False
-    # الإدارة والمالك مستثنون حتى لا يتعطل التحكم بالمجموعة.
     if is_admin(message.chat.id, message.from_user.id):
         return False
-    missing = force_sub_missing(message.from_user.id)
+    missing = force_sub_missing(message.from_user.id, message.chat.id)
     if not missing:
         return False
     delete_message_safe(message)
@@ -6536,7 +6558,7 @@ def send_youtube_song(message, query, processing_message=None):
 
         caption = (
             f"🎵 <b>{html.escape(title)}</b>\n\n"
-            f'• <b>DeV</b> | <a href="{SOURCE_DEVELOPER_URL}">@L1_D_R</a>'
+            "- 𝙙𝘦𝘷 ➤ ' @L1_D_R  ,"
         )
 
         # Telegram send_voice يدعم OGG/Opus للرسائل الصوتية.
@@ -6596,890 +6618,23 @@ def send_youtube_song(message, query, processing_message=None):
     return True
 
 def handle_music_command(message, query):
-    """
-    الأمر: يوت + اسم الأغنية.
-    يبحث في YouTube ويعرض النتائج، وبعد اختيار نتيجة ينزلها ويرسلها كرسالة صوتية OGG/Opus.
-    """
+    """يوت + اسم الأغنية: تنزيل وإرسال الأغنية مباشرة دون قائمة نتائج."""
     query = (query or "").strip()
     if not query:
-        bot.reply_to(
-            message,
-            "استخدم: <code>يوت اسم الأغنية</code>\n"
-            "أو: <code>تنزيل اسم الأغنية</code>"
-        )
+        bot.reply_to(message, "استخدم: <code>يوت اسم الأغنية</code>")
         return True
-
-    # البحث في خيط مستقل حتى لا يتوقف البوت أثناء انتظار YouTube.
-    processing = bot.reply_to(message, "🔎 جاري البحث عن الأغنية...")
-
+    processing = bot.reply_to(message, "جاري تجهيز الأغنية...")
     def worker():
         try:
-            results, error = search_youtube_songs(query, limit=8)
-            if error:
-                try:
-                    bot.edit_message_text(
-                        html.escape(error),
-                        message.chat.id,
-                        processing.message_id,
-                        parse_mode="HTML"
-                    )
-                except Exception:
-                    bot.send_message(message.chat.id, error)
-                return
-
-            token = _store_music_search(
-                message.from_user.id if message.from_user else 0,
-                message.chat.id,
-                query,
-                results
-            )
-
+            send_youtube_song(message, query, processing_message=processing)
+        except Exception as e:
+            print("[Direct YouTube Worker Error]", repr(e))
             try:
-                bot.delete_message(
-                    message.chat.id,
-                    processing.message_id
-                )
+                bot.edit_message_text("تعذر تحميل الأغنية حاليًا. جرّب اسمًا آخر.", message.chat.id, processing.message_id, parse_mode="HTML")
             except Exception:
                 pass
-
-            send_youtube_search_results(
-                message,
-                query,
-                results,
-                token
-            )
-
-        except Exception as e:
-            print("[YouTube Search Worker Error]", repr(e))
-            try:
-                bot.edit_message_text(
-                    "تعذر البحث عن الأغنية حاليًا. جرّب مرة أخرى.",
-                    message.chat.id,
-                    processing.message_id,
-                    parse_mode="HTML"
-                )
-            except Exception:
-                try:
-                    bot.send_message(
-                        message.chat.id,
-                        "تعذر البحث عن الأغنية حاليًا. جرّب مرة أخرى."
-                    )
-                except Exception:
-                    pass
-
-    Thread(
-        target=worker,
-        daemon=True,
-        name="YouTubeSearch"
-    ).start()
+    Thread(target=worker, daemon=True).start()
     return True
-
-
-
-def send_cat_question(message):
-    question = random.choice(CAT_QUESTIONS)
-    bot.reply_to(message, f"<b>سؤال كات</b>\n{question}")
-    return True
-
-# =========================================================
-# الزخرفة + تنزيل السوشيال
-# =========================================================
-
-SOCIAL_MAX_MB = 49
-SOCIAL_MAX_BYTES = SOCIAL_MAX_MB * 1024 * 1024
-
-# مواقع البالغين محظورة صراحةً من ميزة التنزيل.
-ADULT_BLOCKED_DOMAINS = {
-    "pornhub.com", "pornhub.org", "xvideos.com", "xhamster.com", "xnxx.com",
-    "redtube.com", "youporn.com", "spankbang.com", "tube8.com", "youjizz.com",
-    "chaturbate.com", "stripchat.com", "xhamsterlive.com", "cam4.com",
-    "livejasmin.com", "bongacams.com", "brazzers.com", "rule34.xxx",
-    "hentai-foundry.com", "nhentai.net", "xhamster.desi", "porn.com",
-}
-ADULT_BLOCKED_WORDS = ("porn", "xxx", "sexcam", "hentai", "nsfw")
-
-
-def _host_from_url(url):
-    try:
-        return urllib.parse.urlparse(url).hostname.lower().strip('.')
-    except Exception:
-        return ""
-
-
-def _is_adult_url(url):
-    host = _host_from_url(url)
-    if not host:
-        return True
-    if any(host == d or host.endswith("." + d) for d in ADULT_BLOCKED_DOMAINS):
-        return True
-    # لا نمنع كلمات مثل "sex" وحدها حتى لا نحجب مواقع عادية بلا داعٍ.
-    lowered = host.lower()
-    return any(word in lowered for word in ADULT_BLOCKED_WORDS)
-
-
-def _valid_social_url(text):
-    text = (text or "").strip().strip('<>')
-    if not re.match(r"^https?://\S+$", text, re.I):
-        return None
-    if _is_adult_url(text):
-        return None
-    return text
-
-
-def _latin_style(text, offset=0):
-    upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    lower = "abcdefghijklmnopqrstuvwxyz"
-    styles = [
-        ("𝗔𝗕𝗖𝗗𝗘𝗙𝗚𝗛𝗜𝗝𝗞𝗟𝗠𝗡𝗢𝗣𝗤𝗥𝗦𝗧𝗨𝗩𝗪𝗫𝗬𝗭", "𝗮𝗯𝗰𝗱𝗲𝗳𝗴𝗵𝗶𝗷𝗸𝗹𝗺𝗻𝗼𝗽𝗾𝗿𝘀𝘁𝘂𝘃𝘄𝘅𝘆𝘇"),
-        ("𝘈𝘉𝘊𝘋𝘌𝘍𝘎𝘏𝘐𝘑𝘒𝘓𝘔𝘕𝘖𝘗𝘘𝘙𝘚𝘛𝘜𝘝𝘞𝘟𝘠𝘡", "𝘢𝘣𝘤𝘥𝘦𝘧𝘨𝘩𝘪𝘫𝘬𝘭𝘮𝘯𝘰𝘱𝘲𝘳𝘴𝘵𝘶𝘷𝘸𝘹𝘺𝘻"),
-        ("𝙰𝙱𝙲𝙳𝙴𝙵𝙶𝙷𝙸𝙹𝙺𝙻𝙼𝙽𝙾𝙿𝚀𝚁𝚂𝚃𝚄𝚅𝚆𝚇𝚈𝚉", "𝚊𝚋𝚌𝚍𝚎𝚏𝚐𝚑𝚒𝚓𝚔𝚕𝚖𝚗𝚘𝚙𝚚𝚛𝚜𝚝𝚞𝚟𝚠𝚡𝚢𝚣"),
-        ("𝔸𝔹ℂ𝔻𝔼𝔽𝔾ℍ𝕀𝕁𝕂𝕃𝕄ℕ𝕆ℙℚℝ𝕊𝕋𝕌𝕍𝕎𝕏𝕐ℤ", "𝕒𝕓𝕔𝕕𝕖𝕗𝕘𝕙𝕚𝕛𝕜𝕝𝕞𝕟𝕠𝕡𝕢𝕣𝕤𝕥𝕦𝕧𝕨𝕩𝕪𝕫"),
-    ]
-    a,b=styles[offset % len(styles)]
-    table=str.maketrans(upper+lower, a+b)
-    return text.translate(table)
-
-
-def _arabic_styles(text):
-    # العربية ليس لها مجموعة Unicode عريضة كاملة؛ لذلك نعطي أشكالًا زخرفية
-    # آمنة لا تكسر القراءة أو النسخ، مع الحفاظ على الأحرف الأصلية.
-    return [
-        f"꧁༺ {text} ༻꧂",
-        f"『 {text} 』",
-        f"𓆩 {text} 𓆪",
-        f"◥ {text} ◤",
-        f"╰☆☆ {text} ☆☆╮",
-        f"•° {text} °•",
-        f"〘 {text} 〙",
-        f"⟦ {text} ⟧",
-        f"༺ {text} ༻",
-        f"𒆜 {text} 𒆜",
-    ]
-
-
-def decorate_name(text):
-    text=(text or "").strip()
-    if not text:
-        return []
-    arabic = bool(re.search(r"[\u0600-\u06FF]", text))
-    latin = bool(re.search(r"[A-Za-z]", text))
-    out=[]
-    if latin:
-        for i in range(4):
-            out.append(_latin_style(text, i))
-    if arabic:
-        out.extend(_arabic_styles(text))
-    if not arabic and not latin:
-        out.extend(_arabic_styles(text))
-    # تنويعات عامة تعمل مع العربي والإنجليزي معًا.
-    out.extend([
-        f"★彡 {text} 彡★",
-        f"✦ {text} ✦",
-        f"『{text}』",
-        f"༒ {text} ༒",
-    ])
-    # إزالة التكرار مع الحفاظ على الترتيب.
-    seen=set(); result=[]
-    for x in out:
-        if x not in seen:
-            seen.add(x); result.append(x)
-    return result[:16]
-
-
-def handle_decoration_command(message, argument):
-    name = (argument or "").strip()
-    if not name:
-        bot.reply_to(message, "استخدم: <code>زخرف ليدر</code>")
-        return True
-    variants = decorate_name(name)
-    # كل زخرفة زر نسخ حقيقي من Telegram؛ لا فواصل ولا أسطر فارغة بين النتائج.
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    for variant in variants:
-        btn = copy_text_button(variant, variant)
-        if btn is not None:
-            markup.add(btn)
-    bot.reply_to(message, "<b>اضغط على أي زخرفة لنسخها:</b>", parse_mode="HTML", reply_markup=markup)
-    return True
-
-
-def _social_download_options(yt_dlp, outtmpl):
-    opts={
-        "outtmpl": outtmpl,
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "retries": 2,
-        "fragment_retries": 2,
-        "socket_timeout": 25,
-        "merge_output_format": "mp4",
-        # نحاول اختيار ملف تحت 49MB أولًا، ثم جودة متوسطة.
-        "format": (
-            "best[ext=mp4][filesize<49M]/best[filesize<49M]/"
-            "best[height<=720][ext=mp4]/best[height<=720]/best"
-        ),
-    }
-    # استخدم Runtime/EJS إن كان yt-dlp يحتاجه، خصوصًا للمواقع التي تعتمد على JS.
-    try:
-        opts.update(_youtube_runtime_options(yt_dlp, use_cookies=True))
-    except Exception:
-        pass
-    return opts
-
-
-def _social_download(url):
-    """تنزيل فيديو من المواقع التي يدعمها yt-dlp مع retries متعددة وحظر مواقع البالغين."""
-    if _is_adult_url(url):
-        return None, "هذا الموقع محظور من ميزة التنزيل."
-    try:
-        yt_dlp = _ensure_ytdlp()
-    except Exception as exc:
-        print("[Social yt-dlp Load Error]", repr(exc))
-        yt_dlp = None
-    if yt_dlp is None:
-        return None, "yt-dlp غير مثبت حاليًا. أضفه إلى requirements.txt ثم أعد التشغيل."
-
-    attempts = [
-        # المسار المعتاد مع Runtime/EJS/cookies عند الحاجة.
-        {"cookies": True, "low": False},
-        # مسار مستقل بدون cookies حتى لا تتسبب cookies تالفة في فشل الرابط العام.
-        {"cookies": False, "low": False},
-        # جودة أقل لتجاوز حدود الحجم/المنصات التي تفشل مع الصيغ العالية.
-        {"cookies": False, "low": True},
-    ]
-    last_error = None
-
-    for attempt in attempts:
-        temp_dir = tempfile.mkdtemp(prefix="reem_social_")
-        outtmpl = os.path.join(temp_dir, "%(id)s.%(ext)s")
-        try:
-            opts = _social_download_options(yt_dlp, outtmpl)
-            if not attempt["cookies"]:
-                opts.pop("cookiefile", None)
-            if attempt["low"]:
-                opts["format"] = (
-                    "best[height<=480][ext=mp4]/best[height<=480]/"
-                    "worst[ext=mp4]/worst"
-                )
-            # لا تفشل العملية بالكامل بسبب merge؛ اسمح بملف جاهز من المصدر.
-            opts["ignoreerrors"] = False
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-            title = info.get("title") or "فيديو"
-            webpage = info.get("webpage_url") or url
-            files = []
-            for root, _, names in os.walk(temp_dir):
-                for name in names:
-                    path = os.path.join(root, name)
-                    if os.path.isfile(path) and not name.endswith((".part", ".ytdl")):
-                        files.append(path)
-            if not files:
-                raise RuntimeError("لم يتم إنشاء ملف فيديو من الرابط.")
-            path = max(files, key=os.path.getsize)
-            size = os.path.getsize(path)
-
-            if size > SOCIAL_MAX_BYTES and not attempt["low"]:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                continue
-            if size > SOCIAL_MAX_BYTES:
-                raise RuntimeError(
-                    f"حجم الفيديو أكبر من {SOCIAL_MAX_MB}MB حتى بعد تقليل الجودة."
-                )
-            return (path, title, webpage, temp_dir), None
-        except Exception as exc:
-            last_error = exc
-            print("[Social Download Attempt Error]", repr(exc))
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-    msg = str(last_error or "").lower()
-    if "unsupported url" in msg or "no suitable extractor" in msg:
-        return None, "هذا الرابط غير مدعوم حاليًا بواسطة yt-dlp."
-    if "private" in msg or "login" in msg or "sign in" in msg:
-        return None, "الرابط خاص أو يحتاج تسجيل دخول/cookies صالحة."
-    if "age" in msg and "restrict" in msg:
-        return None, "هذا المحتوى عليه تقييد عمري ولا يمكن تنزيله."
-    if "larger than" in msg or "49mb" in msg:
-        return None, f"حجم الفيديو أكبر من {SOCIAL_MAX_MB}MB حتى بعد تقليل الجودة."
-    return None, "تعذر تنزيل الفيديو من الرابط حاليًا. جرّب الرابط مرة أخرى."
-
-
-def handle_social_download(message, url):
-    url=_valid_social_url(url)
-    if not url:
-        bot.reply_to(message,"❌ الرابط غير صالح أو الموقع محظور من ميزة التنزيل.")
-        return True
-    status=bot.reply_to(message,"⏳ جاري تنزيل الفيديو...")
-    def worker():
-        result,error=_social_download(url)
-        try:
-            bot.delete_message(message.chat.id,status.message_id)
-        except Exception:
-            pass
-        if error:
-            bot.send_message(message.chat.id,f"❌ {html.escape(error)}",parse_mode="HTML",reply_to_message_id=message.message_id)
-            return
-        path,title,source,temp_dir=result
-        try:
-            caption=f"<b>{html.escape(str(title)[:900])}</b>\n<a href=\"{html.escape(source, quote=True)}\">المصدر</a>"
-            with open(path,"rb") as video:
-                bot.send_video(message.chat.id,video,caption=caption,parse_mode="HTML",supports_streaming=True,timeout=120,reply_to_message_id=message.message_id)
-        except Exception as exc:
-            print("[Social Send Error]",repr(exc))
-            try:
-                bot.send_document(message.chat.id,open(path,"rb"),caption=html.escape(str(title)[:900]),parse_mode="HTML",timeout=120,reply_to_message_id=message.message_id)
-            except Exception as send_exc:
-                print("[Social Document Send Error]",repr(send_exc))
-                bot.send_message(message.chat.id,"❌ تم تنزيل الفيديو لكن فشل إرساله إلى Telegram.")
-        finally:
-            shutil.rmtree(temp_dir,ignore_errors=True)
-    Thread(target=worker,daemon=True,name="SocialDownloader").start()
-    return True
-
-
-# =========================================================
-# كشف محافظ TON Keeper / TON
-# =========================================================
-TON_ADDRESS_RE = re.compile(r"\b(?:EQ|UQ|kQ|0Q)[A-Za-z0-9_\-]{40,70}\b")
-TON_DOMAIN_RE = re.compile(r"(?<![A-Za-z0-9_])(?:@)?[A-Za-z0-9_\-]{2,64}(?:\.ton)\b", re.IGNORECASE)
-FRAGMENT_URL_RE = re.compile(r"https?://(?:www\.)?fragment\.com/(?:username|user)/([A-Za-z0-9_\-]{2,64})", re.IGNORECASE)
-FRAGMENT_WALLET_RE = re.compile(r"\b(?:EQ|UQ|kQ|0Q)[A-Za-z0-9_\-]{40,70}\b")
-
-
-def _resolve_ton_name(name):
-    """محاولة تحويل اسم TON DNS مثل name.ton إلى عنوان محفظة."""
-    domain = name.lstrip('@').strip()
-    if not domain.endswith('.ton'):
-        domain += '.ton'
-    try:
-        data = _tonapi_get('/dns/' + urllib.parse.quote(domain, safe=''))
-        records = data.get('records') or []
-        for rec in records:
-            address = rec.get('address') or rec.get('wallet')
-            if address:
-                return address
-    except Exception as exc:
-        print('[TON DNS Error]', repr(exc))
-    return None
-
-
-def _resolve_fragment_username(username):
-    """يحاول حل يوزر Fragment إلى محفظة عامة من البيانات المنشورة فقط."""
-    clean = (username or '').strip().lstrip('@')
-    clean = re.sub(r'^https?://(?:www\.)?fragment\.com/(?:username|user)/', '', clean, flags=re.I)
-    clean = clean.strip('/').split('?', 1)[0].split('#', 1)[0]
-    if not re.fullmatch(r'[A-Za-z0-9_\-]{2,64}', clean):
-        return None
-
-    urls = [
-        'https://fragment.com/username/' + urllib.parse.quote(clean, safe=''),
-        'https://fragment.com/user/' + urllib.parse.quote(clean, safe=''),
-    ]
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/140 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.8',
-        'Referer': 'https://fragment.com/',
-    }
-    for url in urls:
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=15) as response:
-                raw = response.read().decode('utf-8', 'ignore')
-            raw = raw.replace('\\/', '/').replace('\\u002F', '/')
-            # ابحث عن UQ/EQ wallet في أي JSON/HTML مضمن، وليس في سطر محدد فقط.
-            matches = re.findall(r'(?<![A-Za-z0-9])(?:EQ|UQ|kQ|0Q)[A-Za-z0-9_\-]{40,70}(?![A-Za-z0-9])', raw)
-            if matches:
-                # إزالة التكرار واختيار أول عنوان واضح.
-                seen = set()
-                for wallet in matches:
-                    if wallet not in seen:
-                        seen.add(wallet)
-                        return wallet
-        except Exception as exc:
-            print('[Fragment Resolve Error]', repr(exc))
-    return None
-
-
-def _extract_fragment_username(text):
-    text = (text or '').strip()
-    m = FRAGMENT_URL_RE.search(text)
-    if m:
-        return m.group(1)
-    if re.fullmatch(r'@[A-Za-z0-9_\-]{2,64}', text):
-        return text[1:]
-    return None
-
-
-TONAPI_KEY = os.getenv("TONAPI_KEY", "").strip()
-TONCENTER_API_KEY = os.getenv("TONCENTER_API_KEY", "").strip()
-
-def _tonapi_get(path):
-    """قراءة بيانات TON مع دعم TonAPI وبديل TonCenter عند تعطل/تقييد TonAPI."""
-    url = "https://tonapi.io/v2" + path
-    headers = {"User-Agent": "v_u_kbot/1.0", "Accept": "application/json"}
-    if TONAPI_KEY:
-        headers["Authorization"] = "Bearer " + TONAPI_KEY
-    req = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=15) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except Exception as first_error:
-        # TonCenter يدعم قراءة الرصيد الأساسي بدون الاعتماد على نفس مزود TonAPI.
-        if path.startswith("/accounts/") and "/jettons" not in path and "/nfts" not in path:
-            address = urllib.parse.unquote(path[len("/accounts/"):]).split("?", 1)[0]
-            try:
-                q = {"address": address}
-                if TONCENTER_API_KEY:
-                    q["api_key"] = TONCENTER_API_KEY
-                tc_url = "https://toncenter.com/api/v2/getAddressBalance?" + urllib.parse.urlencode(q)
-                tc_req = urllib.request.Request(tc_url, headers={"User-Agent": "v_u_kbot/1.0", "Accept": "application/json"})
-                with urllib.request.urlopen(tc_req, timeout=15) as response:
-                    payload = json.loads(response.read().decode("utf-8"))
-                if payload.get("ok") and payload.get("result") is not None:
-                    return {"balance": int(payload.get("result") or 0)}
-            except Exception as second_error:
-                print("[TON Fallback Error]", repr(second_error))
-        print("[TONAPI Error]", repr(first_error))
-        raise
-
-
-def _ton_format(value):
-    try:
-        return f"{float(value):,.3f}"
-    except Exception:
-        return "0.000"
-
-
-def _ton_jetton_lines(address):
-    lines = []
-    try:
-        data = _tonapi_get("/accounts/" + urllib.parse.quote(address, safe="") + "/jettons")
-        jettons = data.get("balances", []) or []
-        for item in jettons[:50]:
-            jetton = item.get("jetton") or {}
-            symbol = jetton.get("symbol") or jetton.get("name") or "JETTON"
-            decimals = int(jetton.get("decimals") or 0)
-            raw_balance = item.get("balance", 0)
-            try:
-                amount = float(raw_balance) / (10 ** decimals) if decimals else float(raw_balance)
-                amount_text = f"{amount:,.6f}".rstrip('0').rstrip('.')
-            except Exception:
-                amount_text = str(raw_balance)
-            lines.append(f"• <b>{html.escape(str(symbol))}</b>: <code>{html.escape(amount_text)}</code>")
-    except Exception as exc:
-        print('[TON Jettons Error]', repr(exc))
-    return lines
-
-
-def send_ton_wallet_info(message, address, fragment_username=None):
-    try:
-        account = _tonapi_get("/accounts/" + urllib.parse.quote(address, safe=""))
-        balance_ton = float(account.get("balance", 0)) / 1_000_000_000
-
-        usd_rate = None
-        usd_egp = None
-        usdt_egp = None
-        try:
-            usd_egp, usd_ton = get_currency_rates()
-            usd_rate = usd_ton
-        except Exception as exc:
-            print('[TON Currency Rate Error]', repr(exc))
-            usd_egp = usd_egp or None
-        try:
-            usdt_egp = get_live_usdt_egp()
-        except Exception:
-            usdt_egp = None
-
-        usdt_usd = get_live_usdt_usd()
-        usdt_value = (balance_ton * float(usd_rate) / usdt_usd) if usd_rate and usdt_usd else (balance_ton * float(usd_rate) if usd_rate else None)
-        egp_value = balance_ton * float(usd_rate) * float(usd_egp) if usd_rate and usd_egp else (usdt_value * float(usdt_egp) if usdt_value and usdt_egp else None)
-
-        lines = [
-            f"{tg_emoji(CE_TON_WALLET, '💼')} <b>محفظة TON</b>",
-            f"<code>{html.escape(address)}</code>",
-            "—————«•»—————",
-            f"{tg_emoji(CE_TON_BALANCE, '💎')} <b>الرصيد:</b> <code>{_ton_format(balance_ton)} TON</code>",
-            f"{tg_emoji(CE_TON_BALANCE, '💎')} <b>بالـ USDT:</b> <code>{usdt_value:,.2f} USDT</code>" if usdt_value is not None else "بالـ USDT: <code>غير متاح</code>",
-            f"{tg_emoji(CE_TON_BALANCE, '💎')} <b>بالمصري:</b> <code>{egp_value:,.2f} EGP</code>" if egp_value is not None else "بالمصري: <code>غير متاح</code>",
-        ]
-        if fragment_username:
-            lines.extend([
-                "—————«•»—————",
-                f"{tg_emoji(CE_TON_USERS, '👤')} <b>Fragment:</b> <code>@{html.escape(fragment_username)}</code>",
-                "<b>الحالة:</b> مرتبط بعنوان المحفظة الظاهر للعامة.",
-            ])
-
-        jetton_lines = _ton_jetton_lines(address)
-        lines.extend(["—————«•»—————", f"{tg_emoji(CE_TON_USERS, '👤')} <b>الأصول المرتبطة:</b>"])
-        if jetton_lines:
-            lines.extend(jetton_lines)
-        else:
-            lines.append("لا توجد Jettons ظاهرة في البيانات العامة.")
-
-        nft_items = []
-        try:
-            nft_items = _tonapi_get("/accounts/" + urllib.parse.quote(address, safe="") + "/nfts?limit=100").get("nft_items", []) or []
-        except Exception as exc:
-            print('[TON NFT Error]', repr(exc))
-        lines.append("—————«•»—————")
-        lines.append(f"{tg_emoji(CE_TON_NFT, '🎁')} <b>NFT / الهدايا:</b> <code>{len(nft_items)}</code>")
-        for item in nft_items[:30]:
-            meta = item.get("metadata", {}) or {}
-            name = meta.get("name") or item.get("address") or "NFT"
-            lines.append("• " + html.escape(str(name)))
-
-        # لا يمكن إثبات كل حسابات Telegram/Fragment الخاصة بالمالك من عنوان TON وحده.
-        lines.append("—————«•»—————")
-        lines.append("<b>ملاحظة:</b> المعروض هنا هو الأصول والروابط العامة التي يمكن قراءتها من TON/Fragment؛ الحسابات الخاصة أو الروابط غير العامة لا يمكن استخراجها بدون صلاحية صاحبها.")
-
-        markup = types.InlineKeyboardMarkup()
-        btn = transparent_url_button("• 𝗥 𝗲 𝗲 𝗺", "https://t.me/Ssource_MaX", emoji_id=CE_TON_DEV_BUTTON)
-        if btn:
-            markup.add(btn)
-        bot.reply_to(message, "\n".join(lines), reply_markup=markup)
-        return True
-    except Exception as exc:
-        print("[TON Wallet Error]", repr(exc))
-        bot.reply_to(message, "تعذر قراءة محفظة TON حاليًا. تأكد أن العنوان صحيح وحاول مرة أخرى.")
-        return True
-
-# =========================================================
-# صور Pinterest + قائمة البداية الجديدة
-# =========================================================
-def _pinterest_image_urls(query, limit=12):
-    """يجلب روابط الصور من Pinterest مباشرةً بدون مكتبات خارجية."""
-    query = (query or "").strip()
-    if not query:
-        return []
-    url = "https://www.pinterest.com/search/pins/?q=" + urllib.parse.quote(query)
-    request = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": PINTEREST_USER_AGENT,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
-            "Referer": "https://www.pinterest.com/"
-        }
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=PINTEREST_TIMEOUT) as response:
-            raw = response.read().decode("utf-8", "ignore")
-    except Exception as e:
-        print("[Pinterest Search Error]", repr(e))
-        return []
-
-    # Pinterest يضع روابط i.pinimg.com داخل بيانات الصفحة.
-    raw = raw.replace("\\/", "/").replace("\\u002F", "/")
-    candidates = re.findall(r'https?://i\.pinimg\.com/[^\"\'<>\s]+', raw)
-    result = []
-    seen = set()
-    for item in candidates:
-        item = item.replace("\\u0026", "&")
-        item = html.unescape(item)
-        # نفضل الصور العادية على الصور المصغرة.
-        item = re.sub(r'/(?:236x|474x|564x|736x|1200x)/', '/originals/', item)
-        if not re.search(r'\.(?:jpg|jpeg|png|webp)(?:[?&]|$)', item, re.I):
-            continue
-        if item not in seen:
-            seen.add(item)
-            result.append(item)
-        if len(result) >= limit:
-            break
-    return result
-
-
-def _custom_entity_for_suffix(text, emoji_id, alt="✨"):
-    offset = len(text.encode("utf-16-le")) // 2
-    length = len(alt.encode("utf-16-le")) // 2
-    return [types.MessageEntity(type="custom_emoji", offset=offset, length=length, custom_emoji_id=str(emoji_id))]
-
-
-def send_pinterest_image(message, query, label):
-    urls = _pinterest_image_urls(query, limit=10)
-    if not urls:
-        bot.reply_to(message, "تعذر جلب الصور حاليًا. حاول مرة أخرى بعد قليل.")
-        return True
-    random.shuffle(urls)
-    for image_url in urls[:5]:
-        try:
-            req = urllib.request.Request(image_url, headers={"User-Agent": PINTEREST_USER_AGENT, "Referer": "https://www.pinterest.com/"})
-            with urllib.request.urlopen(req, timeout=PINTEREST_TIMEOUT) as response:
-                image_bytes = response.read()
-            if not image_bytes:
-                continue
-            caption = f"{label}\nDeveloper - @L1_D_R✨"
-            entity = _custom_entity_for_suffix("Developer - @L1_D_R", MUTE_UI_EMOJI, "✨")
-            bio = io.BytesIO(image_bytes)
-            bio.name = "pinterest.jpg"
-            try:
-                bot.send_photo(
-                    message.chat.id,
-                    bio,
-                    caption=caption,
-                    caption_entities=entity,
-                    parse_mode=None,
-                    reply_to_message_id=message.message_id
-                )
-            except Exception:
-                bio.seek(0)
-                _original_send_photo(
-                    message.chat.id,
-                    bio,
-                    caption=caption,
-                    caption_entities=entity,
-                    parse_mode=None,
-                    reply_to_message_id=message.message_id
-                )
-            return True
-        except Exception as e:
-            print("[Pinterest Image Send Error]", repr(e))
-            continue
-    bot.reply_to(message, "تعذر إرسال الصور حاليًا.")
-    return True
-
-
-def image_menu_markup():
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(button("صور", callback_data="saved_images:random", style="primary", icon_custom_emoji_id=CE_COMMANDS))
-    return markup
-
-
-def start_inline_markup(user_id):
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    # أزرار الترحيب الخاص بدون أيقونات LeAaDeR / Dev / Updated Bot.
-    markup.row(button("‹ Updated Bot ›", url=SOURCE_CHANNEL_URL, style="primary"))
-    markup.row(
-        button("‹ LeAaDeR ›", url=SOURCE_DEVELOPER_URL, style="primary"),
-        button("‹ Dev ›", url=SOURCE_DEVELOPER_URL, style="primary")
-    )
-    markup.row(button("‹ Add Me To Your Group ›", url=ADD_TO_GROUP_URL, style="primary"))
-    return markup
-
-def start_keyboard_markup():
-    """لوحة كيبورد فعلية مثل الصورة المرجعية."""
-    markup = types.ReplyKeyboardMarkup(
-        resize_keyboard=True,
-        row_width=2,
-        selective=False
-    )
-    markup.row("السورس")
-    markup.row("المطور", "مطور السورس")
-    markup.row("يوت")
-    markup.row("غنائي", "تويت")
-    markup.row("قرآن", "حكمه")
-    markup.row("نكته", "صراحه")
-    markup.row("اختار", "اسأل")
-    markup.row("اقتباسات")
-    markup.row("انصحني", "صور")
-    markup.row("انمي", "استوري")
-    markup.row("هيدرات")
-    return markup
-
-
-# =========================================================
-# START الخاص
-# =========================================================
-def build_welcome_text(user, private=False, chat=None):
-    name = html.escape(full_name(user))
-    now_eg = datetime.now(timezone(timedelta(hours=3)))
-    time_text = now_eg.strftime("%I:%M %p").lstrip("0")
-    if private:
-        bot_name = html.escape(BOT_USERNAME)
-        username = html.escape(username_text(user))
-        display_name = html.escape(name)
-        return (
-            f"🔹 • أهلا بك عزيزي المُستخدِم <a href=\"tg://user?id={user.id}\">{display_name}</a> .\n"
-            "🔹 ─ ── ── ── ── ──\n"
-            f"🔹 • انا بوت (<a href=\"https://t.me/{BOT_USERNAME}\">{bot_name}</a>) ︕، يمڪنك أستخدامي في حمايه الجروبات من التفليش والروابط والاسبام والاباحي\n"
-            "🔹 ─ ── ── ── ── ──\n"
-            f"• UsE ⦉ <a href=\"tg://user?id={user.id}\">{username}</a> ⦊\n"
-            f"• ID  ⦉ <code>{user.id}</code> ⦊"
-        )
-    group_name = html.escape(getattr(chat, "title", "الجروب") or "الجروب")
-    joined = now_eg.strftime("%Y-%m-%d")
-    return (
-        f"⁣⁣ᯓ˹𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎{group_name}𝐆𝐑𝐎𝐔𝐏  ᯤ˼\n"
-        f"°•—————— ​​❬ {group_name}  ❭ —————•°\n"
-        f"°︙ نورت قروبنا يـ  『{name}』 🥂✨.\n"
-        f"°︙ اسمك ⇚『{name}』\n"
-        f"°︙ ايديك ⇚『<tg-spoiler>{user.id}</tg-spoiler>』\n"
-        f"°︙ يوزرك ⇚『<tg-spoiler>{html.escape(username_text(user))}</tg-spoiler>』\n\n"
-        f"°︙ تاريخ انضمامك ☜ {joined}\n"
-        f"°︙ الساعة ☜ {time_text}\n"
-        f"°•—————— ​​❬  ​{group_name} ❭ —————•°"
-    )
-
-def _private_welcome_media():
-    media_type = global_setting("private_welcome_media_type", "")
-    media_id = global_setting("private_welcome_media_id", "")
-    return (media_type, media_id) if media_type in ("photo", "video") and media_id else (None, None)
-
-def send_private_welcome(message):
-    user = message.from_user
-    text = build_welcome_text(user, private=True)
-    media_type, media_id = _private_welcome_media()
-    try:
-        if media_type == "photo":
-            return bot.send_photo(message.chat.id, media_id, caption=text, parse_mode="HTML", reply_markup=start_inline_markup(user.id))
-        if media_type == "video":
-            return bot.send_video(message.chat.id, media_id, caption=text, parse_mode="HTML", reply_markup=start_inline_markup(user.id))
-    except Exception as e:
-        print("[Private Welcome Media Error]", repr(e))
-    return bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=start_inline_markup(user.id))
-
-def private_inactive_days(user_id):
-    try:
-        row = _get_thread_db().execute("SELECT last_seen FROM bot_private_users WHERE user_id=?", (int(user_id),)).fetchone()
-        if not row or not row["last_seen"]:
-            return 0
-        delta = max(0, now() - int(row["last_seen"]))
-        return int(delta // 86400)
-    except Exception:
-        return 0
-
-
-def start_private(message):
-    user = message.from_user
-    inactive_days = private_inactive_days(user.id) if user else 0
-    track_private_user(message, notify=True)
-    if inactive_days >= 5:
-        days_text = str(inactive_days)
-        mk = types.InlineKeyboardMarkup(row_width=1)
-        mk.add(button("‹ /start ›", url=f"https://t.me/{BOT_USERNAME}?start=welcome", style="primary"))
-        bot.send_message(
-            message.chat.id,
-            f"اشتقنا لك منذ {days_text} أيام\n- /start",
-            reply_markup=mk
-        )
-    return send_private_welcome(message)
-
-
-# =========================================================
-# أزرار الكيبورد الفعلية
-# =========================================================
-def handle_start_keyboard_button(message):
-    raw = clean_text((message.text or "").strip())
-    if not raw:
-        return False
-
-    if raw == "السورس":
-        mk = types.InlineKeyboardMarkup(row_width=1)
-        mk.add(button("Source •", url=SOURCE_CHANNEL_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
-        bot.send_message(message.chat.id, "السورس", reply_markup=mk)
-        return True
-
-    if raw == "لوحة الأدمن":
-        if message.from_user and message.from_user.id == DEVELOPER_ID:
-            bot.send_message(message.chat.id, "لوحة الأدمن", reply_markup=admin_panel_markup())
-        else:
-            bot.send_message(message.chat.id, "غير مسموح لك بفتح لوحة الأدمن.")
-        return True
-
-    if raw in ("المطور", "مطور السورس"):
-        mk = types.InlineKeyboardMarkup(row_width=1)
-        try:
-            owner = bot.get_chat(DEVELOPER_ID)
-            owner_name = html.escape(((owner.first_name or "") + " " + (owner.last_name or "")).strip() or "المطور")
-            photos = bot.get_user_profile_photos(DEVELOPER_ID, limit=1)
-            if photos and photos.total_count:
-                mk.add(button(owner_name, url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
-                bot.send_photo(message.chat.id, photos.photos[0][-1].file_id, caption=f"<b>{owner_name}</b>", parse_mode="HTML", reply_markup=mk)
-                return True
-        except Exception as e:
-            print("[Developer Profile Error]", repr(e))
-        mk.add(button("@L1_D_R", url=SOURCE_DEVELOPER_URL, style="primary", icon_custom_emoji_id=WELCOME_DEV_EMOJI))
-        bot.send_message(message.chat.id, "المطور", reply_markup=mk)
-        return True
-
-    if raw == "يوت":
-        bot.send_message(message.chat.id, "اكتب: يوت اسم الأغنية")
-        return True
-
-    if raw == "تويت":
-        bot.send_message(message.chat.id, "اكتب التويتة بعد الأمر: <code>تويت نص التويتة</code>")
-        return True
-
-    if raw in ("قرآن", "قران"):
-        verses = [
-            "﴿إِنَّ مَعَ الْعُسْرِ يُسْرًا﴾",
-            "﴿وَقُلْ رَبِّ زِدْنِي عِلْمًا﴾",
-            "﴿فَاذْكُرُونِي أَذْكُرْكُمْ﴾",
-            "﴿وَاللَّهُ مَعَ الصَّابِرِينَ﴾",
-        ]
-        bot.send_message(message.chat.id, random.choice(verses))
-        return True
-
-    if raw in ("حكمه", "حكمة"):
-        items = [
-            "الوقت أغلى من المال، فلا تهدره.",
-            "النجاح يبدأ بخطوة.",
-            "الكلمة الطيبة تترك أثرًا طيبًا.",
-            "التعلم المستمر يصنع فرقًا.",
-        ]
-        bot.send_message(message.chat.id, random.choice(items))
-        return True
-
-    if raw == "نكته":
-        items = [
-            "مرة واحد راح للدكتور وقاله: كل ما أشرب شاي عيني بتوجعني. قاله: شيل المعلقة من الكوباية.",
-            "واحد سأل صاحبه: إيه أسرع حاجة؟ قاله: الإشاعة، بتوصل قبل الخبر.",
-            "واحد بخيل جدًا فتح الثلاجة بالليل وقال: بس بطمن على النور.",
-        ]
-        bot.send_message(message.chat.id, random.choice(items))
-        return True
-
-    if raw == "صراحه":
-        items = [
-            "إيه أكتر قرار غير حياتك؟",
-            "مين أكتر شخص نفسك تشكره؟",
-            "إيه الحاجة اللي نفسك تتعلمها؟",
-            "إيه هدفك الفترة الجاية؟",
-        ]
-        bot.send_message(message.chat.id, random.choice(items))
-        return True
-
-    if raw == "اختار":
-        items = ["اختيارك الأول", "اختيارك الثاني", "اختيارك الثالث", "اختيار عشوائي لك"]
-        bot.send_message(message.chat.id, random.choice(items))
-        return True
-
-    if raw == "اسأل":
-        bot.send_message(message.chat.id, "اكتب سؤالك بعد كلمة <code>اسأل</code>.")
-        return True
-
-    if raw == "اقتباسات":
-        items = [
-            "لا تؤجل ما تستطيع إنجازه اليوم.",
-            "كل بداية صغيرة قد تصنع نتيجة كبيرة.",
-            "كن هادئًا، ثم خذ خطوتك التالية.",
-            "ما تتعلمه اليوم يصنع قوتك غدًا.",
-        ]
-        bot.send_message(message.chat.id, random.choice(items))
-        return True
-
-    if raw == "انصحني":
-        items = [
-            "ركز على خطوة واحدة الآن بدل التفكير في كل الطريق.",
-            "حافظ على وقتك وابتعد عن ما يشتت هدفك.",
-            "تعلم شيئًا جديدًا كل يوم.",
-            "لا تستعجل النتيجة، اهتم بالاستمرار.",
-        ]
-        bot.send_message(message.chat.id, random.choice(items))
-        return True
-
-    if raw in ("صور", "صورة", "صوره"):
-        return send_random_bot_image(message)
-
-    if raw == "انمي":
-        return send_pinterest_image(message, "anime aesthetic", "انمي")
-
-    if raw == "استوري":
-        return send_pinterest_image(message, "aesthetic story wallpaper", "استوري")
-
-    if raw == "هيدرات":
-        bot.send_message(message.chat.id, "اكتب: <code>هيدرات النص</code> لإنشاء نص منسق للهيدر.")
-        return True
-
-    return False
 
 
 # =========================================================
@@ -7523,6 +6678,10 @@ def user_chat_membership_handler(message):
         user=getattr(new_member,'user',None)
         if not user:
             return
+        if getattr(user, 'is_bot', False):
+            register_known_bot(chat.id, user)
+        else:
+            register_member(chat.id, user)
         if getattr(user,'is_deleted',False) or (getattr(user,'first_name',None) == 'Deleted Account' and not getattr(user,'username',None)):
             remember_deleted_user(chat.id,user)
         status=getattr(new_member,'status','')
@@ -7544,10 +6703,21 @@ def bot_chat_membership_handler(message):
         if message.chat.type in ("group", "supergroup"):
             if new_status in ("member", "administrator") and old_status in ("left", "kicked", ""):
                 ensure_group(message.chat)
+                ensure_group_force_source(message.chat.id)
                 set_setting(message.chat.id, "adhan_enabled", "1")
                 # إذا كان المالك موجودًا بالفعل وقت إضافة البوت، يحصل على كامل الصلاحيات أيضًا.
                 ensure_developer_full_admin(message.chat.id)
                 notify_group_event("added", message)
+                try:
+                    title = html.escape(message.chat.title or "الجروب")
+                    username = getattr(message.chat, "username", None)
+                    group_link = f"https://t.me/{username}" if username else f"tg://chat?id={message.chat.id}"
+                    mk = types.InlineKeyboardMarkup(row_width=1)
+                    mk.add(button("إدارة قنوات الاشتراك", callback_data=f"gforce:panel:{int(message.chat.id)}", style="primary", icon_custom_emoji_id=CE_FORCE_SUB))
+                    mk.add(transparent_url_button("السورس", SOURCE_CHANNEL_URL, emoji_id=CE_FORCE_SUB))
+                    bot.send_message(message.chat.id, f"تم اضافة البوت لي <a href=\"{group_link}\">{title}</a>\n\n<b>قنوات الاشتراك الإجباري:</b> السورس + أي قنوات تضيفها المجموعة.", reply_markup=mk)
+                except Exception as add_notice_error:
+                    print("[Group Added Notice Error]", repr(add_notice_error))
             elif new_status in ("left", "kicked") and old_status in ("member", "administrator", "creator"):
                 ensure_group(message.chat)
                 notify_group_event("removed", message)
@@ -8720,6 +7890,19 @@ def main_handler(message):
             return
 
         if message.text:
+            # إدخال قناة الاشتراك الإجباري للمجموعة بعد الضغط على زر الإضافة.
+            pending_key = (int(message.chat.id), int(message.from_user.id)) if message.from_user else None
+            if pending_key in group_force_pending:
+                pending = group_force_pending.pop(pending_key, None)
+                if pending:
+                    if not admin_required(message):
+                        return
+                    ok, result = add_group_force_channel(message.chat.id, message.text.strip())
+                    if ok:
+                        bot.reply_to(message, f"تمت إضافة <b>{html.escape(str(result))}</b> إلى قنوات الاشتراك لهذه المجموعة.", reply_markup=group_force_admin_markup(message.chat.id))
+                    else:
+                        bot.reply_to(message, html.escape(str(result)))
+                    return
             _clean_command, _command_arg = command_parts(message)
             # تنزيل + الرابط: يقبل كل المسافات مثل «تنزيل+الرابط» و«تنزيل + الرابط».
             _raw_text = (message.text or "").strip()
@@ -9292,6 +8475,47 @@ def send_secret_whisper(message, session, secret_text):
     return True
 
 
+
+# =========================================================
+# إدارة الاشتراك الإجباري داخل المجموعة
+# =========================================================
+group_force_pending = {}
+
+def group_force_admin_markup(chat_id):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.row(
+        button("إضافة قناة", callback_data=f"gforce:add:{int(chat_id)}", style="primary", icon_custom_emoji_id=CE_FORCE_SUB),
+        button("حذف قناة", callback_data=f"gforce:delmenu:{int(chat_id)}", style="primary", icon_custom_emoji_id=CE_ERROR)
+    )
+    return markup
+
+def group_force_text(chat_id):
+    rows = get_force_channels(chat_id)
+    lines = ["<b>قنوات الاشتراك الإجباري لهذه المجموعة</b>", ""]
+    if not rows:
+        lines.append("لا توجد قنوات مضافة.")
+    else:
+        for i, row in enumerate(rows, 1):
+            lines.append(f"{i}. <b>{html.escape(row['title'] or row['username'] or '')}</b> — <code>{html.escape(row['username'] or '')}</code>")
+    return "\n".join(lines)
+
+def send_group_force_panel(message):
+    if message.chat.type not in ("group", "supergroup"):
+        bot.reply_to(message, "هذا الإعداد يعمل داخل المجموعة فقط.")
+        return True
+    if not admin_required(message):
+        return True
+    ensure_group_force_source(message.chat.id)
+    bot.reply_to(message, group_force_text(message.chat.id), reply_markup=group_force_admin_markup(message.chat.id))
+    return True
+
+def group_force_delete_markup(chat_id):
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for row in get_force_channels(chat_id):
+        markup.add(button(f"حذف {row['title'] or row['username']}", callback_data=f"gforce:delete:{int(chat_id)}:{int(row['id'])}", style="primary"))
+    markup.add(button("رجوع", callback_data=f"gforce:panel:{int(chat_id)}", style="primary"))
+    return markup
+
 # =========================================================
 # الأوامر الرئيسية
 # =========================================================
@@ -9319,6 +8543,9 @@ def handle_command(
         if not admin_required(message):
             return True
         return kick_all_known_bots(message)
+
+    if command in ("قنوات_الاشتراك", "قنواتالاشتراك", "اشتراك_اجباري", "اشتراكاجباري"):
+        return send_group_force_panel(message)
 
     if command == "المشرفين":
         return send_admins_list(message)
@@ -10935,7 +10162,52 @@ def callbacks(call):
             _send_broadcast_now(uid, chat_id)
             return
 
-        # فحص الاشتراك الإجباري لجميع القنوات مرة واحدة.
+        # إدارة قنوات الاشتراك الإجباري الخاصة بالمجموعة.
+        if call.data.startswith("gforce:"):
+            parts = call.data.split(":")
+            try:
+                group_id = int(parts[2])
+            except Exception:
+                group_id = chat_id
+            if group_id != chat_id or not admin_required(call.message):
+                bot.answer_callback_query(call.id, "هذا الإعداد لمشرفي المجموعة فقط.", show_alert=True)
+                return
+            action = parts[1]
+            if action == "panel":
+                ensure_group_force_source(group_id)
+                bot.answer_callback_query(call.id)
+                try:
+                    bot.edit_message_text(group_force_text(group_id), chat_id, call.message.message_id, reply_markup=group_force_admin_markup(group_id), parse_mode="HTML")
+                except Exception:
+                    pass
+                return
+            if action == "add":
+                group_force_pending[(int(chat_id), int(uid))] = True
+                bot.answer_callback_query(call.id, "أرسل الآن @username أو رابط القناة.")
+                bot.send_message(chat_id, "أرسل الآن رابط القناة أو @username لإضافتها لهذه المجموعة.")
+                return
+            if action == "delmenu":
+                bot.answer_callback_query(call.id)
+                try:
+                    bot.edit_message_text("اختر القناة التي تريد حذفها:", chat_id, call.message.message_id, reply_markup=group_force_delete_markup(group_id), parse_mode="HTML")
+                except Exception:
+                    pass
+                return
+            if action == "delete" and len(parts) == 4:
+                try:
+                    row_id = int(parts[3])
+                except Exception:
+                    bot.answer_callback_query(call.id, "بيانات غير صحيحة.", show_alert=True)
+                    return
+                removed = remove_group_force_channel(group_id, row_id)
+                bot.answer_callback_query(call.id, "تم حذف القناة." if removed else "القناة غير موجودة.")
+                try:
+                    bot.edit_message_text(group_force_text(group_id), chat_id, call.message.message_id, reply_markup=group_force_admin_markup(group_id), parse_mode="HTML")
+                except Exception:
+                    pass
+                return
+
+        # فحص الاشتراك الإجباري لجميع قنوات المجموعة مرة واحدة.
         if call.data.startswith("force_sub_check:"):
             try:
                 parts=call.data.split(":")
@@ -10946,7 +10218,7 @@ def callbacks(call):
                 else:
                     target=parts[1]
                 if target == "all":
-                    missing_now = force_sub_missing(uid)
+                    missing_now = force_sub_missing(uid, chat_id)
                     if not missing_now:
                         bot.answer_callback_query(call.id, "تم التحقق من الاشتراك.")
                         delete_message_safe(call.message)
@@ -10960,23 +10232,25 @@ def callbacks(call):
 
                 # دعم الزر القديم لو وُجدت رسالة اشتراك سابقة في المحادثة.
                 channel_id = int(target)
-                cursor.execute(
-                    "SELECT * FROM force_sub_channels WHERE id=? AND enabled=1",
-                    (channel_id,)
-                )
-                row = cursor.fetchone()
+                conn = _get_thread_db()
+                row = conn.execute(
+                    "SELECT id,channel_chat_id AS chat_id,username,title,url,button_text,emoji_id,enabled FROM group_force_sub_channels WHERE group_chat_id=? AND id=? AND enabled=1",
+                    (int(chat_id), channel_id)
+                ).fetchone()
+                if not row:
+                    row = conn.execute("SELECT * FROM force_sub_channels WHERE id=? AND enabled=1", (channel_id,)).fetchone()
                 if not row:
                     bot.answer_callback_query(call.id, "القناة لم تعد موجودة.", show_alert=True)
                     return
                 if user_subscribed_to_channel(uid, row):
-                    if not force_sub_missing(uid):
+                    if not force_sub_missing(uid, chat_id):
                         bot.answer_callback_query(call.id, "تم التحقق من الاشتراك.")
                         delete_message_safe(call.message)
                     else:
                         bot.answer_callback_query(call.id, "تم الاشتراك، باقي قنوات مطلوبة.")
                         try:
                             bot.edit_message_reply_markup(
-                                chat_id, call.message.message_id, reply_markup=force_sub_markup(uid)
+                                chat_id, call.message.message_id, reply_markup=force_sub_markup(uid, group_chat_id=chat_id)
                             )
                         except Exception:
                             pass
@@ -11941,7 +11215,8 @@ def run_bot_forever():
         print("[Bot Profile Setup Error]", repr(e))
 
     try:
-        setup_default_force_channel()
+        # الاشتراك الإجباري أصبح خاصًا بكل مجموعة؛ لا نضيف قناة عامة عند التشغيل.
+        ensure_default_force_channel()
     except Exception as e:
         print("[Startup Force Sub Error]", repr(e))
         traceback.print_exc()
@@ -12012,7 +11287,8 @@ def run_bot_forever():
             ):
                 conflict_count += 1
                 print(
-                    "شغال"
+                    "[POLLING 409] يوجد تشغيل آخر لنفس البوت بنفس التوكن. "
+                    "أغلق النسخة الأخرى أو غيّر التوكن من BotFather."
                 )
                 time.sleep(min(30, 5 + conflict_count * 3))
             else:
