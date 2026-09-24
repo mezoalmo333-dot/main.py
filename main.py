@@ -6823,6 +6823,78 @@ def new_members_handler_legacy_original(message):
         pass
 
 
+def build_welcome_text(user, private=False, chat=None):
+    """يبني رسالة البداية/الترحيب بشكل آمن حتى لا يتعطل /start."""
+    name = html.escape(full_name(user))
+    username = html.escape(username_text(user)) if username_text(user) else "بدون يوزر"
+    if private:
+        return (
+            f"<b>أهلاً بك يا <a href=\"tg://user?id={user.id}\">{name}</a></b>\n\n"
+            f"<b>أنا بوت <a href=\"https://t.me/{BOT_USERNAME}\">{html.escape(BOT_USERNAME)}</a> لحماية وإدارة المجموعات.</b>\n\n"
+            f"<b>اليوزر: @{username.lstrip('@')}</b>\n"
+            f"<b>الآيدي: <code>{user.id}</code></b>"
+        )
+    group_name = html.escape(getattr(chat, "title", None) or "الجروب")
+    group_username = getattr(chat, "username", None)
+    group_line = (
+        f"<b>يوزر الجروب: @{html.escape(group_username)}</b>\n"
+        if group_username else
+        "<b>يوزر الجروب: غير متوفر</b>\n"
+    )
+    try:
+        members = bot.get_chat_member_count(chat.id)
+    except Exception:
+        members = "غير معروف"
+    try:
+        admins_count = len(bot.get_chat_administrators(chat.id))
+    except Exception:
+        admins_count = "غير معروف"
+    return (
+        f"<b>أهلًا بك في {group_name}</b>\n\n"
+        f"<b>العضو: <a href=\"tg://user?id={user.id}\">{name}</a></b>\n"
+        f"<b>اليوزر: @{username.lstrip('@')}</b>\n"
+        f"<b>الآيدي: <code>{user.id}</code></b>\n"
+        f"<b>أعضاء الجروب: {members}</b>\n"
+        f"<b>المشرفين: {admins_count}</b>\n"
+        f"{group_line}"
+        f"<b>آيدي الجروب: <code>{chat.id}</code></b>"
+    )
+
+
+def start_private(message):
+    """معالجة /start في الخاص، مع مسار احتياطي إذا فشل إرسال الصورة."""
+    user = message.from_user
+    if not user:
+        return
+    text = build_welcome_text(user, private=True)
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.row(button("إضافة البوت إلى جروب", url=f"https://t.me/{BOT_USERNAME}?startgroup=true", style="primary"))
+    markup.row(button("السورس", url=SOURCE_CHANNEL_URL, style="primary"))
+    markup.row(button("المطور", url=SOURCE_DEVELOPER_URL, style="primary"))
+    try:
+        return send_welcome_with_bot_photo(
+            message.chat.id,
+            text,
+            reply_markup=markup,
+            reply_to_message_id=message.message_id
+        )
+    except Exception as exc:
+        print("[START SEND ERROR]", repr(exc))
+        traceback.print_exc()
+        try:
+            return bot.send_message(
+                message.chat.id,
+                text,
+                parse_mode="HTML",
+                reply_markup=markup,
+                reply_to_message_id=message.message_id
+            )
+        except Exception as fallback_exc:
+            print("[START TEXT FALLBACK ERROR]", repr(fallback_exc))
+            traceback.print_exc()
+            return None
+
+
 def group_welcome_caption(message, user):
     return build_welcome_text(user, private=False, chat=message.chat)
 
