@@ -5379,7 +5379,8 @@ def remove_force_channel(channel_id, group_chat_id=None):
 def user_subscribed_to_channel(user_id, row):
     try:
         member = bot.get_chat_member(row["chat_id"], user_id)
-        return member.status in ("creator", "administrator", "member")
+        # في بعض القنوات قد يظهر العضو بحالة restricted رغم أنه مشترك.
+        return member.status in ("creator", "administrator", "member", "restricted")
     except Exception as e:
         # لا نحذف رسائل المجموعة ولا نعطل الأوامر إذا كانت قناة الاشتراك
         # غير قابلة للفحص مؤقتًا (البوت ليس أدمن فيها، القناة حُذفت، 429...).
@@ -5464,7 +5465,12 @@ def send_force_sub_prompt(message, missing=None):
             force_prompt_messages.pop(key, None)
 
     try:
-        sent = bot.send_message(message.chat.id, text, reply_markup=markup)
+        sent = bot.send_message(
+            message.chat.id,
+            text,
+            parse_mode="HTML",
+            reply_markup=markup
+        )
         force_prompt_messages[key] = sent.message_id
 
         def expire_prompt():
@@ -8897,6 +8903,50 @@ def main_handler(message):
         # مالك البوت يحصل على كامل صلاحيات الإدارة في أي مجموعة يتواجد فيها.
         if message.from_user and message.from_user.id == DEVELOPER_ID:
             ensure_developer_full_admin(message.chat.id)
+
+        # استقبال اسم قناة الاشتراك الإجباري داخل نفس المجموعة التي بدأ منها المشرف العملية.
+        # كان هذا الاستقبال موجودًا في مسار الخاص فقط، لذلك زر «إضافة قناة» داخل المجموعة
+        # كان يطلب @username ثم لا يعالج الرسالة التالية.
+        if (
+            message.from_user
+            and message.from_user.id == DEVELOPER_ID
+            and message.text
+            and (
+                admin_pending.get(message.from_user.id) == "force_add"
+                or (
+                    isinstance(admin_pending.get(message.from_user.id), dict)
+                    and admin_pending.get(message.from_user.id).get("action") == "force_add"
+                )
+            )
+        ):
+            pending_data = admin_pending.get(message.from_user.id)
+            pending_group_id = (
+                pending_data.get("chat_id")
+                if isinstance(pending_data, dict)
+                else message.chat.id
+            )
+            if int(pending_group_id) != int(message.chat.id):
+                bot.send_message(
+                    message.chat.id,
+                    "تعذر الإضافة: هذه العملية مرتبطة بمجموعة أخرى. افتح «اجباري» من المجموعة المطلوبة ثم اضغط «إضافة قناة»."
+                )
+                return
+            admin_pending.pop(message.from_user.id, None)
+            ok, result = add_force_channel(message.text, message.chat.id)
+            if ok:
+                bot.send_message(
+                    message.chat.id,
+                    f"تمت إضافة القناة: <b>{html.escape(str(result))}</b>",
+                    parse_mode="HTML"
+                )
+                send_force_channels_admin(message.chat.id)
+            else:
+                bot.send_message(
+                    message.chat.id,
+                    f"تعذر الإضافة: {html.escape(str(result))}",
+                    parse_mode="HTML"
+                )
+            return
 
         # تنفيذ الحظر العام قبل أي رد أو أمر آخر.
         if enforce_global_ban(message):
