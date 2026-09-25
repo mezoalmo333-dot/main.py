@@ -17,6 +17,11 @@ import subprocess
 import tempfile
 import random
 import shutil
+try:
+    from PIL import Image, ImageFilter
+except Exception:
+    Image = None
+    ImageFilter = None
 import zipfile
 import platform
 import sys
@@ -5618,16 +5623,60 @@ def bot_images_markup():
     markup.row(button("رجوع", callback_data="admin:open", style="danger", icon_custom_emoji_id=ADMIN_BACK_EMOJI))
     return markup
 
+def _blur_bot_image_and_get_file_id(message):
+    """تحميل الصورة المضافة، تطبيق تشويش فعلي، ثم إعادة رفع النسخة المشوشة إلى تيليجرام.
+    نُخزّن file_id للنسخة المشوشة فقط حتى أي صورة يضيفها المطور تظهر مشوشة عند استخدامها.
+    """
+    if not message.photo or Image is None:
+        return None
+    temp_path = None
+    try:
+        source = message.photo[-1]
+        tg_file = bot.get_file(source.file_id)
+        data = bot.download_file(tg_file.file_path)
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+        # تشويش قوي وواضح مع الحفاظ على أبعاد الصورة.
+        img = img.filter(ImageFilter.GaussianBlur(radius=18))
+        out = io.BytesIO()
+        out.name = "reem_blurred.jpg"
+        img.save(out, format="JPEG", quality=92, optimize=True)
+        out.seek(0)
+
+        sent = bot.send_photo(
+            message.chat.id,
+            out,
+            caption="<b>تم حفظ الصورة بعد تطبيق التشويش.</b>",
+            parse_mode="HTML"
+        )
+        file_id = sent.photo[-1].file_id if sent and sent.photo else None
+        if sent:
+            try:
+                bot.delete_message(message.chat.id, sent.message_id)
+            except Exception:
+                pass
+        return file_id
+    except Exception as exc:
+        print("[Blur Image Error]", repr(exc))
+        return None
+    finally:
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+
+
 def add_bot_image(message):
-    """حفظ صورة واحدة؛ ويمكن استدعاؤها لكل عنصر في ألبوم Telegram،
-    لذلك يستطيع المطور إرسال عدة صور دفعة واحدة في Media Group."""
+    """حفظ صورة مشوشة؛ ويمكن استدعاؤها لكل عنصر في ألبوم Telegram."""
     if not message.photo:
         return False
-    photo = message.photo[-1]
     caption = message.caption or ""
+    blurred_file_id = _blur_bot_image_and_get_file_id(message)
+    if not blurred_file_id:
+        return False
     cursor.execute(
         "INSERT INTO bot_images(file_id,caption,added_at) VALUES(?,?,?)",
-        (photo.file_id, caption, now())
+        (blurred_file_id, caption, now())
     )
     db.commit()
     return True
@@ -7420,18 +7469,25 @@ def build_welcome_text(user, private=False, chat=None):
             "<b>• UsE ⦉ " + f"<a href=\"tg://user?id={user.id}\">{username}</a>" + " ⦊</b>\n"
             f"<b>• ID  ⦉ <code>{user.id}</code> ⦊</b>"
         )
-    group_name = html.escape(getattr(chat, "title", "الجروب") or "الجروب")
+    raw_group_name = getattr(chat, "title", "الجروب") or "الجروب"
+    group_name = html.escape(raw_group_name)
+    group_username = getattr(chat, "username", None)
+    group_link = (
+        f'<a href="https://t.me/{html.escape(group_username)}">{group_name}</a>'
+        if group_username else group_name
+    )
+    name_link = f'<a href="tg://user?id={int(user.id)}">{name}</a>'
     joined = now_eg.strftime("%Y-%m-%d")
     return (
-        f"⁣⁣ᯓ˹𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎{group_name}𝐆𝐑𝐎𝐔𝐏  ᯤ˼\n"
-        f"°•—————— ​​❬ {group_name}  ❭ —————•°\n"
-        f"°︙ نورت قروبنا يـ  『{name}』 🥂✨.\n"
-        f"°︙ اسمك ⇚『{name}』\n"
+        f"⁣⁣ᯓ˹𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎{group_link}𝐆𝐑𝐎𝐔𝐏  ᯤ˼\n"
+        f"°•—————— ​​❬ {group_link}  ❭ —————•°\n"
+        f"°︙ نورت قروبنا يـ  『{name_link}』 🥂✨.\n"
+        f"°︙ اسمك ⇚『{name_link}』\n"
         f"°︙ ايديك ⇚『<tg-spoiler>{user.id}</tg-spoiler>』\n"
         f"°︙ يوزرك ⇚『<tg-spoiler>{html.escape(username_text(user))}</tg-spoiler>』\n\n"
         f"°︙ تاريخ انضمامك ☜ {joined}\n"
         f"°︙ الساعة ☜ {time_text}\n"
-        f"°•—————— ​​❬  ​{group_name} ❭ —————•°"
+        f"°•—————— ​​❬  ​{group_link} ❭ —————•°"
     )
 
 def _private_welcome_media():
@@ -10987,15 +11043,32 @@ def callbacks(call):
             return
 
         if call.data.startswith("admin:"):
-            if uid != DEVELOPER_ID or chat_id != DEVELOPER_ID:
+            action = call.data.split(":", 1)[1]
+
+            # أزرار الاشتراك الإجباري تعمل من داخل المجموعة للمطور
+            # ولأي مشرف في المجموعة، بينما باقي لوحة الأدمن تظل للمطور فقط.
+            force_actions = (
+                action == "force_channels"
+                or action == "force_add"
+                or action == "force_remove"
+                or action == "force_help"
+                or action.startswith("force_delete:")
+            )
+            if force_actions and chat_id != DEVELOPER_ID and getattr(call.message.chat, "type", "") in ("group", "supergroup"):
+                if not is_admin(chat_id, uid):
+                    bot.answer_callback_query(
+                        call.id,
+                        "انت مش مشرف ينرم 😂❤🐤✨",
+                        show_alert=True
+                    )
+                    return
+            elif uid != DEVELOPER_ID or chat_id != DEVELOPER_ID:
                 bot.answer_callback_query(
                     call.id,
                     "❌ لوحة الأدمن للمطور فقط.",
                     show_alert=True
                 )
                 return
-
-            action = call.data.split(":", 1)[1]
 
             if action in ("refresh", "open"):
                 bot.answer_callback_query(call.id)
