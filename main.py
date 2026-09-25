@@ -2585,6 +2585,8 @@ def register_user(message, count_message=True):
     ensure_group(message.chat)
 
     u = message.from_user
+    if getattr(u, "is_deleted", False) or (getattr(u, "first_name", None) == "Deleted Account" and not getattr(u, "username", None)):
+        remember_deleted_user(message.chat.id, u)
     inc = 1 if count_message else 0
 
     cursor.execute("""
@@ -3192,9 +3194,10 @@ def get_target(message, argument=""):
 # أدوات البوتات داخل المجموعات
 # =========================================================
 def _known_bots(chat_id):
-    """يرجع البوتات التي تم اكتشافها فعليًا داخل المجموعة.
-    Telegram Bot API لا يوفّر endpoint لسرد كل أعضاء المجموعة، لذلك نعتمد
-    على البوتات التي ظهرت في الرسائل/الإضافة ونضيف إليها أي بوت موجود بين المشرفين.
+    """يجمع أكبر قدر ممكن من البوتات المعروفة داخل المجموعة.
+    Telegram Bot API لا يوفّر endpoint يسمح للبوت بسرد كل أعضاء المجموعة،
+    لذلك نفحص البوتات المسجلة سابقًا، والمشرفين، والأعضاء الذين يعرفهم البوت
+    في قاعدة البيانات عبر getChatMember.
     """
     found = {}
     try:
@@ -3222,6 +3225,34 @@ def _known_bots(chat_id):
                 }
     except Exception as e:
         print("[Known Bots Admin Read Error]", repr(e))
+
+    # وسّع الكشف إلى الأعضاء الذين سبق للبوت تسجيلهم في المجموعة.
+    # هذا لا يمكن أن يضمن كل أعضاء المجموعة بسبب محدودية Telegram Bot API،
+    # لكنه يمنع ظهور بوت واحد فقط بينما توجد بوتات أخرى سبق رصدها كأعضاء.
+    try:
+        rows = _get_thread_db().execute(
+            "SELECT user_id,first_name,last_name,username FROM group_users WHERE chat_id=? AND user_id>0",
+            (int(chat_id),)
+        ).fetchall()
+        for row in rows:
+            uid = int(row["user_id"])
+            if uid in found:
+                continue
+            try:
+                member = bot.get_chat_member(chat_id, uid)
+                u = getattr(member, "user", None)
+                if u and getattr(u, "is_bot", False):
+                    found[uid] = {
+                        "id": uid,
+                        "name": full_name(u),
+                        "username": getattr(u, "username", None) or ""
+                    }
+                    register_known_bot(chat_id, u)
+            except Exception:
+                continue
+    except Exception as e:
+        print("[Known Bots Member Scan Error]", repr(e))
+
     return list(found.values())
 
 
@@ -3842,7 +3873,7 @@ def send_settings(message):
 # =========================================================
 # كل أمر له زر مستقل. callback_data قصيرة حتى لا تتجاوز حد Telegram.
 COMMAND_BUTTONS = {
-    "groups": ["رتبتي", "ا", "معلومات", "احصائيات", "السجل", "الاعدادات", "الساعة", "المالك", "المطور", "يوت", "تنزيل"],
+    "groups": ["رتبتي", "ا", "معلومات", "احصائيات", "السجل", "الاعدادات", "الساعة", "المالك", "المطور", "يوت"],
     "protection": ["منع كلمة ...", "الغاء منع كلمة ...", "قائمة الكلمات", "قفل الروابط", "قفل التكرار", "قفل حماية الجدد"],
     "locks": ["قفل الروابط", "قفل الصور", "قفل الفيديو", "قفل الملفات", "قفل الملصقات", "قفل الصوت", "قفل المتحركات", "قفل التكرار", "قفل حماية الجدد", "قفل الجروب", "قفل الكل"],
     "unlocks": ["فتح الروابط", "فتح الصور", "فتح الفيديو", "فتح الملفات", "فتح الملصقات", "فتح الصوت", "فتح المتحركات", "فتح التكرار", "فتح حماية الجدد", "فتح الجروب", "فتح الكل"],
@@ -3910,7 +3941,6 @@ def commands_menu_markup(viewer_id=None, chat_id=None):
         button("أوامر الردود", callback_data=f"cmdcat:{token}:replies", style="primary"),
         button("المكتومين", callback_data=f"cmdpick:{token}:المكتومين", style="primary")
     )
-    markup.row(button("كل الأوامر", callback_data=f"cmdcat:{token}:all", style="primary"))
     return markup
 
 def command_category_text(category, viewer_id=None, chat_id=None):
@@ -4132,6 +4162,8 @@ def moderator_panel(call, token):
 # =========================================================
 reply_pending = {}
 admin_pending = {}
+# رسائل الاشتراك الإجباري الحالية لكل مستخدم/مجموعة؛ يتم تعديلها بدل تكرارها.
+force_prompt_messages = {}
 music_pending = {}
 broadcast_pending = {}
 updates_broadcast_pending = {}
@@ -5378,8 +5410,16 @@ def send_force_sub_prompt(message, missing=None):
     if not message.from_user:
         return True
     missing = missing if missing is not None else force_sub_missing(message.from_user.id)
+    key = (int(message.chat.id), int(message.from_user.id))
     if not missing:
+        old = force_prompt_messages.pop(key, None)
+        if old:
+            try:
+                bot.delete_message(message.chat.id, old)
+            except Exception:
+                pass
         return False
+
     markup = force_sub_markup(message.from_user.id, get_force_channels())
     user_mention = mention(message.from_user, owner=True)
     text = (
@@ -5389,9 +5429,36 @@ def send_force_sub_prompt(message, missing=None):
         "لازم تشترك في القنوات المطلوبة قبل التحدث في المجموعة.\n"
         "اشترك من الأزرار بالأسفل، وبعدها اضغط على <b>تحقق من الاشتراك</b>."
     )
+
+    old_id = force_prompt_messages.get(key)
+    if old_id:
+        try:
+            bot.edit_message_text(
+                text,
+                message.chat.id,
+                old_id,
+                parse_mode="HTML",
+                reply_markup=markup
+            )
+            return True
+        except Exception:
+            force_prompt_messages.pop(key, None)
+
     try:
         sent = bot.send_message(message.chat.id, text, reply_markup=markup)
-        Thread(target=lambda: (time.sleep(90), delete_message_safe(sent)), daemon=True).start()
+        force_prompt_messages[key] = sent.message_id
+
+        def expire_prompt():
+            time.sleep(90)
+            current = force_prompt_messages.get(key)
+            if current == sent.message_id:
+                try:
+                    bot.delete_message(message.chat.id, sent.message_id)
+                except Exception:
+                    pass
+                force_prompt_messages.pop(key, None)
+
+        Thread(target=expire_prompt, daemon=True).start()
     except Exception as e:
         print("[Force Sub Prompt]", e)
     return True
@@ -5451,9 +5518,31 @@ def force_channels_admin_markup():
         button("إضافة قناة", callback_data="admin:force_add", style="primary", icon_custom_emoji_id=CE_FORCE_SUB),
         button("حذف قناة", callback_data="admin:force_remove", style="primary", icon_custom_emoji_id=CE_ERROR)
     )
+    markup.row(
+        button("‹ Help ›", callback_data="admin:force_help", style="danger", icon_custom_emoji_id=CE_REPLY_BUTTON)
+    )
     markup.row(button("تحديث", callback_data="admin:force_channels", style="primary", icon_custom_emoji_id=CE_REPLY_BUTTON))
     markup.row(button("رجوع", callback_data="admin:open", style="danger", icon_custom_emoji_id=ADMIN_BACK_EMOJI))
     return markup
+
+
+def force_channels_help_markup():
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.row(button("رجوع", callback_data="admin:force_channels", style="danger", icon_custom_emoji_id=ADMIN_BACK_EMOJI))
+    return markup
+
+
+def force_channels_help_text():
+    return (
+        "<b>‹ Help › — تفعيل الاشتراك الإجباري</b>\n\n"
+        "1. أضف البوت إلى القناة التي تريد جعلها إجبارية.\n"
+        "2. اجعل البوت <b>مشرفًا</b> داخل القناة حتى يستطيع التحقق من اشتراك الأعضاء.\n"
+        "3. تأكد أن القناة لديها <b>@username</b> عام.\n"
+        "4. ارجع للمجموعة واكتب <code>اجباري</code>.\n"
+        "5. اضغط <b>إضافة قناة</b> وأرسل <code>@username</code> الخاص بالقناة.\n"
+        "6. بعد الإضافة ستظهر القناة في قائمة الإجباري، ويبدأ التحقق من الاشتراك تلقائيًا.\n\n"
+        "<b>مهم:</b> يجب أن يكون البوت موجودًا ومشرفًا في كل قناة إجبارية مضافة."
+    )
 
 
 def send_force_channels_admin(chat_id, message_id=None):
@@ -5703,7 +5792,7 @@ def _youtube_runtime_options(yt_dlp, use_cookies=True):
         # Deno/Bun يستطيعان تنزيل EJS من npm عند الحاجة. هذا مهم على Railway
         # عندما تكون حزمة yt-dlp-ejs غير موجودة أو قديمة داخل البيئة.
         if runtime_name in ("deno", "bun"):
-            opts["remote_components"] = ["ejs:npm"]
+            opts["remote_components"] = ["ejs:npm", "ejs:github"]
 
     if not use_cookies:
         return opts
@@ -6076,10 +6165,12 @@ def download_youtube_song(query):
         if not is_direct_url:
             search_clients = [
                 None,
-                ["web"],
                 ["web_embedded"],
+                ["tv_simply"],
+                ["tv"],
                 ["web_safari"],
                 ["mweb"],
+                ["web"],
             ]
             for clients in search_clients:
                 try:
@@ -6132,13 +6223,18 @@ def download_youtube_song(query):
         # نجرب أولًا الإعدادات المعتادة مع cookies.txt، ثم محاولات عامة بدون
         # cookies حتى لا تتحول جلسة cookies تالفة/منتهية إلى سبب فشل التنزيل.
         download_profiles = [
-            (True, None),
-            (True, ["web"]),
-            (True, ["web_embedded"]),
+            # العملاء الأقل احتياجًا إلى PO Token أولًا.
+            (False, ["tv_simply"]),
+            (False, ["tv"]),
             (False, ["web_embedded"]),
+            (True, ["tv_simply"]),
+            (True, ["tv"]),
+            (True, ["web_embedded"]),
             (False, ["web_safari"]),
             (False, ["mweb"]),
             (False, ["web"]),
+            (True, ["web"]),
+            (True, None),
             (False, None),
         ]
         for use_cookies, clients in download_profiles:
@@ -6188,11 +6284,14 @@ def download_youtube_song(query):
         if any(x in msg for x in (
             "sign in", "not a bot", "confirm you're not", "http error 429",
             "too many requests", "login_required", "po token", "proof of origin",
-            "http error 403"
+            "http error 403", "javascript runtime", "challenge"
         )):
+            runtime_name, runtime_path = _find_js_runtime()
+            runtime_status = runtime_name or "غير موجود"
             return None, (
                 "❌ يوتيوب رفض تنزيل هذه النتيجة حاليًا.\n"
-                "حدّث yt-dlp وEJS وJavaScript Runtime ثم جرّب نتيجة أخرى."
+                f"Runtime: {runtime_status}\n"
+                "تمت تجربة عدة عملاء تلقائيًا. تأكد من تثبيت Deno + yt-dlp-ejs ثم أعد تشغيل البوت."
             )
         if "ffmpeg" in msg:
             return None, "❌ يلزم FFmpeg لتحويل الملف إلى رسالة صوتية في Telegram."
@@ -7203,14 +7302,24 @@ def image_menu_markup():
 
 
 def start_inline_markup(user_id):
+    # ترحيب الخاص: Developer و Source جنب بعض، Help باللون الأحمر،
+    # وزر إضافة البوت للجروب منفرد باللون الأزرق.
     markup = types.InlineKeyboardMarkup(row_width=2)
-    # أزرار الترحيب الخاص بدون أيقونات LeAaDeR / Dev / Updated Bot.
-    markup.row(button("‹ Updated Bot ›", url=SOURCE_CHANNEL_URL, style="primary"))
     markup.row(
-        button("‹ LeAaDeR ›", url=SOURCE_DEVELOPER_URL, style="primary"),
-        button("‹ Dev ›", url=SOURCE_DEVELOPER_URL, style="primary")
+        button("‹ Developer ›", url=SOURCE_DEVELOPER_URL, style="primary"),
+        button("‹ Source ›", url=SOURCE_CHANNEL_URL, style="primary")
     )
-    markup.row(button("‹ Add Me To Your Group ›", url=ADD_TO_GROUP_URL, style="primary"))
+    markup.row(
+        button("‹ Help ›", callback_data=f"cmdcat:{int(user_id)}:home", style="danger")
+    )
+    markup.row(
+        button(
+            "‹ Add Me To Your Group ›",
+            url=ADD_TO_GROUP_URL,
+            style="primary",
+            icon_custom_emoji_id="5201842613983917014"
+        )
+    )
     return markup
 
 def start_keyboard_markup():
@@ -7244,14 +7353,15 @@ def build_welcome_text(user, private=False, chat=None):
     if private:
         bot_name = html.escape(BOT_USERNAME)
         username = html.escape(username_text(user))
-        display_name = html.escape(name)
+        display_name = html.escape(full_name(user))
         return (
-            f"🔹 • أهلا بك عزيزي المُستخدِم <a href=\"tg://user?id={user.id}\">{display_name}</a> .\n"
-            "🔹 ─ ── ── ── ── ──\n"
-            f"🔹 • انا بوت (<a href=\"https://t.me/{BOT_USERNAME}\">{bot_name}</a>) ︕، يمڪنك أستخدامي في حمايه الجروبات من التفليش والروابط والاسبام والاباحي\n"
-            "🔹 ─ ── ── ── ── ──\n"
-            f"• UsE ⦉ <a href=\"tg://user?id={user.id}\">{username}</a> ⦊\n"
-            f"• ID  ⦉ <code>{user.id}</code> ⦊"
+            f"<b>• أهلا بك عزيزي المُستخدِم <a href=\"tg://user?id={user.id}\">{display_name}</a> .</b>\n"
+            "<b>─ ── ── ── ── ──</b>\n"
+            f"<b>• انا بوت (<a href=\"https://t.me/{BOT_USERNAME}\">{bot_name}</a>) ︕، يمڪنك أستخدامي في حمايه الجروبات من التفليش والروابط والاسبام والاباحي</b>\n"
+            "<b>─ ── ── ── ── ──</b>\n"
+            "<b>ضيف البوت في جروبك وي اطمن وتقدر كمان تضيف اجباري لي جروبك</b>\n"
+            "<b>• UsE ⦉ " + f"<a href=\"tg://user?id={user.id}\">{username}</a>" + " ⦊</b>\n"
+            f"<b>• ID  ⦉ <code>{user.id}</code> ⦊</b>"
         )
     group_name = html.escape(getattr(chat, "title", "الجروب") or "الجروب")
     joined = now_eg.strftime("%Y-%m-%d")
@@ -7275,15 +7385,43 @@ def _private_welcome_media():
 def send_private_welcome(message):
     user = message.from_user
     text = build_welcome_text(user, private=True)
+    markup = start_inline_markup(user.id)
     media_type, media_id = _private_welcome_media()
     try:
         if media_type == "photo":
-            return bot.send_photo(message.chat.id, media_id, caption=text, parse_mode="HTML", reply_markup=start_inline_markup(user.id))
+            return bot.send_photo(message.chat.id, media_id, caption=text, parse_mode="HTML", reply_markup=markup)
         if media_type == "video":
-            return bot.send_video(message.chat.id, media_id, caption=text, parse_mode="HTML", reply_markup=start_inline_markup(user.id))
+            return bot.send_video(message.chat.id, media_id, caption=text, parse_mode="HTML", reply_markup=markup)
     except Exception as e:
         print("[Private Welcome Media Error]", repr(e))
-    return bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=start_inline_markup(user.id))
+
+    # صورة البوت نفسها كترحيب افتراضي إذا لم يتم تعيين صورة خاصة للترحيب.
+    try:
+        me = bot.get_me()
+        photos = bot.get_user_profile_photos(me.id, limit=1)
+        if photos and photos.total_count:
+            return bot.send_photo(
+                message.chat.id,
+                photos.photos[0][-1].file_id,
+                caption=text,
+                parse_mode="HTML",
+                reply_markup=markup
+            )
+    except Exception as e:
+        print("[Private Bot Photo Error]", repr(e))
+
+    # fallback للصورة المرفقة بالمشروع.
+    try:
+        if os.path.isfile(WELCOME_IMAGE_PATH):
+            with open(WELCOME_IMAGE_PATH, "rb") as photo:
+                return bot.send_photo(
+                    message.chat.id, photo, caption=text,
+                    parse_mode="HTML", reply_markup=markup
+                )
+    except Exception as e:
+        print("[Private Welcome Image Fallback Error]", repr(e))
+
+    return bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=markup)
 
 def private_inactive_days(user_id):
     try:
@@ -7897,12 +8035,93 @@ def perform_broadcast(source_message, scope="all", reply_markup=None, progress_c
 
 
 def updates_broadcast_markup(buttons):
-    """إنشاء أزرار روابط شفافة لتحديثات البوت؛ يدعم عددًا كبيرًا من الأزرار."""
-    markup = types.InlineKeyboardMarkup(row_width=1)
+    """إنشاء أزرار تحديثات، مع صفين كحد أقصى 2 زر في الصف."""
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    row = []
     for item in buttons[:30]:
-        b = transparent_url_button(item.get("text", "زر"), item.get("url", ""), item.get("emoji_id") or None)
-        if b:
-            markup.row(b)
+        kind = item.get("type", "url")
+        text = item.get("text", "زر")
+        emoji_id = item.get("emoji_id") or None
+        style = item.get("style", "primary")
+        b = None
+        if kind == "copy":
+            # زر نسخ حقيقي إن كانت نسخة pyTelegramBotAPI تدعمه، وإلا fallback داخلي.
+            b = copy_text_button(text, item.get("copy_text", ""), emoji_id)
+            if b is not None:
+                try:
+                    b.style = style
+                except Exception:
+                    pass
+        else:
+            kwargs = {"text": strip_non_custom_emoji(str(text or "زر")).strip(), "url": item.get("url", ""), "style": style}
+            if kwargs["text"] and not (kwargs["text"].startswith("‹") and kwargs["text"].endswith("›")):
+                kwargs["text"] = f"‹ {kwargs['text'].strip('‹› ').strip()} ›"
+            if emoji_id:
+                kwargs["icon_custom_emoji_id"] = str(emoji_id)
+            try:
+                b = types.InlineKeyboardButton(**kwargs)
+            except TypeError:
+                kwargs.pop("icon_custom_emoji_id", None)
+                try:
+                    b = types.InlineKeyboardButton(**kwargs)
+                except TypeError:
+                    kwargs.pop("style", None)
+                    b = types.InlineKeyboardButton(**kwargs)
+        if b is not None:
+            row.append(b)
+            if len(row) == 2:
+                markup.row(*row)
+                row = []
+    if row:
+        markup.row(*row)
+    return markup
+
+
+def broadcast_buttons_markup(buttons):
+    """واجهة الأزرار الفعلية للإذاعة، حتى 7 أزرار."""
+    return updates_broadcast_markup(buttons[:7])
+
+
+def _send_broadcast_now(uid, chat_id):
+    data = broadcast_pending.get(uid)
+    if not data:
+        bot.send_message(chat_id, "انتهت عملية الإذاعة. ابدأ من جديد.")
+        admin_pending.pop(uid, None)
+        return False
+    source = data.get("message")
+    buttons = data.get("buttons", [])[:7]
+    markup = broadcast_buttons_markup(buttons) if buttons else None
+    admin_pending.pop(uid, None)
+    broadcast_pending.pop(uid, None)
+    ok, failed = perform_broadcast(source, data.get("scope", "all"), markup if markup and markup.keyboard else None, progress_chat_id=chat_id)
+    bot.send_message(chat_id, f"تمت الإذاعة إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
+    return True
+
+
+def broadcast_add_more_markup(uid):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.row(
+        button("إضافة زر آخر", callback_data=f"broadcast_btn_more_yes:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI),
+        button("إرسال الآن", callback_data=f"broadcast_btn_more_no:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI),
+    )
+    return markup
+
+
+def broadcast_button_type_markup(uid):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.row(
+        button("زر رابط", callback_data=f"broadcast_btn_type:{uid}:url", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI),
+        button("زر نسخ", callback_data=f"broadcast_btn_type:{uid}:copy", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI),
+    )
+    return markup
+
+
+def broadcast_button_style_markup(uid):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.row(
+        button("اللون الأساسي", callback_data=f"broadcast_btn_style:{uid}:primary", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI),
+        button("اللون التحذيري", callback_data=f"broadcast_btn_style:{uid}:danger", style="danger", icon_custom_emoji_id=BROADCAST_UI_EMOJI),
+    )
     return markup
 
 
@@ -8054,7 +8273,7 @@ def broadcast_scope_markup():
 def broadcast_button_choice(uid):
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.row(
-        button("زر شفاف", callback_data=f"broadcast_btn_yes:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI),
+        button("إضافة أزرار", callback_data=f"broadcast_btn_yes:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI),
         button("إرسال الآن", callback_data=f"broadcast_btn_no:{uid}", style="primary", icon_custom_emoji_id=BROADCAST_UI_EMOJI)
     )
     return markup
@@ -8411,7 +8630,7 @@ def main_handler(message):
 
             if message.from_user and message.from_user.id == DEVELOPER_ID and str(admin_pending.get(message.from_user.id, "")).startswith("broadcast_message:"):
                 pending_scope = str(admin_pending.pop(message.from_user.id)).split(":", 1)[1]
-                broadcast_pending[message.from_user.id] = {"message": message, "scope": pending_scope}
+                broadcast_pending[message.from_user.id] = {"message": message, "scope": pending_scope, "buttons": []}
                 bot.send_message(
                     message.chat.id,
                     "تم تجهيز رسالة الإذاعة. هل تريد إضافة زر شفاف؟",
@@ -8443,15 +8662,19 @@ def main_handler(message):
                     data = broadcast_pending.get(message.from_user.id)
                     if not data:
                         admin_pending.pop(message.from_user.id, None)
-                        bot.send_message(message.chat.id, "انتهت عملية الإذاعة. ابدأها من لوحة الأدمن مرة أخرى.")
+                        bot.send_message(message.chat.id, "انتهت عملية الإذاعة.")
                         return
                     text = strip_non_custom_emoji((message.text or "").strip()).strip()
                     if not text:
-                        bot.send_message(message.chat.id, "أرسل اسم الزر بدون Emoji عادي؛ Premium Emoji يمكن إرساله وسيتم التقاطه تلقائيًا.")
+                        bot.send_message(message.chat.id, "أرسل اسم الزر.")
                         return
                     data["button_text"] = text
-                    admin_pending[message.from_user.id] = "broadcast_button_url"
-                    bot.send_message(message.chat.id, "أرسل رابط الزر كاملًا. يدعم Telegram وhttp/https.")
+                    if data.get("button_type") == "copy":
+                        admin_pending[message.from_user.id] = "broadcast_copy_value"
+                        bot.send_message(message.chat.id, "أرسل النص الذي سيُنسخ عند الضغط على الزر.")
+                    else:
+                        admin_pending[message.from_user.id] = "broadcast_button_url"
+                        bot.send_message(message.chat.id, "أرسل رابط الزر كاملًا. يدعم Telegram وhttp/https.")
                     return
 
                 if pending == "broadcast_button_url":
@@ -8465,6 +8688,23 @@ def main_handler(message):
                         bot.send_message(message.chat.id, "أرسل رابطًا صالحًا يبدأ بـ https:// أو http:// أو tg://")
                         return
                     data["button_url"] = url
+                    data["button_emoji_id"] = extract_custom_emoji_id(message) or ""
+                    admin_pending[message.from_user.id] = "broadcast_button_emoji"
+                    bot.send_message(message.chat.id, "أرسل Premium Emoji للزر، أو اكتب تخطي.")
+                    return
+
+                if pending == "broadcast_copy_value":
+                    data = broadcast_pending.get(message.from_user.id)
+                    if not data:
+                        admin_pending.pop(message.from_user.id, None)
+                        bot.send_message(message.chat.id, "انتهت عملية الإذاعة.")
+                        return
+                    value = (message.text or "").strip()
+                    if not value:
+                        bot.send_message(message.chat.id, "أرسل النص الذي تريد نسخه.")
+                        return
+                    data["copy_text"] = value
+                    data["button_emoji_id"] = extract_custom_emoji_id(message) or ""
                     admin_pending[message.from_user.id] = "broadcast_button_emoji"
                     bot.send_message(message.chat.id, "أرسل Premium Emoji للزر، أو اكتب تخطي.")
                     return
@@ -8479,16 +8719,14 @@ def main_handler(message):
                     emoji_id = extract_custom_emoji_id(message)
                     if raw and clean_text(raw) in ("تخطي", "بدون", "لا"):
                         emoji_id = ""
-                    data["button_emoji_id"] = emoji_id or ""
-                    admin_pending.pop(message.from_user.id, None)
-                    source = data["message"]
-                    b = transparent_url_button(data.get("button_text", "زر"), data.get("button_url", ""), data.get("button_emoji_id") or None)
-                    markup = types.InlineKeyboardMarkup()
-                    if b:
-                        markup.add(b)
-                    ok, failed = perform_broadcast(source, data.get("scope", "all"), markup if markup.keyboard else None)
-                    broadcast_pending.pop(message.from_user.id, None)
-                    bot.send_message(message.chat.id, f"تمت الإذاعة إلى <b>{ok}</b> جهة مع محاولة تثبيت الرسالة. تعذر الإرسال إلى <b>{failed}</b>.")
+                    data["button_emoji_id"] = emoji_id or data.get("button_emoji_id", "") or ""
+                    admin_pending[message.from_user.id] = "broadcast_button_style"
+                    bot.send_message(message.chat.id, "اختر لون الزر:", reply_markup=broadcast_button_style_markup(message.from_user.id))
+                    return
+
+                if pending == "broadcast_button_style":
+                    # اللون يتم اختياره من الزر وليس من رسالة نصية.
+                    bot.send_message(message.chat.id, "اختر لون الزر من الأزرار الظاهرة بالأعلى.")
                     return
 
             if message.from_user and message.from_user.id == DEVELOPER_ID and message.document and admin_pending.get(message.from_user.id) == "restore_members":
@@ -8577,13 +8815,6 @@ def main_handler(message):
 
         if continue_reply_setup(message):
             return
-
-        if message.text:
-            # إرسال أي رابط فيديو/منصة مدعومة مباشرةً يبدأ التنزيل بدون الحاجة لكتابة الأمر.
-            _direct_url = (message.text or "").strip().strip("<>")
-            if re.match(r"^https?://\S+$", _direct_url, re.I) and _valid_social_url(_direct_url):
-                handle_social_download(message, _direct_url)
-                return
 
         if message.text:
             _clean_command, _command_arg = command_parts(message)
@@ -8777,7 +9008,17 @@ def handle_private(message):
         return
 
     if command == "الاوامر":
+        if message.chat.type in ("group", "supergroup") and not is_admin(message.chat.id, message.from_user.id):
+            bot.reply_to(message, "انت مش مشرف ينرم 😂❤🐤✨")
+            return
         send_commands_menu(message)
+        return
+
+    if command == "اجباري":
+        if message.chat.type in ("group", "supergroup") and not is_admin(message.chat.id, message.from_user.id):
+            bot.reply_to(message, "انت مش مشرف ينرم 😂❤🐤✨")
+            return
+        send_force_channels_admin(message.chat.id)
         return
 
     if command == "يوت":
@@ -9526,10 +9767,6 @@ def handle_command(
         command in admin_commands
         and not admin_required(message)
     ):
-        try:
-            bot.reply_to(message, "انت مش مشرف ينرم 😂❤🐤✨")
-        except Exception:
-            pass
         return True
 
     actor_rank = get_rank(
@@ -10614,6 +10851,19 @@ def callbacks(call):
                 send_force_channels_admin(chat_id, call.message.message_id)
                 return
 
+            if action == "force_help":
+                bot.answer_callback_query(call.id)
+                try:
+                    bot.edit_message_text(
+                        force_channels_help_text(),
+                        chat_id,
+                        call.message.message_id,
+                        reply_markup=force_channels_help_markup()
+                    )
+                except Exception:
+                    bot.send_message(chat_id, force_channels_help_text(), reply_markup=force_channels_help_markup())
+                return
+
             if action == "welcome_photo":
                 admin_pending[uid] = "welcome_photo"
                 bot.answer_callback_query(call.id)
@@ -10706,9 +10956,90 @@ def callbacks(call):
             if uid != DEVELOPER_ID or target_uid != uid or uid not in broadcast_pending:
                 bot.answer_callback_query(call.id, "هذه العملية ليست لك أو انتهت.", show_alert=True)
                 return
+            admin_pending[uid] = "broadcast_button_type_wait"
+            bot.answer_callback_query(call.id)
+            bot.send_message(chat_id, "اختر نوع الزر:", reply_markup=broadcast_button_type_markup(uid))
+            return
+
+        if call.data.startswith("broadcast_btn_type:"):
+            try:
+                _, target_uid, kind = call.data.split(":", 2)
+                target_uid = int(target_uid)
+            except Exception:
+                bot.answer_callback_query(call.id, "اختيار غير صالح.", show_alert=True)
+                return
+            if uid != DEVELOPER_ID or target_uid != uid or uid not in broadcast_pending:
+                bot.answer_callback_query(call.id, "هذه العملية ليست لك أو انتهت.", show_alert=True)
+                return
+            if kind not in ("url", "copy"):
+                bot.answer_callback_query(call.id, "نوع غير صالح.", show_alert=True)
+                return
+            broadcast_pending[uid]["button_type"] = kind
             admin_pending[uid] = "broadcast_button_text"
             bot.answer_callback_query(call.id)
-            bot.send_message(chat_id, "أرسل اسم الزر الشفاف.")
+            bot.send_message(chat_id, "أرسل اسم الزر.")
+            return
+
+        if call.data.startswith("broadcast_btn_style:"):
+            try:
+                _, target_uid, style = call.data.split(":", 2)
+                target_uid = int(target_uid)
+            except Exception:
+                bot.answer_callback_query(call.id, "اختيار غير صالح.", show_alert=True)
+                return
+            data = broadcast_pending.get(uid)
+            if uid != DEVELOPER_ID or target_uid != uid or not data:
+                bot.answer_callback_query(call.id, "هذه العملية ليست لك أو انتهت.", show_alert=True)
+                return
+            if style not in ("primary", "danger"):
+                bot.answer_callback_query(call.id, "لون غير صالح.", show_alert=True)
+                return
+            item = {
+                "type": data.get("button_type", "url"),
+                "text": data.get("button_text", "زر"),
+                "url": data.get("button_url", ""),
+                "copy_text": data.get("copy_text", ""),
+                "emoji_id": data.get("button_emoji_id", ""),
+                "style": style,
+            }
+            data.setdefault("buttons", []).append(item)
+            for key in ("button_type", "button_text", "button_url", "copy_text", "button_emoji_id"):
+                data.pop(key, None)
+            count = len(data["buttons"])
+            bot.answer_callback_query(call.id, f"تمت إضافة الزر {count}")
+            if count >= 7:
+                _send_broadcast_now(uid, chat_id)
+            else:
+                admin_pending.pop(uid, None)
+                bot.send_message(chat_id, f"تمت إضافة الزر رقم <b>{count}</b>. يمكنك إضافة حتى 7 أزرار.", reply_markup=broadcast_add_more_markup(uid))
+            return
+
+        if call.data.startswith("broadcast_btn_more_yes:"):
+            try:
+                target_uid = int(call.data.split(":", 1)[1])
+            except Exception:
+                target_uid = -1
+            if uid != DEVELOPER_ID or target_uid != uid or uid not in broadcast_pending:
+                bot.answer_callback_query(call.id, "هذه العملية ليست لك أو انتهت.", show_alert=True)
+                return
+            if len(broadcast_pending[uid].get("buttons", [])) >= 7:
+                _send_broadcast_now(uid, chat_id)
+                return
+            admin_pending[uid] = "broadcast_button_type_wait"
+            bot.answer_callback_query(call.id)
+            bot.send_message(chat_id, "اختر نوع الزر:", reply_markup=broadcast_button_type_markup(uid))
+            return
+
+        if call.data.startswith("broadcast_btn_more_no:"):
+            try:
+                target_uid = int(call.data.split(":", 1)[1])
+            except Exception:
+                target_uid = -1
+            if uid != DEVELOPER_ID or target_uid != uid or uid not in broadcast_pending:
+                bot.answer_callback_query(call.id, "هذه العملية ليست لك أو انتهت.", show_alert=True)
+                return
+            bot.answer_callback_query(call.id, "جاري الإرسال...")
+            _send_broadcast_now(uid, chat_id)
             return
 
         if call.data.startswith("broadcast_btn_no:"):
@@ -10720,12 +11051,8 @@ def callbacks(call):
             if uid != DEVELOPER_ID or target_uid != uid or not data:
                 bot.answer_callback_query(call.id, "هذه العملية ليست لك أو انتهت.", show_alert=True)
                 return
-            admin_pending.pop(uid, None)
-            source = data["message"]
-            broadcast_pending.pop(uid, None)
             bot.answer_callback_query(call.id, "جاري الإرسال...")
-            ok, failed = perform_broadcast(source, data.get("scope", "all"), progress_chat_id=chat_id)
-            bot.send_message(chat_id, f"تمت الإذاعة إلى <b>{ok}</b> جهة. تعذر الإرسال إلى <b>{failed}</b>.")
+            _send_broadcast_now(uid, chat_id)
             return
 
         # فحص الاشتراك الإجباري لجميع القنوات مرة واحدة.
@@ -10742,6 +11069,7 @@ def callbacks(call):
                     missing_now = force_sub_missing(uid)
                     if not missing_now:
                         bot.answer_callback_query(call.id, "تم التحقق من الاشتراك.")
+                        force_prompt_messages.pop((int(call.message.chat.id), int(uid)), None)
                         delete_message_safe(call.message)
                     else:
                         bot.answer_callback_query(
@@ -11229,92 +11557,47 @@ def callbacks(call):
                 bot.answer_callback_query(call.id, "تعذر فك الكتم", show_alert=True)
             return
 
-        # صلاحيات الإدارة: نعتمد على مشرف Telegram الحقيقي أيضًا،
-        # وليس على الرتبة الداخلية فقط.
-        if not is_admin(chat_id, uid):
+        # صلاحيات الإدارة
+        if not can_use_moderation(
+            get_rank(
+                chat_id,
+                uid
+            )
+        ):
+
             bot.answer_callback_query(
                 call.id,
-                "انت مش مشرف ينرم 😂❤🐤✨",
+                "❌ هذا للأدمن فما فوق.",
                 show_alert=True
             )
+
             return
 
-        # اختيار إجراء القفل: المسح / الكتم / الطرد.
-        # بعد الاختيار نحفظ الإعداد ونزيل لوحة الاختيار حتى لا تبقى الرسالة ثابتة.
+        # اختيار إجراء القفل: حذف / كتم / طرد.
         if call.data.startswith("lockaction:"):
             parts = call.data.split(":")
             if len(parts) != 3:
                 return
-
             setting, action = parts[1], parts[2]
-            action_names = {
-                "delete": "المسح",
-                "mute": "الكتم",
-                "kick": "الطرد"
-            }
-
-            if action not in action_names:
-                bot.answer_callback_query(call.id, "بيانات غير صحيحة", show_alert=True)
-                return
-
             if setting == "all":
-                for _setting in (
-                    "links", "photos", "videos", "documents",
-                    "stickers", "audio", "animations",
-                    "repeat_messages", "swearing", "forwarding", "flood", "blacklist"
-                ):
+                for _setting in ("links","photos","videos","documents","stickers","audio","animations","repeat_messages","swearing"):
                     set_lock_action(chat_id, _setting, action)
             else:
                 set_lock_action(chat_id, setting, action)
-
-            selected_name = action_names[action]
-            setting_names = {
-                "links": "الروابط",
-                "photos": "الصور",
-                "videos": "الفيديو",
-                "documents": "الملفات",
-                "stickers": "الملصقات",
-                "audio": "الصوت",
-                "animations": "المتحركات",
-                "repeat_messages": "التكرار",
-                "swearing": "السب",
-                "forwarding": "التوجيه",
-                "flood": "التكرار السريع",
-                "blacklist": "الكلمات الممنوعة",
-                "all": "الكل"
-            }
-            selected_setting = setting_names.get(setting, setting)
-
-            # رسالة واضحة بعد حفظ الإعداد وتنفيذ الاختيار.
-            saved_text = (
-                f"<b>تم حفظ البيانات</b>\n\n"
-                f"القفل: <b>{html.escape(selected_setting)}</b>\n"
-                f"الإجراء: <b>{selected_name}</b>"
-            )
-
+            action_name = {"delete":"حذف","mute":"كتم","kick":"طرد"}.get(action, action)
+            bot.answer_callback_query(call.id, "تم حفظ البيانات")
             try:
                 bot.edit_message_text(
-                    saved_text,
-                    chat_id=chat_id,
-                    message_id=call.message.message_id,
-                    reply_markup=None,
+                    f"<b>تم حفظ البيانات</b>\nطريقة التعامل مع <b>{html.escape(str(setting))}</b>: <b>{action_name}</b>",
+                    chat_id,
+                    call.message.message_id,
                     parse_mode="HTML"
                 )
-            except Exception as e:
-                print("[Lock Action Message Edit Error]", repr(e))
+            except Exception:
                 try:
-                    bot.edit_message_reply_markup(
-                        chat_id,
-                        call.message.message_id,
-                        reply_markup=None
-                    )
+                    bot.send_message(chat_id, f"<b>تم حفظ البيانات</b>\nتم اختيار: <b>{action_name}</b>", parse_mode="HTML")
                 except Exception:
                     pass
-
-            bot.answer_callback_query(
-                call.id,
-                "تم حفظ البيانات - " + selected_name
-            )
             return
 
         if call.data.startswith("clear_muted:"):
@@ -11436,20 +11719,9 @@ def callbacks(call):
 # إجراء القفل: حذف / كتم / طرد
 # =========================================================
 def lock_action_markup(setting):
-    """لوحة اختيار إجراء القفل: المسح / الكتم / الطرد."""
     markup = types.InlineKeyboardMarkup(row_width=3)
-    for action, label, style in (
-        ("delete", "المسح", "primary"),
-        ("mute", "الكتم", "primary"),
-        ("kick", "الطرد", "primary"),
-    ):
-        markup.add(
-            button(
-                label,
-                callback_data=f"lockaction:{setting}:{action}",
-                style=style
-            )
-        )
+    for action, label, style in (("delete", "حذف", "primary"), ("mute", "كتم", "primary"), ("kick", "طرد", "primary")):
+        markup.add(button(label, callback_data=f"lockaction:{setting}:{action}", style=style))
     return markup
 
 def set_lock_action(chat_id, setting, action):
@@ -11492,14 +11764,45 @@ def remember_deleted_user(chat_id, user):
     except Exception as e:
         print('[Deleted User Track Error]', repr(e))
 
+LOCK_SETTING_LABELS = {
+    "links": "الروابط",
+    "photos": "الصور",
+    "videos": "الفيديوهات",
+    "documents": "الملفات",
+    "stickers": "الملصقات",
+    "audio": "الصوتيات",
+    "animations": "المتحركة",
+    "repeat_messages": "التكرار",
+    "swearing": "السب",
+    "forwarding": "التوجيه",
+    "blacklist": "الكلمة الممنوعة",
+    "flood": "الرسائل المتكررة",
+}
+
+def _lock_violation_notice(message, setting):
+    try:
+        user = getattr(message, "from_user", None)
+        if not user:
+            return
+        name = html.escape(full_name(user))
+        label = LOCK_SETTING_LABELS.get(setting, "الرسالة")
+        text = f'يـ <a href="tg://user?id={int(user.id)}">{name}</a> الـ{label} ممنوعة.'
+        bot.send_message(message.chat.id, text, parse_mode="HTML")
+    except Exception as e:
+        print("[Lock Notice Error]", repr(e))
+
 def apply_lock_action(message, setting):
     action = get_lock_action(message.chat.id, setting)
     uid = getattr(getattr(message, 'from_user', None), 'id', None)
     try:
         if action == 'mute' and uid:
+            # احذف المخالفة أولًا ثم اكتم العضو، وبعدها أرسل له التنبيه المطلوب.
+            delete_message_safe(message)
             mute_user(message.chat.id, uid)
             remember_muted_user(message.chat.id, message.from_user)
+            _lock_violation_notice(message, setting)
         elif action == 'kick' and uid:
+            delete_message_safe(message)
             kick_user(message.chat.id, uid)
             forget_muted_user(message.chat.id, uid)
         else:
@@ -11514,7 +11817,24 @@ def send_deleted_users(message):
     if message.chat.type not in ('group','supergroup'):
         bot.reply_to(message, '‹ المحذوف ›\nهذا الأمر يعمل داخل المجموعات فقط.')
         return True
-    rows=_get_thread_db().execute('SELECT * FROM deleted_users WHERE chat_id=? ORDER BY discovered_at DESC',(int(message.chat.id),)).fetchall()
+
+    conn = _get_thread_db()
+    # نفحص الأعضاء المعروفين أيضًا؛ Telegram قد يرسل الحساب المحذوف كـ Deleted Account
+    # داخل getChatMember حتى لو لم تصلنا chat_member update وقت الحذف.
+    known = conn.execute(
+        'SELECT user_id,first_name,last_name,username FROM group_users WHERE chat_id=? AND user_id>0',
+        (int(message.chat.id),)
+    ).fetchall()
+    for r in known:
+        try:
+            member = bot.get_chat_member(message.chat.id, int(r['user_id']))
+            u = getattr(member, 'user', None)
+            if u and (getattr(u, 'is_deleted', False) or (getattr(u, 'first_name', None) == 'Deleted Account' and not getattr(u, 'username', None))):
+                remember_deleted_user(message.chat.id, u)
+        except Exception:
+            pass
+
+    rows=conn.execute('SELECT * FROM deleted_users WHERE chat_id=? ORDER BY discovered_at DESC',(int(message.chat.id),)).fetchall()
     if not rows:
         bot.reply_to(message, '‹ المحذوف ›\nلا توجد حسابات محذوفة تم اكتشافها في هذه المجموعة.')
         return True
