@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+#*- coding: utf-8 -*-
 """
 MaX VIP Subscription Bot
 Pydroid 3 / Python 3.10+
@@ -35,7 +35,7 @@ from telegram.ext import (
 # CONFIGURATION
 # ============================================================
 
-BOT_TOKEN = "8746223128:AAGeoJ1ojWwd2TfI26wDMcQ__Q5FRvgyrsI"
+BOT_TOKEN = ""
 OWNER_ID = 8037399518
 
 SUBSCRIPTION_STARS = 50
@@ -51,7 +51,7 @@ BOT_TITLE = "MaX VIP"
 
 WELCOME_TEXT = (
     "Welcome to MaX VIP\n\n"
-    "اشترك بـ 50 ⭐ شهريًا لفتح جميع المميزات.\n"
+    "اشترك   شهريًا لفتح جميع المميزات.\n"
     "بعد نجاح الدفع سيتم فتح الأقسام المتاحة لك."
 )
 
@@ -69,7 +69,8 @@ NO_ACCESS_TEXT = (
 
 REQUIRED_CHANNEL_TEXT = (
     "قبل استخدام البوت، يجب الاشتراك في القناة المطلوبة ثم الضغط على تحقق."
-)
+https://t.me/hdgsaass
+https://t.me/+7lFrm3Ae5yliZDg0)
 
 # ============================================================
 # GROUP AUTO-REPLY
