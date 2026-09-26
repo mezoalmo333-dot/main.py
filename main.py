@@ -35,8 +35,8 @@ from telegram.ext import (
 # CONFIGURATION
 # ============================================================
 
-BOT_TOKEN = ""
-OWNER_ID = 8037399518
+BOT_TOKEN ="8800571722:AAGPdf6meZWlKS2pGlt8gwOAV1BszPCIzh0"
+OWNER_ID = 5436469119
 
 SUBSCRIPTION_STARS = 50
 SUBSCRIPTION_DAYS = 30
@@ -44,8 +44,8 @@ SUBSCRIPTION_SECONDS = 30 * 24 * 60 * 60
 
 DATABASE_FILE = "max_vip_bot_db.json"
 
-ALL_VIDEOS_URL = "https://t.me/+M6bZImX5TetiZWU0"
-DEFAULT_REQUIRED_CHANNEL = "https://t.me/kon_ze_athar"
+ALL_VIDEOS_URL = "https://t.me/+j15LknQHSH00NDg0"
+DEFAULT_REQUIRED_CHANNEL = "https://t.me/+7lFrm3Ae5yliZDg0"
 
 BOT_TITLE = "MaX VIP"
 
