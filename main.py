@@ -26,8 +26,8 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
-    PreCheckoutQueryHandler,
     MessageHandler,
+    PreCheckoutQueryHandler,
     filters,
 )
 
@@ -42,7 +42,6 @@ SUBSCRIPTION_STARS = 50
 SUBSCRIPTION_DAYS = 30
 SUBSCRIPTION_SECONDS = 30 * 24 * 60 * 60
 
-
 DATABASE_FILE = "max_vip_bot_db.json"
 
 ALL_VIDEOS_URL = "https://t.me/mediation_King"
@@ -51,7 +50,9 @@ DEFAULT_REQUIRED_CHANNEL = "https://t.me/mediation_King"
 BOT_TITLE = "MaX VIP"
 
 WELCOME_TEXT = (
-    "نورت يا {user_mention} بوت تعالا. ادلعك اختار من الاقسام الي تحت"
+    "Welcome to MaX VIP\n\n"
+    "اشترك بـ 50 ⭐ شهريًا لفتح جميع المميزات.\n"
+    "بعد نجاح الدفع سيتم فتح الأقسام المتاحة لك."
 )
 
 PAYMENT_TEXT = (
@@ -145,15 +146,14 @@ DEFAULT_CATEGORIES = [
 DEFAULT_DB = {
     "users": {},
     "admins": [],
-    "groups": {},
-    "required_channels": ["https://t.me/mediation_King"],
+    "required_channels": [DEFAULT_REQUIRED_CHANNEL],
     "categories": DEFAULT_CATEGORIES,
     "settings": {
         "welcome_text": WELCOME_TEXT,
         "payment_text": PAYMENT_TEXT,
         "no_access_text": NO_ACCESS_TEXT,
-        "subscription_stars": SUBSCRIPTION_STARS,
         "bot_title": BOT_TITLE,
+        "subscription_stars": 50,
     },
     "broadcast": {
         "running": False,
@@ -217,26 +217,10 @@ def load_db() -> Dict[str, Any]:
     if "subscription_stars" not in db["settings"]:
         db["settings"]["subscription_stars"] = SUBSCRIPTION_STARS
         changed = True
-    if "payment_text" not in db["settings"]:
-        db["settings"]["payment_text"] = PAYMENT_TEXT
+
+    if not db.get("required_channels"):
+        db["required_channels"] = [DEFAULT_REQUIRED_CHANNEL]
         changed = True
-
-    for _record in db.get("users", {}).values():
-        _record.setdefault("subscription_until", 0)
-        _record.setdefault("payment_charge_id", "")
-        _record.setdefault("is_subscribed", False)
-
-    # الاشتراك الإجباري: قناة واحدة فقط.
-    required_only = "https://t.me/mediation_King"
-    if db.get("required_channels") != [required_only]:
-        db["required_channels"] = [required_only]
-        changed = True
-
-    # إزالة روابط الأقسام القديمة: الأقسام أصبحت تفتح من داخل البوت فقط.
-    for item in all_categories(db.get("categories", [])) if db.get("categories") else []:
-        if item.get("style", {}).get("url"):
-            item.setdefault("style", {})["url"] = ""
-            changed = True
 
     for item in db.get("categories", []):
         normalize_category(item)
@@ -252,31 +236,16 @@ def load_db() -> Dict[str, Any]:
 # ============================================================
 
 
+def get_subscription_stars() -> int:
+    try:
+        value = int(DB.get("settings", {}).get("subscription_stars", SUBSCRIPTION_STARS))
+        return max(1, value)
+    except (TypeError, ValueError):
+        return SUBSCRIPTION_STARS
 
 
 def is_admin(user_id: int) -> bool:
     return user_id == OWNER_ID or user_id in DB.get("admins", [])
-
-
-def register_group(chat) -> None:
-    """حفظ بيانات الجروب بمجرد أن يستقبل البوت رسالة فيه."""
-    if not chat or chat.type not in ("group", "supergroup"):
-        return
-
-    groups = DB.setdefault("groups", {})
-    key = str(chat.id)
-    old = groups.get(key, {})
-
-    groups[key] = {
-        "id": chat.id,
-        "title": chat.title or old.get("title", ""),
-        "type": chat.type,
-        "username": getattr(chat, "username", None) or old.get("username", ""),
-        "last_seen": int(time.time()),
-        "active": True,
-    }
-
-    save_db(DB)
 
 
 def colored_button(
@@ -332,8 +301,37 @@ def ensure_user(user) -> Dict[str, Any]:
     return DB["users"][uid]
 
 
+def subscription_active(user_id: int) -> bool:
+    user = DB["users"].get(str(user_id))
+    if not user:
+        return False
+
+    until = int(user.get("subscription_until", 0))
+    active = until > int(time.time())
+
+    if user.get("is_subscribed") != active:
+        user["is_subscribed"] = active
+        save_db(DB)
+
+    return active
 
 
+def subscription_remaining(user_id: int) -> str:
+    user = DB["users"].get(str(user_id))
+    if not user:
+        return "غير مشترك"
+
+    until = int(user.get("subscription_until", 0))
+    remaining = until - int(time.time())
+
+    if remaining <= 0:
+        return "منتهي"
+
+    days = remaining // 86400
+    hours = (remaining % 86400) // 3600
+    minutes = (remaining % 3600) // 60
+
+    return f"{days} يوم، {hours} ساعة، {minutes} دقيقة"
 
 
 def find_nested_category(category_id: str, categories=None):
@@ -384,12 +382,7 @@ async def user_required_channels_joined(context: ContextTypes.DEFAULT_TYPE, user
         if not channel:
             continue
         if channel.startswith("https://t.me/+"):
-            logger.error(
-                "Cannot verify private required channel invite link %s with Bot API. "
-                "Configure its numeric chat_id or @username in required_channels.",
-                channel,
-            )
-            return False
+            continue
 
         try:
             member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
@@ -426,8 +419,10 @@ async def ensure_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
 
     if not subscription_active(user.id):
         if update.callback_query:
-            await safe_answer_callback(update.callback_query, "اشترك بالنجوم أولًا.", True)
-        await send_subscription_page(update, context)
+            await safe_answer_callback(update.callback_query, "الاشتراك غير فعال.", True)
+            await send_subscription_page(update, context)
+        else:
+            await send_subscription_page(update, context)
         return False
 
     return True
@@ -566,6 +561,7 @@ def home_keyboard() -> InlineKeyboardMarkup:
     rows = chunk_rows(buttons, per_row=2)
 
     rows.append([colored_button("جميع الفيديوهات", url=ALL_VIDEOS_URL, style="success", emoji_id=EMOJI_ALL_VIDEOS)])
+    rows.append([colored_button("حالة الاشتراك", callback_data="subscription_status", style="primary", emoji_id=EMOJI_FACES[1])])
 
     return InlineKeyboardMarkup(rows)
 
@@ -589,11 +585,10 @@ def admin_keyboard() -> InlineKeyboardMarkup:
         colored_button("إضافة فيديو", callback_data="admin_add_video", style="success", emoji_id=av),
         colored_button("الأقسام", callback_data="admin_categories", style="primary", emoji_id=e),
         colored_button("الاشتراك الإجباري", callback_data="admin_required", style="primary", emoji_id=e),
+        colored_button("تفعيل اشتراك", callback_data="admin_activate", style="primary", emoji_id=e),
         colored_button("سعر الاشتراك", callback_data="admin_price", style="primary", emoji_id=e),
         colored_button("الإذاعة", callback_data="admin_broadcast", style="success", emoji_id=e),
         colored_button("المستخدمون", callback_data="admin_users", style="primary", emoji_id=e),
-        colored_button("تصدير الأعضاء", callback_data="admin_export_users", style="success", emoji_id=e),
-        colored_button("استرجاع أعضاء", callback_data="admin_restore_users", style="success", emoji_id=e),
         colored_button("إدارة الأدمن", callback_data="admin_admins", style="primary", emoji_id=e),
         colored_button("النصوص", callback_data="admin_texts", style="primary", emoji_id=e),
         colored_button("ردود الكلمات", callback_data="admin_keywords", style="primary", emoji_id=e),
@@ -662,6 +657,7 @@ def category_admin_keyboard(category_id: str) -> InlineKeyboardMarkup:
         colored_button("تعديل اسم الزر", callback_data=f"admin_cat_name:{category_id}", style="primary", emoji_id=e),
         colored_button("تعديل لون الزر", callback_data=f"admin_cat_color:{category_id}", style="primary", emoji_id=e),
         colored_button("تعديل إيموجي الزر", callback_data=f"admin_cat_emoji:{category_id}", style="primary", emoji_id=e),
+        colored_button("إضافة/تعديل رابط", callback_data=f"admin_cat_url:{category_id}", style="primary", emoji_id=e),
         colored_button("إدارة الأزرار الداخلية", callback_data=f"admin_children:{category_id}", style="primary", emoji_id=e),
         colored_button("حذف آخر فيديو", callback_data=f"admin_video_del_last:{category_id}", style="danger", emoji_id=d),
         colored_button("حذف الزر", callback_data=f"admin_cat_del:{category_id}", style="danger", emoji_id=d),
@@ -677,6 +673,7 @@ def admin_texts_keyboard() -> InlineKeyboardMarkup:
     e = EMOJI_ADMIN
     buttons = [
         colored_button("تغيير رسالة الترحيب", callback_data="admin_text_welcome", style="primary", emoji_id=e),
+        colored_button("تغيير رسالة الدفع", callback_data="admin_text_payment", style="primary", emoji_id=e),
         colored_button("تغيير رسالة عدم الوصول", callback_data="admin_text_noaccess", style="primary", emoji_id=e),
     ]
 
@@ -686,89 +683,14 @@ def admin_texts_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-
-
 def subscription_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[
-        colored_button(f"اشترك الآن — {get_subscription_stars()} ⭐", callback_data="buy_subscription", style="success", emoji_id=EMOJI_SUBSCRIBE),
-        colored_button("حالة الاشتراك", callback_data="subscription_status", style="primary", emoji_id=EMOJI_CHECK_SUB),
-    ]])
-
-
-async def send_subscription_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = DB.get("settings", {}).get("payment_text", PAYMENT_TEXT)
-    if update.callback_query:
-        try:
-            await update.callback_query.edit_message_text(text, reply_markup=subscription_keyboard())
-            return
-        except Exception:
-            pass
-    if update.effective_message:
-        await update.effective_message.reply_text(text, reply_markup=subscription_keyboard())
-
-
-async def buy_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    user = update.effective_user
-    if not query or not user:
-        return
-    await safe_answer_callback(query)
-    if not await user_required_channels_joined(context, user.id):
-        await send_required_channels(update, context)
-        return
-    payload = f"vip_monthly:{user.id}:{int(time.time())}"
-    try:
-        await context.bot.send_invoice(
-            chat_id=user.id,
-            title="MaX VIP — اشتراك شهري",
-            description="اشتراك شهري يفتح جميع مميزات MaX VIP.",
-            payload=payload,
-            currency="XTR",
-            prices=[LabeledPrice(label="اشتراك شهري", amount=get_subscription_stars())],
-        )
-    except Exception as exc:
-        logger.exception("Invoice error: %s", exc)
-        await context.bot.send_message(chat_id=user.id, text="تعذر إنشاء فاتورة الاشتراك الآن، حاول لاحقًا.")
-
-
-async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.pre_checkout_query
-    if not query:
-        return
-    if not query.invoice_payload.startswith("vip_monthly:"):
-        await query.answer(ok=False, error_message="الفاتورة غير صالحة.")
-        return
-    try:
-        await query.answer(ok=True)
-    except Exception:
-        logger.exception("Pre-checkout answer failed.")
-
-
-async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    message = update.effective_message
-    user = update.effective_user
-    if not message or not user or not message.successful_payment:
-        return
-    payment = message.successful_payment
-    if payment.currency != "XTR":
-        await message.reply_text("تم استلام عملية دفع بعملة غير متوقعة.")
-        return
-    if payment.total_amount != get_subscription_stars():
-        await message.reply_text("قيمة الاشتراك غير مطابقة.")
-        return
-    expiration = payment.subscription_expiration_date
-    subscription_until = int(expiration) if expiration else int(time.time()) + SUBSCRIPTION_SECONDS
-    record = ensure_user(user)
-    record["subscription_until"] = subscription_until
-    record["is_subscribed"] = True
-    record["payment_charge_id"] = payment.telegram_payment_charge_id
-    save_db(DB)
-    await message.reply_text(
-        "تم تفعيل اشتراكك بنجاح\n\n"
-        f"السعر: {get_subscription_stars()} نجمة\n"
-        f"المدة: {SUBSCRIPTION_DAYS} يوم\n\n"
-        "يمكنك الآن فتح جميع الأقسام.",
-        reply_markup=home_keyboard(),
+    return InlineKeyboardMarkup(
+        [
+            [
+                colored_button(f"اشترك الآن — {get_subscription_stars()}", callback_data="buy_subscription", style="success", emoji_id=EMOJI_SUBSCRIBE),
+                colored_button("تحقق", callback_data="subscription_status", style="primary", emoji_id=EMOJI_CHECK_SUB),
+            ]
+        ]
     )
 
 
@@ -799,6 +721,18 @@ async def send_required_channels(update: Update, context: ContextTypes.DEFAULT_T
         await update.effective_message.reply_text(text, reply_markup=markup)
 
 
+async def send_subscription_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = DB["settings"].get("payment_text", PAYMENT_TEXT)
+
+    if update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(text, reply_markup=subscription_keyboard())
+            return
+        except Exception:
+            pass
+
+    if update.effective_message:
+        await update.effective_message.reply_text(text, reply_markup=subscription_keyboard())
 
 
 async def send_home(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -806,23 +740,17 @@ async def send_home(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if user:
         ensure_user(user)
 
-    template = DB["settings"].get("welcome_text", WELCOME_TEXT)
-    if user:
-        name = (user.first_name or user.username or "صديقي").strip()
-        mention = f'<a href="tg://user?id={user.id}">{name}</a>'
-        text = template.replace("{user_mention}", mention).replace("{name}", name)
-    else:
-        text = template.replace("{user_mention}", "صديقي").replace("{name}", "صديقي")
+    text = DB["settings"].get("welcome_text", WELCOME_TEXT)
 
     if update.callback_query:
         try:
-            await update.callback_query.edit_message_text(text, reply_markup=home_keyboard(), parse_mode=ParseMode.HTML)
+            await update.callback_query.edit_message_text(text, reply_markup=home_keyboard())
             return
         except Exception:
             pass
 
     if update.effective_message:
-        await update.effective_message.reply_text(text, reply_markup=home_keyboard(), parse_mode=ParseMode.HTML)
+        await update.effective_message.reply_text(text, reply_markup=home_keyboard())
 
 
 # ============================================================
@@ -861,13 +789,94 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 # ============================================================
+# PAYMENT
 # ============================================================
 
 
+async def buy_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    user = update.effective_user
+
+    if not query or not user:
+        return
+
+    await safe_answer_callback(query)
+
+    if not await user_required_channels_joined(context, user.id):
+        await send_required_channels(update, context)
+        return
+
+    payload = f"vip_monthly:{user.id}:{int(time.time())}"
+
+    try:
+        await context.bot.send_invoice(
+            chat_id=user.id,
+            title="MaX VIP — اشتراك شهري",
+            description="اشتراك شهري يفتح جميع مميزات MaX VIP.",
+            payload=payload,
+            currency="XTR",
+            prices=[LabeledPrice(label="اشتراك شهري", amount=get_subscription_stars())],
+        )
+    except Exception as exc:
+        logger.exception("Invoice error: %s", exc)
+        await context.bot.send_message(
+            chat_id=user.id,
+            text="تعذر إنشاء فاتورة الاشتراك الآن، حاول لاحقًا.",
+        )
 
 
+async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.pre_checkout_query
+    if not query:
+        return
+
+    if not query.invoice_payload.startswith("vip_monthly:"):
+        await query.answer(ok=False, error_message="الفاتورة غير صالحة.")
+        return
+
+    try:
+        await query.answer(ok=True)
+    except Exception:
+        logger.exception("Pre-checkout answer failed.")
 
 
+async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    user = update.effective_user
+
+    if not message or not user or not message.successful_payment:
+        return
+
+    payment = message.successful_payment
+
+    if payment.currency != "XTR":
+        await message.reply_text("تم استلام عملية دفع بعملة غير متوقعة.")
+        return
+
+    if payment.total_amount != get_subscription_stars():
+        await message.reply_text("قيمة الاشتراك غير مطابقة.")
+        return
+
+    expiration = payment.subscription_expiration_date
+
+    if expiration:
+        subscription_until = int(expiration)
+    else:
+        subscription_until = int(time.time()) + SUBSCRIPTION_SECONDS
+
+    record = ensure_user(user)
+    record["subscription_until"] = subscription_until
+    record["is_subscribed"] = True
+    record["payment_charge_id"] = payment.telegram_payment_charge_id
+    save_db(DB)
+
+    await message.reply_text(
+        "تم تفعيل اشتراكك بنجاح\n\n"
+        f"السعر: {SUBSCRIPTION_STARS} نجمة\n"
+        f"المدة: {SUBSCRIPTION_DAYS} يوم\n\n"
+        "يمكنك الآن فتح جميع الأقسام.",
+        reply_markup=home_keyboard(),
+    )
 
 
 # ============================================================
@@ -875,71 +884,24 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 # ============================================================
 
 
-async def group_member_welcome_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> None:
-    """يرسل إشعار دخول عند دخول عضو جديد إلى الجروب."""
-    message = update.effective_message
-    chat = update.effective_chat
-
-    if not message or not chat or not message.new_chat_members:
-        return
-
-    register_group(chat)
-
-    for member in message.new_chat_members:
-        # لا نرسل ترحيبًا للبوت نفسه.
-        if member.is_bot:
-            continue
-
-        name = member.full_name or "عضو جديد"
-        username = f"@{member.username}" if member.username else ""
-        mention = f'<a href="tg://user?id={member.id}">{name}</a>'
-
-        welcome_text = (
-            "🚪 <b>دخل عضو جديد</b>\n\n"
-            f"العضو: {mention}\n"
-            f"المعرف: <code>{member.id}</code>"
-        )
-        if username:
-            welcome_text += f"\nاليوزر: {username}"
-        welcome_text += f"\nالجروب: <b>{chat.title or 'المجموعة'}</b>"
-
-        try:
-            await message.reply_text(
-                welcome_text,
-                parse_mode=ParseMode.HTML,
-            )
-        except Exception as exc:
-            logger.warning("Group member welcome failed: %s", exc)
-
-
 async def group_auto_reply_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """
-    مراقبة والرد تلقائيًا في أي جروب/سوبرجروب بعد إضافة البوت.
-    لا يشترط أن يكون البوت مشرفًا.
-    """
+    """يرد على كل رسالة في الجروب باستخدام رد عشوائي من الردود المضافة في لوحة الأدمن."""
     message = update.effective_message
     chat = update.effective_chat
     user = update.effective_user
 
-    if not message or not chat:
+    if not message or not chat or not user:
         return
 
-    if chat.type not in ("group", "supergroup"):
+    # لا يرد على رسائل البوتات
+    if user.is_bot:
         return
 
-    # تسجيل الجروب بمجرد وصول رسالة للبوت فيه.
-    register_group(chat)
-
-    # تجاهل رسائل البوتات فقط لمنع حلقات الرد.
-    if user and user.is_bot:
-        return
-
+    # يرد على جميع رسائل المستخدمين في الجروب، بدون اشتراط حروف عربية أو إنجليزية.
+    # يتم تجاهل رسائل البوتات فقط حتى لا يدخل البوت في حلقة ردود.
     configured_replies = [
         str(item.get("response", item.get("keyword", ""))).strip()
         for item in DB.get("keyword_replies", [])
@@ -953,13 +915,7 @@ async def group_auto_reply_handler(
             reply_to_message_id=message.message_id,
         )
     except Exception as exc:
-        logger.warning(
-            "Group auto-reply failed in chat %s (%s): %s. "
-            "If normal member messages never reach the bot, disable BotFather Privacy Mode with /setprivacy.",
-            chat.id,
-            chat.title,
-            exc,
-        )
+        logger.warning("Group auto-reply failed: %s", exc)
 
 
 # ============================================================
@@ -989,11 +945,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data == "check_required":
         joined = await user_required_channels_joined(context, user.id)
+
         if not joined:
             await safe_answer_callback(query, "لم يتم التحقق من الاشتراك.", True)
             await send_required_channels(update, context)
             return
+
         await safe_answer_callback(query, "تم التحقق.")
+
         if is_admin(user.id) or subscription_active(user.id):
             await send_home(update, context)
         else:
@@ -1006,14 +965,31 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data == "subscription_status":
         await safe_answer_callback(query)
+
         if is_admin(user.id):
             text = "أنت أدمن/مالك البوت — لديك صلاحية كاملة بدون اشتراك."
-        elif subscription_active(user.id):
-            text = f"اشتراكك فعال.\nالمتبقي: {subscription_remaining(user.id)}"
+            markup = InlineKeyboardMarkup([[colored_button("الرئيسية", callback_data="home", style="primary", emoji_id=EMOJI_HOME)]])
+            try:
+                await query.edit_message_text(text, reply_markup=markup)
+            except Exception:
+                pass
+            return
+
+        active = subscription_active(user.id)
+
+        if active:
+            text = (
+                "حالة الاشتراك: فعال\n\n"
+                f"المتبقي: {subscription_remaining(user.id)}\n"
+                f"السعر: {get_subscription_stars()} نجمة"
+            )
+            markup = InlineKeyboardMarkup([[colored_button("الرئيسية", callback_data="home", style="primary", emoji_id=EMOJI_HOME)]])
         else:
-            text = "لا يوجد اشتراك فعال حاليًا."
+            text = "حالة الاشتراك: غير فعال\n\nاشترك لفتح جميع المميزات."
+            markup = subscription_keyboard()
+
         try:
-            await query.edit_message_text(text, reply_markup=subscription_keyboard())
+            await query.edit_message_text(text, reply_markup=markup)
         except Exception:
             pass
         return
@@ -1198,44 +1174,29 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await safe_answer_callback(query, "لا توجد فيديوهات.", True)
         return
 
+    if data == "admin_activate":
+        if not is_admin(user.id):
+            await safe_answer_callback(query, "غير مصرح.", True)
+            return
+        context.user_data["admin_state"] = "activate_subscription"
+        await safe_answer_callback(query)
+        await query.edit_message_text(
+            "أرسل ID المستخدم أو @username لتفعيل اشتراك لمدة 30 يومًا.\\n\\n"
+            "مثال: 123456789 أو @username\\nللإلغاء: /cancel"
+        )
+        return
+
     if data == "admin_price":
         if not is_admin(user.id):
             await safe_answer_callback(query, "غير مصرح.", True)
             return
-        await safe_answer_callback(query)
-        current_price = get_subscription_stars()
         context.user_data["admin_state"] = "change_price"
-        try:
-            await query.edit_message_text(
-                f"سعر الاشتراك الحالي: {current_price} ⭐\n\nأرسل السعر الجديد بالأرقام فقط.\nمثال: 100\n\nللإلغاء: /cancel"
-            )
-        except Exception:
-            pass
-        return
-
-    if data == "admin_export_users":
-        if not is_admin(user.id):
-            await safe_answer_callback(query, "غير مصرح.", True)
-            return
         await safe_answer_callback(query)
-        users = list(DB.get("users", {}).values())
-        export_data = {
-            "users": users,
-            "exported_at": int(time.time()),
-            "count": len(users),
-        }
-        path = Path("max_vip_members_export.json")
-        try:
-            path.write_text(json.dumps(export_data, ensure_ascii=False, indent=2), encoding="utf-8")
-            with path.open("rb") as document:
-                await context.bot.send_document(
-                    chat_id=user.id,
-                    document=document,
-                    caption=f"تصدير أعضاء MaX VIP\n\nعدد الأعضاء: {len(users)}",
-                )
-        except Exception as exc:
-            logger.exception("Members export failed: %s", exc)
-            await context.bot.send_message(chat_id=user.id, text="تعذر تصدير الأعضاء.")
+        await query.edit_message_text(
+            f"السعر الحالي: {get_subscription_stars()} نجمة\\n\\n"
+            "أرسل السعر الجديد بالأرقام فقط.\\n"
+            "مثال: 50\\nللإلغاء: /cancel"
+        )
         return
 
     if data == "admin_required":
@@ -1466,30 +1427,18 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await safe_answer_callback(query)
 
         total = len(DB.get("users", {}))
+        active = sum(1 for uid in DB.get("users", {}) if subscription_active(int(uid)))
 
         text = (
             "إحصائيات المستخدمين\n\n"
             f"إجمالي المستخدمين: {total}\n"
+            f"الاشتراكات النشطة: {active}\n"
             f"الأقسام: {len(DB.get('categories', []))}"
         )
         try:
             await query.edit_message_text(
                 text,
                 reply_markup=InlineKeyboardMarkup([[colored_button("رجوع", callback_data="admin_panel", style="danger", emoji_id=EMOJI_ADMIN)]]),
-            )
-        except Exception:
-            pass
-        return
-
-    if data == "admin_restore_users":
-        if not is_admin(user.id):
-            await safe_answer_callback(query, "غير مصرح.", True)
-            return
-        await safe_answer_callback(query)
-        context.user_data["admin_state"] = "restore_users"
-        try:
-            await query.edit_message_text(
-                "استرجاع الأعضاء\n\nأرسل ملف JSON لقاعدة الأعضاء القديمة، وسيتم دمج الأعضاء الموجودين فيه مع الأعضاء الحاليين بدون حذف البيانات الحالية.\n\nللإلغاء: /cancel"
             )
         except Exception:
             pass
@@ -1502,12 +1451,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await safe_answer_callback(query)
 
         total_videos = sum(len(c.get("videos", [])) for c in DB.get("categories", []))
+        active = sum(1 for uid in DB.get("users", {}) if subscription_active(int(uid)))
 
         text = (
             "إحصائيات MaX VIP\n\n"
             f"المستخدمون: {len(DB.get('users', {}))}\n"
+            f"المشتركون النشطون: {active}\n"
             f"الأقسام: {len(DB.get('categories', []))}\n"
             f"الفيديوهات: {total_videos}\n"
+            f"سعر الاشتراك: {SUBSCRIPTION_STARS} نجمة\n"
+            f"مدة الاشتراك: {SUBSCRIPTION_DAYS} يوم"
         )
         try:
             await query.edit_message_text(
@@ -1589,6 +1542,17 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await safe_answer_callback(query)
         try:
             await query.edit_message_text("أرسل رسالة الترحيب الجديدة.\n\nللإلغاء: /cancel")
+        except Exception:
+            pass
+        return
+
+    if data == "admin_text_payment":
+        if not is_admin(user.id):
+            return
+        context.user_data["admin_state"] = "text_payment"
+        await safe_answer_callback(query)
+        try:
+            await query.edit_message_text("أرسل رسالة الدفع الجديدة.\n\nللإلغاء: /cancel")
         except Exception:
             pass
         return
@@ -1993,9 +1957,61 @@ async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         save_db(DB)
         context.user_data.pop("admin_state", None)
         await message.reply_text(
-            f"تم تغيير سعر الاشتراك إلى {new_price} ⭐",
+            f"تم تغيير سعر الاشتراك إلى {new_price} نجمة.",
             reply_markup=admin_keyboard(),
         )
+        return
+
+    if state == "activate_subscription":
+        if not message.text:
+            await message.reply_text("أرسل ID أو @username.")
+            return
+
+        target = message.text.strip()
+        target_record = None
+
+        if target.isdigit():
+            target_record = DB.get("users", {}).get(target)
+        else:
+            username = target.lstrip("@").lower()
+            for record in DB.get("users", {}).values():
+                if str(record.get("username", "")).lstrip("@").lower() == username:
+                    target_record = record
+                    break
+
+        if not target_record:
+            context.user_data.pop("admin_state", None)
+            await message.reply_text(
+                "لم أجد هذا المستخدم في قاعدة بيانات البوت.\\n"
+                "يجب أن يكون قد بدأ البوت من قبل، ثم أرسل ID أو username الصحيح.",
+                reply_markup=admin_keyboard(),
+            )
+            return
+
+        target_id = int(target_record["id"])
+        current_until = int(target_record.get("subscription_until", 0))
+        start_from = max(current_until, int(time.time()))
+        target_record["subscription_until"] = start_from + SUBSCRIPTION_SECONDS
+        target_record["is_subscribed"] = True
+        target_record["manual_subscription"] = True
+        save_db(DB)
+        context.user_data.pop("admin_state", None)
+
+        await message.reply_text(
+            f"تم تفعيل الاشتراك بنجاح.\\n\\n"
+            f"المستخدم: {target_record.get('name', '')}\\n"
+            f"ID: {target_id}\\n"
+            f"المدة المضافة: {SUBSCRIPTION_DAYS} يوم",
+            reply_markup=admin_keyboard(),
+        )
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text="تم تفعيل اشتراكك يدويًا من الإدارة لمدة 30 يومًا.\\nيمكنك الآن استخدام جميع المميزات.",
+                reply_markup=home_keyboard(),
+            )
+        except Exception as exc:
+            logger.warning("Could not notify manually activated user %s: %s", target_id, exc)
         return
 
     if state == "add_required":
@@ -2022,6 +2038,16 @@ async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         await message.reply_text("تم تغيير رسالة الترحيب.", reply_markup=admin_keyboard())
         return
 
+    if state == "text_payment":
+        if not message.text:
+            await message.reply_text("أرسل النص.")
+            return
+        DB["settings"]["payment_text"] = message.text
+        save_db(DB)
+        context.user_data.pop("admin_state", None)
+        await message.reply_text("تم تغيير رسالة الدفع.", reply_markup=admin_keyboard())
+        return
+
     if state == "text_noaccess":
         if not message.text:
             await message.reply_text("أرسل النص.")
@@ -2030,67 +2056,6 @@ async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         save_db(DB)
         context.user_data.pop("admin_state", None)
         await message.reply_text("تم تغيير رسالة عدم الوصول.", reply_markup=admin_keyboard())
-        return
-
-    if state == "restore_users":
-        if not message.document:
-            await message.reply_text("أرسل ملف قاعدة الأعضاء بصيغة JSON.")
-            return
-
-        try:
-            tg_file = await message.document.get_file()
-            temp_path = Path(".restore_users_tmp.json")
-            await tg_file.download_to_drive(custom_path=str(temp_path))
-            with temp_path.open("r", encoding="utf-8") as f:
-                imported = json.load(f)
-            try:
-                temp_path.unlink()
-            except Exception:
-                pass
-        except Exception as exc:
-            logger.warning("Could not read restore file: %s", exc)
-            await message.reply_text("تعذر قراءة الملف. تأكد أنه JSON صالح.")
-            return
-
-        # دعم ملف قاعدة البوت الكامل أو ملف يحتوي مباشرة على users.
-        if isinstance(imported, dict) and isinstance(imported.get("users"), dict):
-            source_users = imported["users"]
-        elif isinstance(imported, dict):
-            source_users = imported
-        else:
-            await message.reply_text("صيغة الملف غير صحيحة. يجب أن يحتوي على بيانات الأعضاء.")
-            return
-
-        restored = 0
-        skipped = 0
-        for key, record in source_users.items():
-            if not isinstance(record, dict):
-                skipped += 1
-                continue
-            user_id = record.get("id", key)
-            try:
-                user_id = int(user_id)
-            except (TypeError, ValueError):
-                skipped += 1
-                continue
-            uid = str(user_id)
-            current = DB.setdefault("users", {}).get(uid, {})
-            merged = dict(current)
-            merged.update({k: v for k, v in record.items() if k in {"id", "username", "name", "joined_at", "blocked"}})
-            merged["id"] = user_id
-            merged.setdefault("username", "")
-            merged.setdefault("name", "")
-            merged.setdefault("joined_at", int(time.time()))
-            merged.setdefault("blocked", False)
-            DB["users"][uid] = merged
-            restored += 1
-
-        save_db(DB)
-        context.user_data.pop("admin_state", None)
-        await message.reply_text(
-            f"تم استرجاع الأعضاء بنجاح.\n\nتم دمج: {restored}\nتم تجاهل: {skipped}\nإجمالي الأعضاء الآن: {len(DB.get('users', {}))}",
-            reply_markup=admin_keyboard(),
-        )
         return
 
     if state == "broadcast":
@@ -2137,7 +2102,7 @@ async def normal_message_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     chat_type = update.effective_chat.type if update.effective_chat else "private"
 
-    # في الجروبات — المعالج الخاص بالجروبات يتكفل بها
+    # في الجروبات — تجاهل (المعالج الخاص بالجروبات يتكفل)
     if chat_type in ("group", "supergroup"):
         return
 
@@ -2220,18 +2185,7 @@ def build_application() -> Application:
     application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
-    # دخول أعضاء جدد
-    application.add_handler(
-        MessageHandler(
-            filters.ChatType.GROUPS & filters.StatusUpdate.NEW_CHAT_MEMBERS,
-            group_member_welcome_handler,
-        ),
-        group=-2,
-    )
-
-    # مراقبة كل الرسائل العادية في الجروبات والسوبرجروبات.
-    # لا يشترط أن يكون البوت مشرفًا؛ يجب فقط تعطيل Privacy Mode من BotFather
-    # حتى تصل الرسائل العادية إلى البوت.
+    # ✅ معالج الجروبات — يعمل قبل باقي الـ handlers
     application.add_handler(
         MessageHandler(
             filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL,
@@ -2242,11 +2196,10 @@ def build_application() -> Application:
 
     application.add_handler(CallbackQueryHandler(callback_handler))
 
-    # رسائل الخاص: أي رسالة غير أمر تصل للمعالج مباشرة.
-    # تم تبسيط الفلتر لتفادي استبعاد بعض أنواع رسائل الخاص بالخطأ.
+    # في الخاص فقط
     application.add_handler(
         MessageHandler(
-            filters.ChatType.PRIVATE & ~filters.COMMAND,
+            filters.ChatType.PRIVATE & filters.ALL & ~filters.COMMAND,
             normal_message_handler,
         )
     )
