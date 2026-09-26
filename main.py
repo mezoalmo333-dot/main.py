@@ -33,19 +33,19 @@ from telegram.ext import (
 # CONFIGURATION
 # ============================================================
 
-BOT_TOKEN = "8800571722:AAGPdf6meZWlKS2pGlt8gwOAV1BszPCIzh0"
+BOT_TOKEN = "8746223128:AAGyRjSb8I8pxL1TPKKvuTsSw_Wrzlg_7Cs"
 OWNER_ID = 5436469119
 
 
 DATABASE_FILE = "max_vip_bot_db.json"
 
-ALL_VIDEOS_URL = "https://t.me/+W9paasb1jQBhZTk0"
-DEFAULT_REQUIRED_CHANNEL = "https://t.me/+W9paasb1jQBhZTk0"
+ALL_VIDEOS_URL = "https://t.me/+j15LknQHSH00NDg0"
+DEFAULT_REQUIRED_CHANNEL = "https://t.me/+j15LknQHSH00NDg0"
 
 BOT_TITLE = "MaX VIP"
 
 WELCOME_TEXT = (
-    "اشترك في القنوات المطلوبة ثم افتح الأقسام المتاحة."
+    "نورت يا {user_mention} بوت تعالا. ادلعك اختار من الاقسام الي تحت"
 )
 
 NO_ACCESS_TEXT = (
@@ -376,7 +376,12 @@ async def user_required_channels_joined(context: ContextTypes.DEFAULT_TYPE, user
         if not channel:
             continue
         if channel.startswith("https://t.me/+"):
-            continue
+            logger.error(
+                "Cannot verify private required channel invite link %s with Bot API. "
+                "Configure its numeric chat_id or @username in required_channels.",
+                channel,
+            )
+            return False
 
         try:
             member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
@@ -548,7 +553,6 @@ def home_keyboard() -> InlineKeyboardMarkup:
     rows = chunk_rows(buttons, per_row=2)
 
     rows.append([colored_button("جميع الفيديوهات", url=ALL_VIDEOS_URL, style="success", emoji_id=EMOJI_ALL_VIDEOS)])
-    rows.append([colored_button("حالة الاشتراك", callback_data="subscription_status", style="primary", emoji_id=EMOJI_FACES[1])])
 
     return InlineKeyboardMarkup(rows)
 
@@ -704,7 +708,13 @@ async def send_home(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if user:
         ensure_user(user)
 
-    text = DB["settings"].get("welcome_text", WELCOME_TEXT)
+    template = DB["settings"].get("welcome_text", WELCOME_TEXT)
+    if user:
+        name = (user.first_name or user.username or "صديقي").strip()
+        mention = f'<a href="tg://user?id={user.id}">{name}</a>'
+        text = template.replace("{user_mention}", mention).replace("{name}", name)
+    else:
+        text = template.replace("{user_mention}", "صديقي").replace("{name}", "صديقي")
 
     if update.callback_query:
         try:
