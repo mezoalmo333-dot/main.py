@@ -35,7 +35,7 @@ from telegram.ext import (
 # CONFIGURATION
 # ============================================================
 
-BOT_TOKEN = "8746223128:AAGeoJ1ojWwd2TfI26wDMcQ__Q5FRvgyrsI"
+BOT_TOKEN = ""
 OWNER_ID = 8037399518
 
 SUBSCRIPTION_STARS = 50
@@ -45,8 +45,8 @@ SUBSCRIPTION_SECONDS = 30 * 24 * 60 * 60
 
 DATABASE_FILE = "max_vip_bot_db.json"
 
-ALL_VIDEOS_URL = "https://t.me/+M6bZImX5TetiZWU0"
-DEFAULT_REQUIRED_CHANNEL = "https://t.me/kon_ze_athar"
+ALL_VIDEOS_URL = "https://t.me/mediation_King"
+DEFAULT_REQUIRED_CHANNEL = "https://t.me/mediation_King"
 
 BOT_TITLE = "MaX VIP"
 
@@ -56,7 +56,7 @@ WELCOME_TEXT = (
 
 PAYMENT_TEXT = (
     "الاشتراك الشهري\n\n"
-    "السعر: 50 ⭐\n"
+    "السعر:{HTML}\n"
     "المدة: 30 يوم\n\n"
     "بعد الدفع الناجح سيتم فتح جميع مميزات العضوية."
 )
