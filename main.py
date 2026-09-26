@@ -56,7 +56,7 @@ WELCOME_TEXT = (
 
 PAYMENT_TEXT = (
     "الاشتراك الشهري\n\n"
-    "السعر:{HTML}\n"
+    "السعر: 50 ⭐\n"
     "المدة: 30 يوم\n\n"
     "بعد الدفع الناجح سيتم فتح جميع مميزات العضوية."
 )
@@ -2161,6 +2161,9 @@ async def normal_message_handler(update: Update, context: ContextTypes.DEFAULT_T
         await send_required_channels(update, context)
         return
 
+    if not subscription_active(user.id):
+        await send_subscription_page(update, context)
+        return
 
     await send_home(update, context)
 
@@ -2239,10 +2242,11 @@ def build_application() -> Application:
 
     application.add_handler(CallbackQueryHandler(callback_handler))
 
-    # في الخاص فقط
+    # رسائل الخاص: أي رسالة غير أمر تصل للمعالج مباشرة.
+    # تم تبسيط الفلتر لتفادي استبعاد بعض أنواع رسائل الخاص بالخطأ.
     application.add_handler(
         MessageHandler(
-            filters.ChatType.PRIVATE & filters.ALL & ~filters.COMMAND,
+            filters.ChatType.PRIVATE & ~filters.COMMAND,
             normal_message_handler,
         )
     )
