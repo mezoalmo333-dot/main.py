@@ -56,11 +56,12 @@ WELCOME_TEXT =(
 )
 
 PAYMENT_TEXT = (
-    "https://t.me/mediation_King"
+    
     "الاشتراك الشهري\n\n"
     "السعر: 50 ⭐\n"
     "المدة: 30 يوم\n\n"
     "بعد الدفع الناجح سيتم فتح جميع مميزات العضوية."
+    "https://t.me/mediation_King"
 )
 
 NO_ACCESS_TEXT = (
