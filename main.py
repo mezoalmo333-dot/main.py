@@ -35,7 +35,7 @@ from telegram.ext import (
 # CONFIGURATION
 # ============================================================
 
-BOT_TOKEN = "8746223128:AAGyRjSb8I8pxL1TPKKvuTsSw_Wrzlg_7Cs"
+BOT_TOKEN = "8746223128:AAGeoJ1ojWwd2TfI26wDMcQ__Q5FRvgyrsI"
 OWNER_ID = 8037399518
 
 SUBSCRIPTION_STARS = 50
@@ -589,8 +589,10 @@ def admin_keyboard() -> InlineKeyboardMarkup:
         colored_button("إضافة فيديو", callback_data="admin_add_video", style="success", emoji_id=av),
         colored_button("الأقسام", callback_data="admin_categories", style="primary", emoji_id=e),
         colored_button("الاشتراك الإجباري", callback_data="admin_required", style="primary", emoji_id=e),
+        colored_button("سعر الاشتراك", callback_data="admin_price", style="primary", emoji_id=e),
         colored_button("الإذاعة", callback_data="admin_broadcast", style="success", emoji_id=e),
         colored_button("المستخدمون", callback_data="admin_users", style="primary", emoji_id=e),
+        colored_button("تصدير الأعضاء", callback_data="admin_export_users", style="success", emoji_id=e),
         colored_button("استرجاع أعضاء", callback_data="admin_restore_users", style="success", emoji_id=e),
         colored_button("إدارة الأدمن", callback_data="admin_admins", style="primary", emoji_id=e),
         colored_button("النصوص", callback_data="admin_texts", style="primary", emoji_id=e),
@@ -952,7 +954,8 @@ async def group_auto_reply_handler(
         )
     except Exception as exc:
         logger.warning(
-            "Group auto-reply failed in chat %s (%s): %s",
+            "Group auto-reply failed in chat %s (%s): %s. "
+            "If normal member messages never reach the bot, disable BotFather Privacy Mode with /setprivacy.",
             chat.id,
             chat.title,
             exc,
@@ -1193,6 +1196,46 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await safe_answer_callback(query, "تم حذف آخر فيديو.")
         else:
             await safe_answer_callback(query, "لا توجد فيديوهات.", True)
+        return
+
+    if data == "admin_price":
+        if not is_admin(user.id):
+            await safe_answer_callback(query, "غير مصرح.", True)
+            return
+        await safe_answer_callback(query)
+        current_price = get_subscription_stars()
+        context.user_data["admin_state"] = "change_price"
+        try:
+            await query.edit_message_text(
+                f"سعر الاشتراك الحالي: {current_price} ⭐\n\nأرسل السعر الجديد بالأرقام فقط.\nمثال: 100\n\nللإلغاء: /cancel"
+            )
+        except Exception:
+            pass
+        return
+
+    if data == "admin_export_users":
+        if not is_admin(user.id):
+            await safe_answer_callback(query, "غير مصرح.", True)
+            return
+        await safe_answer_callback(query)
+        users = list(DB.get("users", {}).values())
+        export_data = {
+            "users": users,
+            "exported_at": int(time.time()),
+            "count": len(users),
+        }
+        path = Path("max_vip_members_export.json")
+        try:
+            path.write_text(json.dumps(export_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            with path.open("rb") as document:
+                await context.bot.send_document(
+                    chat_id=user.id,
+                    document=document,
+                    caption=f"تصدير أعضاء MaX VIP\n\nعدد الأعضاء: {len(users)}",
+                )
+        except Exception as exc:
+            logger.exception("Members export failed: %s", exc)
+            await context.bot.send_message(chat_id=user.id, text="تعذر تصدير الأعضاء.")
         return
 
     if data == "admin_required":
@@ -1932,6 +1975,27 @@ async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data.pop("admin_state", None)
         context.user_data.pop("admin_category_id", None)
         await message.reply_text("تم حفظ الرابط.", reply_markup=category_admin_keyboard(category_id))
+        return
+
+    if state == "change_price":
+        if not message.text:
+            await message.reply_text("أرسل السعر بالأرقام فقط.")
+            return
+        try:
+            new_price = int(message.text.strip())
+        except ValueError:
+            await message.reply_text("السعر يجب أن يكون رقمًا صحيحًا.")
+            return
+        if not 1 <= new_price <= 100000:
+            await message.reply_text("السعر يجب أن يكون بين 1 و100000 نجمة.")
+            return
+        DB.setdefault("settings", {})["subscription_stars"] = new_price
+        save_db(DB)
+        context.user_data.pop("admin_state", None)
+        await message.reply_text(
+            f"تم تغيير سعر الاشتراك إلى {new_price} ⭐",
+            reply_markup=admin_keyboard(),
+        )
         return
 
     if state == "add_required":
