@@ -50,8 +50,10 @@ DEFAULT_REQUIRED_CHANNEL = "https://t.me/mediation_King"
 BOT_TITLE = "MaX VIP"
 
 WELCOME_TEXT = (
+   "https://t.me/mediation_King"
+   "https://t.me/mediation_King"
     "Welcome to MaX VIP\n\n"
-    "اشترك بـ 50 ⭐ شهريًا لفتح جميع المميزات.\n"
+    "اشترك  ⭐ شهريًا لفتح جميع المميزات.\n"
     "بعد نجاح الدفع سيتم فتح الأقسام المتاحة لك."
 )
 
