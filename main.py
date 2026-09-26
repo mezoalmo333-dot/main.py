@@ -3915,7 +3915,6 @@ COMMAND_BUTTONS = {
     "ranks": ["رفع مطور اساسي", "تنزيل مطور اساسي", "رفع مساعد المالك", "تنزيل مساعد المالك", "رفع مدير", "تنزيل مدير", "رفع ادمن", "تنزيل ادمن", "رفع مشرف", "تنزيل مشرف", "رفع حيوان", "تنزيل حيوان"],
     "replies": ["اضف رد", "حذف رد", "قائمة الردود"],
     "ton": ["1ton", "1تون", "يوستيد", "usdt", "تحليل تون", "تحليل دولار", "محفظة"],
-    "images": ["صور", "زخرف"],
 }
 
 COMMAND_BUTTONS["all"] = list(dict.fromkeys(
@@ -3926,7 +3925,6 @@ COMMAND_CATEGORY_TITLES = {
     "groups": "أوامر المجموعات", "protection": "أوامر الحماية", "locks": "أوامر القفل",
     "unlocks": "أوامر الفتح", "admin": "أوامر الإدارة", "ranks": "أوامر الرتب",
     "replies": "أوامر الردود", "ton": "أوامر TON",
-    "images": "أوامر الصور",
 }
 
 def command_buttons_markup(category, viewer_id=None, chat_id=None):
@@ -3971,11 +3969,7 @@ def commands_menu_markup(viewer_id=None, chat_id=None):
     )
     markup.row(
         button("أوامر TON", callback_data=f"cmdcat:{token}:ton", style="primary"),
-        button("أوامر الصور", callback_data=f"cmdcat:{token}:images", style="primary")
-    )
-    markup.row(
-        button("أوامر الردود", callback_data=f"cmdcat:{token}:replies", style="primary"),
-        button("المكتومين", callback_data=f"cmdpick:{token}:المكتومين", style="primary")
+        button("أوامر الردود", callback_data=f"cmdcat:{token}:replies", style="primary")
     )
     return markup
 
@@ -3991,7 +3985,6 @@ def command_category_text(category, viewer_id=None, chat_id=None):
         "ranks": "<b>أوامر الرتب</b>\n<code>رفع مساعد المالك</code>\n<code>تنزيل مساعد المالك</code>\n<code>رفع مدير</code>\n<code>تنزيل مدير</code>\n<code>رفع ادمن</code>\n<code>تنزيل ادمن</code>\n<code>رفع مشرف</code>\n<code>تنزيل مشرف</code>\n<code>رفع حيوان</code>\n<code>تنزيل حيوان</code>",
         "replies": "<b>أوامر الردود</b>\n<code>اضف رد</code>\n<code>حذف رد</code>\n<code>قائمة الردود</code>",
         "ton": "<b>أوامر TON</b>\n<code>1ton</code>\n<code>1تون</code>\n<code>يوستيد</code>\n<code>usdt</code>\n<code>تحليل تون</code>\n<code>تحليل دولار</code>\n<code>محفظة</code>",
-        "images": "<b>أوامر الصور والزخرفة</b>\n<code>صور</code>\n<code>زخرف</code>",
     }
     return texts.get(category, "<b>قائمة أوامر البوت</b>")
 
@@ -5387,11 +5380,10 @@ def user_subscribed_to_channel(user_id, row):
         # في بعض القنوات قد يظهر العضو بحالة restricted رغم أنه مشترك.
         return member.status in ("creator", "administrator", "member", "restricted")
     except Exception as e:
-        # لا نحذف رسائل المجموعة ولا نعطل الأوامر إذا كانت قناة الاشتراك
-        # غير قابلة للفحص مؤقتًا (البوت ليس أدمن فيها، القناة حُذفت، 429...).
-        # يسجل الخطأ ونعتبر الفحص غير قابل للحسم بدل حظر المستخدم خطأً.
-        print("[Force Sub Check Warning - fail open]", row["chat_id"], repr(e))
-        return True
+        # إذا كانت القناة مضافة كإجباري لكن لا يمكن للبوت فحص العضوية،
+        # لا نعتبر المستخدم مشتركًا تلقائيًا؛ يجب إصلاح صلاحيات البوت في القناة.
+        print("[Force Sub Check Error]", row["chat_id"], repr(e))
+        return False
 
 
 def force_sub_missing(user_id, group_chat_id):
@@ -5448,11 +5440,8 @@ def send_force_sub_prompt(message, missing=None):
     markup = force_sub_markup(message.from_user.id, message.chat.id, get_force_channels(message.chat.id))
     user_mention = mention(message.from_user, owner=True)
     text = (
-        f"{user_mention}\n"
-        "<b>BoT • 𝗥 𝗲 𝗲 𝗺eCo</b>  Protecting the best groups on Telegram\n"
-        "\n"
-        "لازم تشترك في القنوات المطلوبة قبل التحدث في المجموعة.\n"
-        "اشترك من الأزرار بالأسفل، وبعدها اضغط على <b>تحقق من الاشتراك</b>."
+        f"{user_mention} ياخويا اشترك في القناة الاول "
+        "<tg-emoji emoji-id=\"5447644880824181073\">🔔</tg-emoji>"
     )
 
     old_id = force_prompt_messages.get(key)
@@ -8961,11 +8950,9 @@ def main_handler(message):
             ensure_developer_full_admin(message.chat.id)
 
         # استقبال اسم قناة الاشتراك الإجباري داخل نفس المجموعة التي بدأ منها المشرف العملية.
-        # كان هذا الاستقبال موجودًا في مسار الخاص فقط، لذلك زر «إضافة قناة» داخل المجموعة
-        # كان يطلب @username ثم لا يعالج الرسالة التالية.
+        # يعمل لأي مشرف للمجموعة، وليس للمطور فقط.
         if (
             message.from_user
-            and message.from_user.id == DEVELOPER_ID
             and message.text
             and (
                 admin_pending.get(message.from_user.id) == "force_add"
@@ -8974,6 +8961,7 @@ def main_handler(message):
                     and admin_pending.get(message.from_user.id).get("action") == "force_add"
                 )
             )
+            and is_admin(message.chat.id, message.from_user.id)
         ):
             pending_data = admin_pending.get(message.from_user.id)
             pending_group_id = (
@@ -9105,10 +9093,13 @@ def main_handler(message):
             if _clean_command == "يوت":
                 if message.chat.type in ("group", "supergroup", "channel", "private"):
                     query = (_command_arg or "").strip()
+                    if not query and getattr(message, "reply_to_message", None):
+                        replied = getattr(message.reply_to_message, "text", None) or getattr(message.reply_to_message, "caption", None)
+                        query = (replied or "").strip()
                     if query:
-                        send_youtube_song(message, query)
+                        handle_music_command(message, query)
                     else:
-                        bot.reply_to(message, "اكتب اسم الأغنية بعد يوت.")
+                        bot.reply_to(message, "<b>اكتب: يوت اسم الأغنية</b>", parse_mode="HTML")
                     return
 
             if _clean_command in ("صورة", "صور", "صوره"):
@@ -9276,7 +9267,7 @@ def handle_private(message):
             replied = getattr(message.reply_to_message, "text", None) or getattr(message.reply_to_message, "caption", None)
             query = (replied or "").strip()
         if query:
-            send_youtube_song(message, query)
+            handle_music_command(message, query)
         else:
             bot.reply_to(message, "<b>اكتب: يوت اسم الأغنية</b>", parse_mode="HTML")
         return
