@@ -62,7 +62,7 @@ LEGACY_DATABASE_FILE = Path("max_vip_bot_db.json")
 
 ALL_VIDEOS_URL = "https://t.me/mediation_King"
 DEFAULT_REQUIRED_CHANNEL = "https://t.me/mediation_King"
-REQUIRED_CHANNEL_ID = "3390584761"
+REQUIRED_CHANNEL_ID = "-1003390584761"
 REQUIRED_CHANNEL_INVITE_URL = "https://t.me/+7lFrm3Ae5yliZDg0"
 
 BOT_TITLE = "MaX VIP"
@@ -87,7 +87,7 @@ NO_ACCESS_TEXT = (
 )
 
 REQUIRED_CHANNEL_TEXT = (
-    "قبل استخدام البوت، يجب الاشتراك في القناة المطلوبة ثم الضغط على تحقق."
+    "اشترك في القناة الأولى والقناة الثانية، ثم اضغط تحقق من الاشتراك."
 )
 
 # ============================================================
@@ -438,9 +438,9 @@ async def user_required_channels_joined(context: ContextTypes.DEFAULT_TYPE, user
         if not channel:
             continue
         if channel.startswith("https://t.me/+") or channel.startswith("http://t.me/+"):
-            # رابط دعوة خاص لا يكفي وحده للتحقق عبر Bot API؛ خزّن chat_id (-100...) بعد إضافة البوت للجروب/القناة.
-            logger.warning("Cannot verify private invite link without chat_id: %s", channel)
-            return False
+            # رابط الدعوة الخاص يتم عرضه للمستخدم فقط؛ التحقق الفعلي يتم عبر Chat ID.
+            # لا نوقف التحقق بسبب وجود رابط الدعوة في القائمة.
+            continue
 
         check_target = channel
         if channel.startswith("https://t.me/"):
@@ -756,14 +756,12 @@ def admin_texts_keyboard() -> InlineKeyboardMarkup:
 
 
 def subscription_keyboard() -> InlineKeyboardMarkup:
+    stars = get_subscription_stars()
     return InlineKeyboardMarkup(
         [
             [
-                colored_button(f"اشترك الآن — {get_subscription_stars()}", callback_data="buy_subscription", style="success", emoji_id=EMOJI_SUBSCRIBE),
-                colored_button("تحقق من الاشتراك", callback_data="subscription_status", style="primary", emoji_id=EMOJI_CHECK_SUB),
-            ],
-            [
-                colored_button(f"ضافني لـ {DB.get('settings', {}).get('join_groups_required', 5)} مجموعتك واستمتع 🤤🔥", url=ADD_TO_GROUP_URL, style="primary", emoji_id=EMOJI_ADMIN),
+                colored_button(f"اشترك بـ {stars} ⭐", callback_data="buy_subscription", style="success", emoji_id=EMOJI_SUBSCRIBE),
+                colored_button("تحقق", callback_data="subscription_status", style="primary", emoji_id=EMOJI_CHECK_SUB),
             ],
         ]
     )
