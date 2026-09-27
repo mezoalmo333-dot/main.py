@@ -19,6 +19,10 @@ from telegram import (
     InlineKeyboardMarkup,
     LabeledPrice,
     Update,
+    InputFile,
+    BotCommand,
+    BotCommandScopeDefault,
+    BotCommandScopeChat,
 )
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -42,26 +46,37 @@ SUBSCRIPTION_STARS = 50
 SUBSCRIPTION_DAYS = 30
 SUBSCRIPTION_SECONDS = 30 * 24 * 60 * 60
 
-DATABASE_FILE = "max_vip_bot_db.json"
+# Persistent data directory.
+# Railway Volume is mounted at /data. When /data is available and writable,
+# all bot database data is stored there so it survives restarts/redeploys.
+# Outside Railway (for example Pydroid), it falls back to ./bot_data.
+VOLUME_ROOT = Path("/data")
+if VOLUME_ROOT.exists() and os.access(VOLUME_ROOT, os.W_OK):
+    DATA_DIR = VOLUME_ROOT / "bot_data"
+else:
+    DATA_DIR = Path("bot_data")
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DATABASE_FILE = str(DATA_DIR / "max_vip_bot_db.json")
+LEGACY_DATABASE_FILE = Path("max_vip_bot_db.json")
 
 ALL_VIDEOS_URL = "https://t.me/mediation_King"
 DEFAULT_REQUIRED_CHANNEL = "https://t.me/mediation_King"
 
 BOT_TITLE = "MaX VIP"
+BOT_USERNAME = "v_u_kbot"
+ADD_TO_GROUP_URL = f"https://t.me/{BOT_USERNAME}?startgroup=true"
 
-WELCOME_TEXT =(
-    "Welcome to MaX VIP\n\n"
-    "اشترك  ⭐ شهريًا لفتح جميع المميزات.\n"
-    "بعد نجاح الدفع سيتم فتح الأقسام المتاحة لك."
+WELCOME_TEXT = (
+    "︙ نورت يـ {name} في بوت مقاطع 🤤🔥\n"
+    "︙ ضيف البوت في 5 جروبات او اشترك بـ {stars} ⭐\n\n"
+    "اختار من الأزرار بالأسفل."
 )
 
 PAYMENT_TEXT = (
-    
-    "الاشتراك الشهري\n\n"
-    "السعر: 50 ⭐\n"
-    "المدة: 30 يوم\n\n"
-    "بعد الدفع الناجح سيتم فتح جميع مميزات العضوية."
-    "https://t.me/mediation_King"
+    "︙ نورت يـ {name} في بوت مقاطع 🤤🔥\n"
+    "︙ ضيف البوت في 5 جروبات او اشترك بـ {stars} ⭐\n\n"
+    "اشترك الآن أو أضفني إلى 5 مجموعات واستمتع 🤤🔥"
 )
 
 NO_ACCESS_TEXT = (
@@ -82,15 +97,25 @@ GROUP_REPLY_MESSAGES = [
     "ابعت بف هقولك",
     "تعال فكيت البلوك",
     "يارجال بقولك مولعة 🔥🫦",
-    "متيجي خاص تحلبني",
     "ابعتلي خاص ثانيه",
     "تعال هقولك حاجه خاص",
     "بقولك اي في فديوهات خاص تعال",
-    "متيجي خاص يخول بقولك",
-    "بتعرف تنيك؟",
-    "تعال امصلك ابعت خاص",
     "ضيفتك ضيف وابعت خاص",
 ]
+
+
+# ردود إضافية أدخلها صاحب البوت كما هي
+GROUP_REPLY_MESSAGES.extend([
+    "اففف اندري مبلول 🥵🔥",
+    "متيجي خاص انططلك عليه",
+    "بحب العنف اوي 🥺🔥",
+    "تعال دخلو بين شفرات كسي🔥🤤",
+    "كسي بيحرقني 🥺",
+    "متيجي تنكني 🤤",
+    "يخربيت زوبرك 🤭",
+    "بحب زوبر فوق 25سنتي",
+    "خاص بسرعةة هنزلهم في الاندر",
+])
 
 # نطاق الحروف العربية + الإنجليزية
 LETTERS_PATTERN = re.compile(
@@ -156,6 +181,9 @@ DEFAULT_DB = {
         "no_access_text": NO_ACCESS_TEXT,
         "bot_title": BOT_TITLE,
         "subscription_stars": 50,
+        "all_videos_url": ALL_VIDEOS_URL,
+        "join_groups_required": 5,
+        "member_join_notice": True,
     },
     "broadcast": {
         "running": False,
@@ -189,6 +217,18 @@ def save_db(db: Dict[str, Any]) -> None:
 
 def load_db() -> Dict[str, Any]:
     path = Path(DATABASE_FILE)
+
+    # First run after attaching the Railway Volume: if the old database is
+    # still available in the previous local path, copy it into the persistent
+    # Volume before creating a new empty database.
+    if not path.exists() and LEGACY_DATABASE_FILE.exists() and LEGACY_DATABASE_FILE.resolve() != path.resolve():
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(LEGACY_DATABASE_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+            logger.info("Migrated legacy database to persistent path: %s", path)
+        except Exception:
+            logger.exception("Could not migrate legacy database to persistent path.")
+
     if not path.exists():
         save_db(DEFAULT_DB)
         return json.loads(json.dumps(DEFAULT_DB, ensure_ascii=False))
@@ -218,6 +258,15 @@ def load_db() -> Dict[str, Any]:
     db.setdefault("settings", {})
     if "subscription_stars" not in db["settings"]:
         db["settings"]["subscription_stars"] = SUBSCRIPTION_STARS
+        changed = True
+    if "all_videos_url" not in db["settings"]:
+        db["settings"]["all_videos_url"] = ALL_VIDEOS_URL
+        changed = True
+    if "join_groups_required" not in db["settings"]:
+        db["settings"]["join_groups_required"] = 5
+        changed = True
+    if "member_join_notice" not in db["settings"]:
+        db["settings"]["member_join_notice"] = True
         changed = True
 
     if not db.get("required_channels"):
@@ -383,11 +432,23 @@ async def user_required_channels_joined(context: ContextTypes.DEFAULT_TYPE, user
         channel = str(channel).strip()
         if not channel:
             continue
-        if channel.startswith("https://t.me/+"):
-            continue
+        if channel.startswith("https://t.me/+") or channel.startswith("http://t.me/+"):
+            # رابط دعوة خاص لا يكفي وحده للتحقق عبر Bot API؛ خزّن chat_id (-100...) بعد إضافة البوت للجروب/القناة.
+            logger.warning("Cannot verify private invite link without chat_id: %s", channel)
+            return False
+
+        check_target = channel
+        if channel.startswith("https://t.me/"):
+            tail = channel.rstrip("/").split("/", 3)[-1]
+            if tail and not tail.startswith("+"):
+                check_target = "@" + tail.split("?")[0]
+        elif channel.startswith("http://t.me/"):
+            tail = channel.rstrip("/").split("/", 3)[-1]
+            if tail and not tail.startswith("+"):
+                check_target = "@" + tail.split("?")[0]
 
         try:
-            member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
+            member = await context.bot.get_chat_member(chat_id=check_target, user_id=user_id)
             status = member.status
             if status in ("left", "kicked"):
                 return False
@@ -562,7 +623,7 @@ def home_keyboard() -> InlineKeyboardMarkup:
 
     rows = chunk_rows(buttons, per_row=2)
 
-    rows.append([colored_button("جميع الفيديوهات", url=ALL_VIDEOS_URL, style="success", emoji_id=EMOJI_ALL_VIDEOS)])
+    rows.append([colored_button("جميع الفيديوهات", url=str(DB.get("settings", {}).get("all_videos_url", ALL_VIDEOS_URL)), style="success", emoji_id=EMOJI_ALL_VIDEOS)])
     rows.append([colored_button("حالة الاشتراك", callback_data="subscription_status", style="primary", emoji_id=EMOJI_FACES[1])])
 
     return InlineKeyboardMarkup(rows)
@@ -591,6 +652,9 @@ def admin_keyboard() -> InlineKeyboardMarkup:
         colored_button("سعر الاشتراك", callback_data="admin_price", style="primary", emoji_id=e),
         colored_button("الإذاعة", callback_data="admin_broadcast", style="success", emoji_id=e),
         colored_button("المستخدمون", callback_data="admin_users", style="primary", emoji_id=e),
+        colored_button("تصدير الأعضاء", callback_data="admin_export_members", style="success", emoji_id=e),
+        colored_button("استرجاع الأعضاء", callback_data="admin_restore_members", style="primary", emoji_id=e),
+        colored_button("رابط جميع الفيديوهات", callback_data="admin_all_videos_url", style="primary", emoji_id=e),
         colored_button("إدارة الأدمن", callback_data="admin_admins", style="primary", emoji_id=e),
         colored_button("النصوص", callback_data="admin_texts", style="primary", emoji_id=e),
         colored_button("ردود الكلمات", callback_data="admin_keywords", style="primary", emoji_id=e),
@@ -622,7 +686,8 @@ def required_channels_keyboard() -> InlineKeyboardMarkup:
 
     rows = chunk_rows(buttons, per_row=2) if buttons else []
 
-    rows.append([colored_button("إضافة قناة", callback_data="admin_req_add", style="success", emoji_id=EMOJI_ADMIN)])
+    rows.append([colored_button("إضافة قناة/جروب", callback_data="admin_req_add", style="success", emoji_id=EMOJI_ADMIN)])
+    rows.append([colored_button("شرح الاشتراك الإجباري", callback_data="admin_req_help", style="danger", emoji_id=EMOJI_ADMIN)])
     rows.append([colored_button("رجوع", callback_data="admin_panel", style="danger", emoji_id=EMOJI_ADMIN)])
 
     return InlineKeyboardMarkup(rows)
@@ -690,8 +755,11 @@ def subscription_keyboard() -> InlineKeyboardMarkup:
         [
             [
                 colored_button(f"اشترك الآن — {get_subscription_stars()}", callback_data="buy_subscription", style="success", emoji_id=EMOJI_SUBSCRIBE),
-                colored_button("تحقق", callback_data="subscription_status", style="primary", emoji_id=EMOJI_CHECK_SUB),
-            ]
+                colored_button("تحقق من الاشتراك", callback_data="subscription_status", style="primary", emoji_id=EMOJI_CHECK_SUB),
+            ],
+            [
+                colored_button(f"ضافني لـ {DB.get('settings', {}).get('join_groups_required', 5)} مجموعتك واستمتع 🤤🔥", url=ADD_TO_GROUP_URL, style="primary", emoji_id=EMOJI_ADMIN),
+            ],
         ]
     )
 
@@ -708,6 +776,8 @@ async def send_required_channels(update: Update, context: ContextTypes.DEFAULT_T
             rows.append([colored_button("فتح القناة", url=f"https://t.me/{channel[1:]}", style="primary", emoji_id=EMOJI_ADMIN)])
 
     rows.append([colored_button("تحقق من الاشتراك", callback_data="check_required", style="success", emoji_id=EMOJI_CHECK_SUB)])
+    rows.append([colored_button(f"اشترك — {get_subscription_stars()} ⭐", callback_data="buy_subscription", style="primary", emoji_id=EMOJI_SUBSCRIBE)])
+    rows.append([colored_button(f"ضافني لـ {DB.get('settings', {}).get('join_groups_required', 5)} مجموعتك واستمتع 🤤🔥", url=ADD_TO_GROUP_URL, style="primary", emoji_id=EMOJI_ADMIN)])
 
     markup = InlineKeyboardMarkup(rows)
     text = REQUIRED_CHANNEL_TEXT
@@ -724,17 +794,20 @@ async def send_required_channels(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def send_subscription_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = DB["settings"].get("payment_text", PAYMENT_TEXT)
+    template = DB["settings"].get("payment_text", PAYMENT_TEXT)
+    user = update.effective_user
+    mention = f'<a href="tg://user?id={user.id}">{user.full_name}</a>' if user else ""
+    text = template.replace("{name}", mention).replace("{stars}", str(get_subscription_stars()))
 
     if update.callback_query:
         try:
-            await update.callback_query.edit_message_text(text, reply_markup=subscription_keyboard())
+            await update.callback_query.edit_message_text(text, reply_markup=subscription_keyboard(), parse_mode=ParseMode.HTML)
             return
         except Exception:
             pass
 
     if update.effective_message:
-        await update.effective_message.reply_text(text, reply_markup=subscription_keyboard())
+        await update.effective_message.reply_text(text, reply_markup=subscription_keyboard(), parse_mode=ParseMode.HTML)
 
 
 async def send_home(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -742,18 +815,63 @@ async def send_home(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if user:
         ensure_user(user)
 
-    text = DB["settings"].get("welcome_text", WELCOME_TEXT)
+    template = DB["settings"].get("welcome_text", WELCOME_TEXT)
+    user = update.effective_user
+    if user:
+        mention = f'<a href="tg://user?id={user.id}">{user.full_name}</a>'
+        text = template.replace("{name}", mention).replace("{stars}", str(get_subscription_stars()))
+    else:
+        text = template.replace("{stars}", str(get_subscription_stars()))
 
     if update.callback_query:
         try:
-            await update.callback_query.edit_message_text(text, reply_markup=home_keyboard())
+            await update.callback_query.edit_message_text(text, reply_markup=home_keyboard(), parse_mode=ParseMode.HTML)
             return
         except Exception:
             pass
 
     if update.effective_message:
-        await update.effective_message.reply_text(text, reply_markup=home_keyboard())
+        await update.effective_message.reply_text(text, reply_markup=home_keyboard(), parse_mode=ParseMode.HTML)
 
+
+# ============================================================
+# MEMBER JOIN NOTICE / EXPORT
+# ============================================================
+
+async def notify_new_member(context: ContextTypes.DEFAULT_TYPE, user) -> None:
+    if not DB.get("settings", {}).get("member_join_notice", True):
+        return
+    try:
+        mention = f'<a href="tg://user?id={user.id}">{user.full_name}</a>'
+        await context.bot.send_message(
+            chat_id=OWNER_ID,
+            text=(f"دخول عضو جديد\n\nالاسم: {mention}\n"
+                  f"ID: <code>{user.id}</code>\n"
+                  f"Username: @{user.username}" if user.username else f"دخول عضو جديد\n\nالاسم: {mention}\nID: <code>{user.id}</code>"),
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as exc:
+        logger.warning("Member join notice failed: %s", exc)
+
+async def export_members(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user or not is_admin(update.effective_user.id):
+        return
+    export_path = Path("members_export.json")
+    payload = {"version": 1, "exported_at": int(time.time()), "users": DB.get("users", {})}
+    export_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        with export_path.open("rb") as f:
+            await context.bot.send_document(
+                chat_id=update.effective_user.id,
+                document=InputFile(f, filename="members_export.json"),
+                caption=f"تم تصدير {len(DB.get('users', {}))} عضو.",
+                reply_markup=admin_keyboard(),
+            )
+    finally:
+        try:
+            export_path.unlink()
+        except OSError:
+            pass
 
 # ============================================================
 # START
@@ -768,7 +886,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
         return
 
+    uid = str(update.effective_user.id)
+    is_new_member = uid not in DB.get("users", {})
     user = ensure_user(update.effective_user)
+    if is_new_member and not is_admin(update.effective_user.id):
+        await notify_new_member(context, update.effective_user)
 
     if user.get("blocked"):
         await update.effective_message.reply_text("تم منع حسابك من استخدام البوت.")
@@ -1208,8 +1330,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await safe_answer_callback(query)
         text = (
             "الاشتراك الإجباري\n\n"
-            "يمكنك إضافة @username أو chat_id للقناة/المجموعة.\n"
-            "يمكن أيضًا حفظ رابط t.me كزر، لكن التحقق الآلي يحتاج معرّف chat قابلًا للفحص."
+            "يمكنك إضافة قناة أو جروب عام بـ @username أو رابط t.me، أو جروب/قناة خاصة بـ chat_id يبدأ بـ -100 بعد إضافة البوت إليها.\n"
+            "رابط الدعوة الخاص +xxxx يصلح للزر، لكن التحقق الآلي يحتاج chat_id لأن Telegram لا يسمح للبوت بفحص العضوية من رابط الدعوة وحده."
         )
         try:
             await query.edit_message_text(text, reply_markup=required_channels_keyboard())
@@ -1225,7 +1347,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await safe_answer_callback(query)
         try:
             await query.edit_message_text(
-                "أرسل الآن @username أو chat_id للقناة المطلوبة.\n\nمثال:\n@kon_ze_athar\n\nللإلغاء: /cancel"
+                "أرسل الآن @username أو chat_id أو رابط t.me للقناة/الجروب المطلوب.\n\nعام: @mediation_King\nخاص: -1001234567890 (بعد إضافة البوت للمجموعة/القناة)\nرابط دعوة خاص: https://t.me/+xxxx (زر فقط؛ التحقق يحتاج chat_id)\n\nللإلغاء: /cancel"
             )
         except Exception:
             pass
@@ -1420,6 +1542,47 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
         except Exception:
             pass
+        return
+
+    if data == "admin_export_members":
+        if not is_admin(user.id):
+            await safe_answer_callback(query, "غير مصرح.", True)
+            return
+        await safe_answer_callback(query, "جاري تجهيز ملف الأعضاء...")
+        await export_members(update, context)
+        return
+
+    if data == "admin_restore_members":
+        if not is_admin(user.id):
+            await safe_answer_callback(query, "غير مصرح.", True)
+            return
+        context.user_data["admin_state"] = "restore_members"
+        await safe_answer_callback(query)
+        await query.edit_message_text("أرسل الآن ملف members_export.json أو أي ملف JSON يحتوي على users.\n\nللإلغاء: /cancel")
+        return
+
+    if data == "admin_all_videos_url":
+        if not is_admin(user.id):
+            await safe_answer_callback(query, "غير مصرح.", True)
+            return
+        context.user_data["admin_state"] = "all_videos_url"
+        await safe_answer_callback(query)
+        await query.edit_message_text(f"الرابط الحالي:\n{DB.get('settings', {}).get('all_videos_url', ALL_VIDEOS_URL)}\n\nأرسل الرابط الجديد.\nللإلغاء: /cancel")
+        return
+
+    if data == "admin_req_help":
+        if not is_admin(user.id):
+            await safe_answer_callback(query, "غير مصرح.", True)
+            return
+        await safe_answer_callback(query)
+        await query.edit_message_text(
+            "شرح الاشتراك الإجباري\n\n"
+            "1) قناة/جروب عام: أرسل @username أو رابط t.me\n"
+            "2) قناة/جروب خاص: أضف البوت إليه أولًا ثم أرسل chat_id مثل -1001234567890\n"
+            "3) رابط دعوة خاص +xxxx يمكن عرضه كزر، لكن التحقق الفعلي يحتاج chat_id\n"
+            "4) المستخدم يضغط اشتراك ثم تحقق، وإذا كان مشتركًا يمر للخطوة التالية.",
+            reply_markup=required_channels_keyboard(),
+        )
         return
 
     if data == "admin_users":
@@ -2016,6 +2179,54 @@ async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             logger.warning("Could not notify manually activated user %s: %s", target_id, exc)
         return
 
+    if state == "all_videos_url":
+        if not message.text:
+            await message.reply_text("أرسل رابطًا صحيحًا يبدأ بـ https://")
+            return
+        url = message.text.strip()
+        if not (url.startswith("https://") or url.startswith("http://") or url.startswith("tg://")):
+            await message.reply_text("الرابط يجب أن يبدأ بـ https:// أو http:// أو tg://")
+            return
+        DB.setdefault("settings", {})["all_videos_url"] = url
+        save_db(DB)
+        context.user_data.pop("admin_state", None)
+        await message.reply_text("تم تغيير رابط جميع الفيديوهات.", reply_markup=admin_keyboard())
+        return
+
+    if state == "restore_members":
+        if not (message.document and message.document.file_name.lower().endswith(".json")):
+            await message.reply_text("أرسل ملف JSON فقط.")
+            return
+        try:
+            tg_file = await message.document.get_file()
+            temp_path = Path("members_restore_temp.json")
+            await tg_file.download_to_drive(custom_path=str(temp_path))
+            data = json.loads(temp_path.read_text(encoding="utf-8"))
+            users = data.get("users", data) if isinstance(data, dict) else {}
+            if not isinstance(users, dict):
+                raise ValueError("users must be an object")
+            restored = 0
+            for uid, record in users.items():
+                if not isinstance(record, dict):
+                    continue
+                rid = str(record.get("id", uid))
+                if not rid.isdigit():
+                    continue
+                DB["users"][rid] = record
+                restored += 1
+            save_db(DB)
+            context.user_data.pop("admin_state", None)
+            await message.reply_text(f"تم استرجاع {restored} عضو بنجاح.", reply_markup=admin_keyboard())
+        except Exception as exc:
+            logger.exception("Members restore failed: %s", exc)
+            await message.reply_text("فشل استرجاع الملف. تأكد أنه ملف JSON صادر من زر التصدير.", reply_markup=admin_keyboard())
+        finally:
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
+        return
+
     if state == "add_required":
         if not message.text:
             await message.reply_text("أرسل @username أو chat_id أو رابط t.me.")
@@ -2158,8 +2369,21 @@ async def post_init(application: Application) -> None:
     try:
         me = await application.bot.get_me()
         logger.info("Bot started: @%s (%s)", me.username, me.id)
+        # / يظهر Start للجميع، وAdmin يظهر فقط للمالك والأدمن المسجلين.
+        await application.bot.set_my_commands(
+            [BotCommand("start", "بدء البوت")],
+            scope=BotCommandScopeDefault(),
+        )
+        for admin_id in DB.get("admins", []):
+            try:
+                await application.bot.set_my_commands(
+                    [BotCommand("start", "بدء البوت"), BotCommand("admin", "لوحة الأدمن")],
+                    scope=BotCommandScopeChat(chat_id=int(admin_id)),
+                )
+            except Exception as exc:
+                logger.warning("Could not set admin commands for %s: %s", admin_id, exc)
     except Exception:
-        logger.exception("Could not fetch bot info.")
+        logger.exception("Could not fetch bot info or set commands.")
 
 
 def validate_config() -> None:
