@@ -62,9 +62,11 @@ LEGACY_DATABASE_FILE = Path("max_vip_bot_db.json")
 
 ALL_VIDEOS_URL = "https://t.me/mediation_King"
 DEFAULT_REQUIRED_CHANNEL = "https://t.me/mediation_King"
+REQUIRED_CHANNEL_ID = "3390584761"
+REQUIRED_CHANNEL_INVITE_URL = "https://t.me/+7lFrm3Ae5yliZDg0"
 
 BOT_TITLE = "MaX VIP"
-BOT_USERNAME = "v_u_kbot"
+BOT_USERNAME = "TteeRMBoT"
 ADD_TO_GROUP_URL = f"https://t.me/{BOT_USERNAME}?startgroup=true"
 
 WELCOME_TEXT = (
@@ -173,7 +175,7 @@ DEFAULT_CATEGORIES = [
 DEFAULT_DB = {
     "users": {},
     "admins": [],
-    "required_channels": [DEFAULT_REQUIRED_CHANNEL],
+    "required_channels": [DEFAULT_REQUIRED_CHANNEL, REQUIRED_CHANNEL_ID],
     "categories": DEFAULT_CATEGORIES,
     "settings": {
         "welcome_text": WELCOME_TEXT,
@@ -270,7 +272,10 @@ def load_db() -> Dict[str, Any]:
         changed = True
 
     if not db.get("required_channels"):
-        db["required_channels"] = [DEFAULT_REQUIRED_CHANNEL]
+        db["required_channels"] = [DEFAULT_REQUIRED_CHANNEL, REQUIRED_CHANNEL_ID]
+        changed = True
+    elif REQUIRED_CHANNEL_ID not in db["required_channels"]:
+        db["required_channels"].append(REQUIRED_CHANNEL_ID)
         changed = True
 
     for item in db.get("categories", []):
@@ -772,6 +777,8 @@ async def send_required_channels(update: Update, context: ContextTypes.DEFAULT_T
 
         if channel.startswith("http://") or channel.startswith("https://"):
             rows.append([colored_button("الاشتراك في القناة", url=channel, style="primary", emoji_id=EMOJI_ADMIN)])
+        elif channel == REQUIRED_CHANNEL_ID:
+            rows.append([colored_button("الاشتراك في القناة", url=REQUIRED_CHANNEL_INVITE_URL, style="primary", emoji_id=EMOJI_ADMIN)])
         elif channel.startswith("@"):
             rows.append([colored_button("فتح القناة", url=f"https://t.me/{channel[1:]}", style="primary", emoji_id=EMOJI_ADMIN)])
 
