@@ -782,7 +782,7 @@ async def send_required_channels(update: Update, context: ContextTypes.DEFAULT_T
 
     rows.append([colored_button("تحقق من الاشتراك", callback_data="check_required", style="success", emoji_id=EMOJI_CHECK_SUB)])
     rows.append([colored_button(f"اشترك — {get_subscription_stars()} ⭐", callback_data="buy_subscription", style="primary", emoji_id=EMOJI_SUBSCRIBE)])
-    rows.append([colored_button(f"ضافني لـ {DB.get('settings', {}).get('join_groups_required', 5)} مجموعتك واستمتع 🤤🔥", url=ADD_TO_GROUP_URL, style="primary", emoji_id=EMOJI_ADMIN)])
+    rows.append([colored_button(f"ضافني لـ {DB.get('settings', {}).get('join_groups_required', 5)} مجموعات واستمتع 🤤🔥", url=ADD_TO_GROUP_URL, style="primary", emoji_id=EMOJI_ADMIN)])
 
     markup = InlineKeyboardMarkup(rows)
     text = REQUIRED_CHANNEL_TEXT
