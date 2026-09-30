@@ -837,6 +837,10 @@ def subscription_keyboard() -> InlineKeyboardMarkup:
 
 
 async def send_required_channels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # الاشتراك الإجباري والقائمة الرئيسية للخاص فقط — لا تظهر أي قائمة في الجروبات.
+    if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
+        return
+
     rows = []
 
     for channel in DB.get("required_channels", []):
@@ -866,6 +870,10 @@ async def send_required_channels(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def send_subscription_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # صفحة الاشتراك خاصة فقط ولا تُرسل أو تُعدل داخل الجروبات.
+    if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
+        return
+
     template = DB["settings"].get("payment_text", PAYMENT_TEXT)
     user = update.effective_user
     mention = f'<a href="tg://user?id={user.id}">{user.full_name}</a>' if user else ""
@@ -883,6 +891,10 @@ async def send_subscription_page(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def send_home(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # القائمة الرئيسية خاصة فقط — ممنوع ظهورها في أي جروب نهائيًا.
+    if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
+        return
+
     user = update.effective_user
     if user:
         ensure_user(user)
@@ -1305,9 +1317,13 @@ async def group_protection_handler(update: Update, context: ContextTypes.DEFAULT
         logger.warning("Protection penalty failed: %s", exc)
     mention = f'<a href="tg://user?id={user.id}">{user.full_name}</a>'
     try:
+        violation_text = (
+            f"يـ ممنوع ارسل {mention} هنا "
+            f'<tg-emoji emoji-id="{CUSTOM_EMOJI_PROTECTION}">🔹</tg-emoji>'
+        )
         await context.bot.send_message(
             chat.id,
-            f"يـ ممنوع ارسل {mention} هنا 5870734657384877785",
+            violation_text,
             parse_mode=ParseMode.HTML,
         )
     except Exception:
@@ -1363,6 +1379,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     user = update.effective_user
 
     if not query or not user:
+        return
+
+    # أي أزرار للقائمة الرئيسية/الاشتراك ممنوعة داخل الجروبات.
+    # لو كانت هناك رسالة قديمة للقائمة في جروب وتم الضغط عليها، نحذفها بدل إظهار قائمة جديدة.
+    if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
+        try:
+            await safe_answer_callback(query, "هذا القسم متاح في الخاص فقط.", True)
+        except Exception:
+            pass
+        try:
+            if query.message:
+                await query.message.delete()
+        except Exception:
+            pass
         return
 
     ensure_user(user)
@@ -1457,14 +1487,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 st["all"] = True
                 save_db(DB)
                 await safe_answer_callback(query)
-                await query.edit_message_text("تم قفل كل شيء 5206607081334906820", reply_markup=protection_keyboard(update.effective_chat.id))
+                lock_text = "تم قفل كل شيء 🔹"
+                await query.edit_message_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)], reply_markup=protection_keyboard(update.effective_chat.id))
                 return
             if key == "all_off":
                 for k in PROTECTION_KEYS: st[k] = False
                 st["all"] = False
                 save_db(DB)
                 await safe_answer_callback(query)
-                await query.edit_message_text("تم فتح كل شيء 5206607081334906820", reply_markup=protection_keyboard(update.effective_chat.id))
+                lock_text = "تم فتح كل شيء 🔹"
+                await query.edit_message_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)], reply_markup=protection_keyboard(update.effective_chat.id))
                 return
             await safe_answer_callback(query)
             await query.edit_message_text(f"اختر العقوبة عند قفل {PROTECTION_KEYS.get(key, key)}", reply_markup=protection_penalty_keyboard(key))
@@ -1484,7 +1516,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             st[f"penalty_{key}"] = penalty
             save_db(DB)
             await safe_answer_callback(query)
-            await query.edit_message_text(f"تم حفظ البيانات\n\nتم قفل {PROTECTION_KEYS.get(key, key)} 5206607081334906820", reply_markup=protection_keyboard(update.effective_chat.id))
+            lock_text = f"تم حفظ البيانات\n\nتم قفل {PROTECTION_KEYS.get(key, key)} 🔹"
+            await query.edit_message_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)], reply_markup=protection_keyboard(update.effective_chat.id))
             return
         if data.startswith("mute_duration:"):
             key, duration = action[1], int(action[2])
@@ -1493,7 +1526,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             st[f"mute_duration_{key}"] = duration
             save_db(DB)
             await safe_answer_callback(query)
-            await query.edit_message_text(f"تم حفظ البيانات\n\nتم قفل {PROTECTION_KEYS.get(key, key)} 5206607081334906820", reply_markup=protection_keyboard(update.effective_chat.id))
+            lock_text = f"تم حفظ البيانات\n\nتم قفل {PROTECTION_KEYS.get(key, key)} 🔹"
+            await query.edit_message_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)], reply_markup=protection_keyboard(update.effective_chat.id))
             return
 
     if data.startswith("profile_like:"):
@@ -2885,59 +2919,73 @@ async def group_member_action(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def group_welcome_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """إرسال ترحيب فعلي عند دخول أعضاء جدد إلى الجروب."""
-    message = update.effective_message
-    chat = update.effective_chat
+    """ترحيب الجروبات — يعمل على رسالة دخول الأعضاء فقط، مع fallback للصورة إذا فشل إرسالها."""
+    message = getattr(update, "message", None)
+    chat = getattr(message, "chat", None) if message else None
 
     if not message or not chat or chat.type not in ("group", "supergroup"):
         return
 
-    members = list(message.new_chat_members or [])
+    members = list(getattr(message, "new_chat_members", None) or [])
     if not members:
         return
 
     st = group_settings(chat.id)
     join_dates = st.setdefault("member_join_dates", {})
     photo = str(DB.get("settings", {}).get("group_welcome_photo", "") or "").strip()
-    now = time.time()
+    now = int(time.time())
     joined_date = time.strftime("%Y-%m-%d", time.localtime(now))
     joined_time = time.strftime("%H:%M", time.localtime(now))
 
     for member in members:
-        # حفظ تاريخ الدخول حتى يظهر في أمر كشف لاحقًا.
-        join_dates[str(member.id)] = int(now)
-
-        mention = f'<a href="tg://user?id={member.id}">{html.escape(member.full_name or "المستخدم")}</a>'
-        username = f"@{html.escape(member.username)}" if member.username else "لا يوجد"
-        group_name = html.escape(chat.title or "الجروب")
-
-        text = (
-            "⁣⁣ᯓ˹𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 𝐆𝐑𝐎𝐔𝐏 ᯤ˼\n"
-            f"°•—————— {group_name} —————•°\n"
-            f"°︙ نورت قروبنا يـ {mention} 🥂.\n"
-            f"°︙ اسمك ⇚『{mention}』\n"
-            f"°︙ ايديك ⇚『{member.id}』\n"
-            f"°︙ يوزرك ⇚『{username}』\n\n"
-            f"> °︙ تاريخ انضمامك ☜ {joined_date}\n"
-            f"> °︙ الساعة ☜ {joined_time} .\n\n"
-            f"°•—————— {group_name} —————•°"
-        )
-
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(member.full_name or "العضو", url=f"tg://user?id={member.id}")],
-            [InlineKeyboardButton("حفلات مشهير •", url="https://t.me/+Ur1mKr-uQio0ZjY8")],
-        ])
-
         try:
+            join_dates[str(member.id)] = now
+
+            mention = (
+                f'<a href="tg://user?id={member.id}">'
+                f'{html.escape(member.full_name or "المستخدم")}</a>'
+            )
+            username = f"@{html.escape(member.username)}" if member.username else "لا يوجد"
+            group_name = html.escape(chat.title or "الجروب")
+
+            text = (
+                "⁣⁣ᯓ˹𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 𝐆𝐑𝐎𝐔𝐏 ᯤ˼\n"
+                f"°•—————— {group_name} —————•°\n"
+                f"°︙ نورت قروبنا يـ {mention} 🥂.\n"
+                f"°︙ اسمك ⇚『{mention}』\n"
+                f"°︙ ايديك ⇚『{member.id}』\n"
+                f"°︙ يوزرك ⇚『{username}』\n\n"
+                f"> °︙ تاريخ انضمامك ☜ {joined_date}\n"
+                f"> °︙ الساعة ☜ {joined_time} .\n\n"
+                f"°•—————— {group_name} —————•°"
+            )
+
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(member.full_name or "العضو", url=f"tg://user?id={member.id}")],
+                [InlineKeyboardButton("حفلات مشهير •", url="https://t.me/+Ur1mKr-uQio0ZjY8")],
+            ])
+
+            sent = False
             if photo:
-                await context.bot.send_photo(
-                    chat_id=chat.id,
-                    photo=photo,
-                    caption=text,
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=keyboard,
-                )
-            else:
+                try:
+                    await context.bot.send_photo(
+                        chat_id=chat.id,
+                        photo=photo,
+                        caption=text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=keyboard,
+                    )
+                    sent = True
+                except Exception as photo_exc:
+                    # إذا كانت صورة الترحيب القديمة غير صالحة، لا نوقف الترحيب.
+                    logger.exception(
+                        "Group welcome photo failed in chat %s for user %s: %s",
+                        chat.id, member.id, photo_exc
+                    )
+                    DB["settings"]["group_welcome_photo"] = ""
+                    photo = ""
+
+            if not sent:
                 await context.bot.send_message(
                     chat_id=chat.id,
                     text=text,
@@ -2945,19 +2993,12 @@ async def group_welcome_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     reply_markup=keyboard,
                 )
         except Exception as exc:
-            # لا نخفي الخطأ؛ يظهر في Railway Logs لمعرفة سبب عدم إرسال الترحيب.
-            logger.exception("Group welcome failed in chat %s for user %s: %s", chat.id, member.id, exc)
+            logger.exception(
+                "Group welcome failed in chat %s for user %s: %s",
+                chat.id, getattr(member, "id", "unknown"), exc
+            )
 
     save_db(DB)
-
-
-def protection_key_from_text(value: str) -> Optional[str]:
-    value = re.sub(r"\s+", " ", value.strip()).lower()
-    return PROTECTION_ALIASES.get(value)
-
-
-def protection_command_text_keyboard(key: str) -> InlineKeyboardMarkup:
-    return protection_penalty_keyboard(key)
 
 
 async def group_protection_text_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2988,9 +3029,8 @@ async def group_protection_text_command(update: Update, context: ContextTypes.DE
             st[key] = enabled
         st["all"] = enabled
         save_db(DB)
-        await message.reply_text(
-            f"تم {'قفل' if enabled else 'فتح'} كل شيء 5206607081334906820"
-        )
+        lock_text = f"تم {'قفل' if enabled else 'فتح'} كل شيء 🔹"
+        await message.reply_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)])
         return
 
     key = protection_key_from_text(target)
@@ -3005,13 +3045,39 @@ async def group_protection_text_command(update: Update, context: ContextTypes.DE
         st.pop(f"mute_duration_{key}", None)
         st["all"] = all(st.get(k, False) for k in PROTECTION_KEYS)
         save_db(DB)
-        await message.reply_text(f"تم فتح {PROTECTION_KEYS[key]} 5206607081334906820")
+        lock_text = f"تم فتح {PROTECTION_KEYS[key]} 🔹"
+        await message.reply_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)])
         return
 
     await message.reply_text(
         f"اختر العقوبة عند قفل {PROTECTION_KEYS[key]}",
         reply_markup=protection_command_text_keyboard(key),
     )
+
+
+# معرفات الـ Custom Emoji التي أرسلها المستخدم
+CUSTOM_EMOJI_LOCK = "5206607081334906820"
+CUSTOM_EMOJI_PROTECTION = "5870734657384877785"
+
+
+def custom_emoji_entity(text: str, marker: str, custom_emoji_id: str) -> MessageEntity:
+    """إنشاء Entity لإظهار Custom Emoji بدل رقم الـ ID داخل الرسالة."""
+    pos = text.find(marker)
+    if pos < 0:
+        raise ValueError("custom emoji marker not found")
+    # Telegram offsets are UTF-16 code-unit offsets.
+    offset = len(text[:pos].encode("utf-16-le")) // 2
+    length = len(marker.encode("utf-16-le")) // 2
+    return MessageEntity(
+        type="custom_emoji",
+        offset=offset,
+        length=length,
+        custom_emoji_id=custom_emoji_id,
+    )
+
+
+def protection_message_with_emoji(text: str, marker: str, emoji_id: str) -> tuple[str, list]:
+    return text.replace(marker, "🔹", 1), [custom_emoji_entity(text.replace(marker, "🔹", 1), "🔹", emoji_id)]
 
 
 async def group_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3216,7 +3282,7 @@ def build_application() -> Application:
         lambda u,c: group_member_action(u,c,"clear"),
     ))
     application.add_handler(MessageHandler(
-        filters.ChatType.GROUPS & filters.Regex(r"^\s*(?:كشف|ايدي|معلومات)(?:\s+.*)?$"),
+        filters.ChatType.GROUPS & filters.Regex(r"^\s*(?:كشف|ايدي|ا|معلومات)(?:\s+.*)?$"),
         group_info_command,
     ))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, group_welcome_handler), group=-3)
