@@ -42,7 +42,7 @@ from telegram.ext import (
 # ============================================================
 
 BOT_TOKEN = "8746223128:AAGyRjSb8I8pxL1TPKKvuTsSw_Wrzlg_7Cs"
-OWNER_ID = 8037399518
+OWNER_ID = 8037399518,8095948240
 
 SUBSCRIPTION_STARS = 50
 SUBSCRIPTION_DAYS = 30
@@ -3028,12 +3028,12 @@ async def group_welcome_handler(update: Update, context: ContextTypes.DEFAULT_TY
             sent = False
             if photo:
                 try:
-                    await context.bot.send_photo(
-                        chat_id=chat.id,
+                    await message.reply_photo(
                         photo=photo,
                         caption=text,
                         parse_mode=ParseMode.HTML,
                         reply_markup=keyboard,
+                        allow_sending_without_reply=True,
                     )
                     sent = True
                 except Exception as photo_exc:
@@ -3046,11 +3046,11 @@ async def group_welcome_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     photo = ""
 
             if not sent:
-                await context.bot.send_message(
-                    chat_id=chat.id,
+                await message.reply_text(
                     text=text,
                     parse_mode=ParseMode.HTML,
                     reply_markup=keyboard,
+                    allow_sending_without_reply=True,
                 )
         except Exception as exc:
             logger.exception(
@@ -3348,10 +3348,10 @@ def build_application() -> Application:
     # ترحيب الجروبات: أولوية عالية حتى لا يتعارض مع أي معالج رسائل آخر.
     application.add_handler(
         MessageHandler(
-            filters.StatusUpdate.NEW_CHAT_MEMBERS,
+            filters.ChatType.GROUPS & filters.StatusUpdate.NEW_CHAT_MEMBERS,
             group_welcome_handler,
         ),
-        group=-20,
+        group=-100,
     )
 
     # معالج الجروبات — الردود التلقائية
