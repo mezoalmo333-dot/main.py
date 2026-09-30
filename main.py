@@ -288,11 +288,11 @@ def load_db() -> Dict[str, Any]:
             db["settings"][_key] = _default
             changed = True
 
-    if not db.get("required_channels"):
-        db["required_channels"] = [DEFAULT_REQUIRED_CHANNEL, REQUIRED_CHANNEL_ID]
-        changed = True
-    elif REQUIRED_CHANNEL_ID not in db["required_channels"]:
-        db["required_channels"].append(REQUIRED_CHANNEL_ID)
+    # الاشتراك الإجباري الوحيد: mediation_King
+    # احذف أي قنوات/روابط إجبارية قديمة من قاعدة البيانات.
+    required_only = [DEFAULT_REQUIRED_CHANNEL]
+    if db.get("required_channels") != required_only:
+        db["required_channels"] = required_only
         changed = True
 
     for item in db.get("categories", []):
@@ -1180,15 +1180,28 @@ def group_settings(chat_id: int) -> Dict[str, Any]:
 
 
 def protection_keyboard(chat_id: int) -> InlineKeyboardMarkup:
-    st = group_settings(chat_id)
-    buttons=[]
+    # عند فتح قسم الحماية تظهر لكل نوع زران واضحان: فتح أخضر / قفل أحمر.
+    rows = []
     for key, label in PROTECTION_KEYS.items():
-        state = "فتح" if st.get(key) else "قفل"
-        style = "danger" if st.get(key) else "primary"
-        buttons.append(colored_button(f"{state} {label}", callback_data=f"protect:{key}", style=style, emoji_id=EMOJI_ADMIN))
-    rows = chunk_rows(buttons, 2)
-    rows.append([colored_button("قفل كل شيء", callback_data="protect:all_on", style="danger", emoji_id=EMOJI_DELETE), colored_button("فتح كل شيء", callback_data="protect:all_off", style="success", emoji_id=EMOJI_CHECK_SUB)])
-    rows.append([colored_button("رجوع", callback_data="home", style="primary", emoji_id=EMOJI_HOME)])
+        rows.append([
+            colored_button(
+                f"فتح {label}",
+                callback_data=f"protect_open:{key}",
+                style="success",
+                emoji_id=EMOJI_CHECK_SUB,
+            ),
+            colored_button(
+                f"قفل {label}",
+                callback_data=f"protect_lock:{key}",
+                style="danger",
+                emoji_id=EMOJI_DELETE,
+            ),
+        ])
+    rows.append([
+        colored_button("فتح كل شيء", callback_data="protect:all_off", style="success", emoji_id=EMOJI_CHECK_SUB),
+        colored_button("قفل كل شيء", callback_data="protect:all_on", style="danger", emoji_id=EMOJI_DELETE),
+    ])
+    rows.append([colored_button("رجوع", callback_data="protect_back", style="primary", emoji_id=EMOJI_HOME)])
     return InlineKeyboardMarkup(rows)
 
 
@@ -1381,9 +1394,19 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if not query or not user:
         return
 
-    # أي أزرار للقائمة الرئيسية/الاشتراك ممنوعة داخل الجروبات.
-    # لو كانت هناك رسالة قديمة للقائمة في جروب وتم الضغط عليها، نحذفها بدل إظهار قائمة جديدة.
-    if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
+    data = query.data or ""
+
+    # أزرار حماية الجروبات وكارت الكشف يجب أن تعمل داخل الجروبات.
+    group_callback = (
+        data.startswith("protect")
+        or data.startswith("protection")
+        or data.startswith("penalty")
+        or data.startswith("mute_duration:")
+        or data.startswith("profile_like:")
+    )
+
+    # أي أزرار للقائمة الرئيسية/الاشتراك ممنوعة داخل الجروبات، مع استثناء أزرار الحماية والكشف.
+    if update.effective_chat and update.effective_chat.type in ("group", "supergroup") and not group_callback:
         try:
             await safe_answer_callback(query, "هذا القسم متاح في الخاص فقط.", True)
         except Exception:
@@ -1396,7 +1419,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     ensure_user(user)
-    data = query.data or ""
 
     if data == "noop":
         await safe_answer_callback(query)
@@ -1466,7 +1488,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.edit_message_text("إعدادات حماية الجروب", reply_markup=protection_keyboard(update.effective_chat.id))
         return
 
-    if data.startswith("protect:") or data.startswith("penalty:") or data.startswith("penalty_menu:") or data.startswith("mute_duration:"):
+    if (
+        data.startswith("protect:")
+        or data.startswith("protect_open:")
+        or data.startswith("protect_lock:")
+        or data.startswith("protection:")
+        or data.startswith("penalty:")
+        or data.startswith("penalty_menu:")
+        or data.startswith("mute_duration:")
+    ):
         if not update.effective_chat or update.effective_chat.type not in ("group", "supergroup"):
             await safe_answer_callback(query, "هذا القسم للجروبات فقط.", True)
             return
@@ -1480,6 +1510,36 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
         action = data.split(":")
         st = group_settings(update.effective_chat.id)
+        if data.startswith("protect_open:"):
+            key = data.split(":", 1)[1]
+            if key not in PROTECTION_KEYS:
+                await safe_answer_callback(query, "القسم غير معروف.", True)
+                return
+            st[key] = False
+            st.pop(f"penalty_{key}", None)
+            st.pop(f"mute_duration_{key}", None)
+            st["all"] = all(st.get(k, False) for k in PROTECTION_KEYS)
+            save_db(DB)
+            await safe_answer_callback(query, "تم الفتح.")
+            await query.edit_message_text(
+                f"تم فتح {PROTECTION_KEYS[key]} 🔹",
+                entities=[custom_emoji_entity(f"تم فتح {PROTECTION_KEYS[key]} 🔹", "🔹", CUSTOM_EMOJI_LOCK)],
+                reply_markup=protection_keyboard(update.effective_chat.id),
+            )
+            return
+
+        if data.startswith("protect_lock:"):
+            key = data.split(":", 1)[1]
+            if key not in PROTECTION_KEYS:
+                await safe_answer_callback(query, "القسم غير معروف.", True)
+                return
+            await safe_answer_callback(query)
+            await query.edit_message_text(
+                f"اختر العقوبة عند قفل {PROTECTION_KEYS[key]}",
+                reply_markup=protection_penalty_keyboard(key),
+            )
+            return
+
         if data.startswith("protect:"):
             key = action[1]
             if key == "all_on":
@@ -2920,7 +2980,7 @@ async def group_member_action(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def group_welcome_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """ترحيب الجروبات — يعمل على رسالة دخول الأعضاء فقط، مع fallback للصورة إذا فشل إرسالها."""
-    message = getattr(update, "message", None)
+    message = update.effective_message
     chat = getattr(message, "chat", None) if message else None
 
     if not message or not chat or chat.type not in ("group", "supergroup"):
@@ -3086,7 +3146,7 @@ async def group_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     actor = update.effective_user
     if not message or not chat or chat.type not in ("group", "supergroup") or not actor:
         return
-    target = resolve_target_user(message)
+    target = resolve_target_user(message) or actor
     if not target:
         await message.reply_text("استخدم كشف أو ايدي بالرد على الشخص أو اكتب ID أو @username.")
         return
@@ -3285,7 +3345,14 @@ def build_application() -> Application:
         filters.ChatType.GROUPS & filters.Regex(r"^\s*(?:كشف|ايدي|ا|معلومات)(?:\s+.*)?$"),
         group_info_command,
     ))
-    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, group_welcome_handler), group=-3)
+    # ترحيب الجروبات: أولوية عالية حتى لا يتعارض مع أي معالج رسائل آخر.
+    application.add_handler(
+        MessageHandler(
+            filters.StatusUpdate.NEW_CHAT_MEMBERS,
+            group_welcome_handler,
+        ),
+        group=-20,
+    )
 
     # معالج الجروبات — الردود التلقائية
     application.add_handler(
