@@ -5,6 +5,7 @@ Pydroid 3 / Python 3.10+
 """
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -737,7 +738,7 @@ def admin_keyboard() -> InlineKeyboardMarkup:
         colored_button("رابط جميع الفيديوهات", callback_data="admin_all_videos_url", style="primary", emoji_id=e),
         colored_button("إدارة الأدمن", callback_data="admin_admins", style="primary", emoji_id=e),
         colored_button("النصوص", callback_data="admin_texts", style="primary", emoji_id=e),
-        colored_button("صورة ترحيب الجروبات", callback_data="admin_group_welcome_photo", style="primary", emoji_id=e),
+        colored_button("تعيين/تغيير صورة ترحيب الجروبات", callback_data="admin_group_welcome_photo", style="primary", emoji_id=e),
         colored_button("ردود الكلمات", callback_data="admin_keywords", style="primary", emoji_id=e),
         colored_button("إحصائيات", callback_data="admin_stats", style="primary", emoji_id=e),
     ]
@@ -1122,7 +1123,34 @@ PROTECTION_KEYS = {
     "polls": "الاستطلاعات",
     "forwards": "إعادة التوجيه",
     "bots": "البوتات",
+    "repeat": "التكرار",
+    "long_messages": "الرسائل الطويلة",
 }
+
+PROTECTION_ALIASES = {
+    "الروابط": "links", "رابط": "links", "روابط": "links",
+    "المعرفات": "usernames", "المعرفات واليوزرات": "usernames", "اليوزرات": "usernames", "يوزرات": "usernames",
+    "الأرقام": "numbers", "ارقام": "numbers", "الأرقام": "numbers",
+    "الرموز": "symbols", "رموز": "symbols",
+    "الصور": "photos", "صور": "photos",
+    "الفيديوهات": "videos", "فيديوهات": "videos", "الفيديو": "videos",
+    "الفويس": "voice", "فويس": "voice",
+    "الصوتيات": "audio", "ملفات صوتية": "audio",
+    "الملفات": "documents", "ملفات": "documents",
+    "gif": "animations", "GIF": "animations",
+    "الملصقات": "stickers", "ملصقات": "stickers",
+    "جهات الاتصال": "contacts", "جهات": "contacts",
+    "المواقع": "locations", "مواقع": "locations",
+    "الاستطلاعات": "polls", "استطلاعات": "polls",
+    "إعادة التوجيه": "forwards", "التوجيه": "forwards", "توجيه": "forwards",
+    "البوتات": "bots", "بوتات": "bots",
+    "التكرار": "repeat", "تكرار": "repeat",
+    "الرسائل الطويلة": "long_messages", "رسايل طويلة": "long_messages", "رسائل طويلة": "long_messages",
+}
+REPEAT_TRACKER = {}
+LONG_MESSAGE_LIMIT = 1000
+REPEAT_WINDOW_SECONDS = 30
+REPEAT_COUNT_LIMIT = 3
 
 def group_settings(chat_id: int) -> Dict[str, Any]:
     settings = DB.setdefault("group_protection", {})
@@ -1217,6 +1245,18 @@ def protection_violation(message, st: Dict[str, Any]) -> Optional[str]:
         return "إعادة التوجيه"
     if st.get("bots") and getattr(message.from_user, "is_bot", False):
         return "البوتات"
+    if st.get("long_messages") and len(text.strip()) > LONG_MESSAGE_LIMIT:
+        return "الرسائل الطويلة"
+    if st.get("repeat") and text.strip():
+        key = (message.chat.id, message.from_user.id)
+        now = time.time()
+        bucket = REPEAT_TRACKER.setdefault(key, [])
+        bucket[:] = [(stamp, value) for stamp, value in bucket if now - stamp <= REPEAT_WINDOW_SECONDS]
+        bucket.append((now, text.strip()))
+        same = sum(1 for _, value in bucket if value == text.strip())
+        if same >= REPEAT_COUNT_LIMIT:
+            bucket[:] = [(stamp, value) for stamp, value in bucket if value != text.strip()]
+            return "التكرار"
     return None
 
 
@@ -1241,6 +1281,14 @@ async def group_protection_handler(update: Update, context: ContextTypes.DEFAULT
     if user.is_bot:
         return
     st = group_settings(chat.id)
+    counts = st.setdefault("message_counts", {})
+    uid_key = str(user.id)
+    counts[uid_key] = int(counts.get(uid_key, 0)) + 1
+    # Keep the DB bounded: only retain counters for users seen in this group.
+    if len(counts) > 5000:
+        for old_uid in list(counts)[:1000]:
+            counts.pop(old_uid, None)
+    save_db(DB)
     if not st.get("all") and not any(st.get(k) for k in PROTECTION_KEYS):
         return
     violation = protection_violation(message, st)
@@ -1447,6 +1495,24 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await safe_answer_callback(query)
             await query.edit_message_text(f"تم حفظ البيانات\n\nتم قفل {PROTECTION_KEYS.get(key, key)} 5206607081334906820", reply_markup=protection_keyboard(update.effective_chat.id))
             return
+
+    if data.startswith("profile_like:"):
+        try:
+            _, chat_id_raw, target_id_raw = data.split(":", 2)
+            chat_id = int(chat_id_raw)
+            target_id = int(target_id_raw)
+            if not update.effective_chat or update.effective_chat.id != chat_id:
+                await safe_answer_callback(query, "هذا الزر ليس من هذا الجروب.", True)
+                return
+            st = group_settings(chat_id)
+            likes = st.setdefault("likes", {})
+            likes[str(target_id)] = int(likes.get(str(target_id), 0)) + 1
+            save_db(DB)
+            await safe_answer_callback(query, "❤")
+            await query.edit_message_reply_markup(InlineKeyboardMarkup([[InlineKeyboardButton(f"❤ {likes[str(target_id)]}", callback_data=data)]]))
+        except Exception:
+            await safe_answer_callback(query)
+        return
 
     if data == "subscription_status":
         await safe_answer_callback(query)
@@ -2813,40 +2879,219 @@ async def group_member_action(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await message.reply_to_message.delete()
             await message.delete()
         elif action == "info":
-            member = await context.bot.get_chat_member(chat.id, target_id)
-            await message.reply_text(f"كشف الشخص\nID: {target_id}\nالحالة: {member.status}")
+            await group_info_command(update, context)
     except Exception as exc:
         await message.reply_text(f"تعذر تنفيذ الأمر: {exc}")
 
 
 async def group_welcome_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """إرسال ترحيب فعلي عند دخول أعضاء جدد إلى الجروب."""
     message = update.effective_message
     chat = update.effective_chat
-    if not message or not chat or chat.type not in ("group", "supergroup") or not message.new_chat_members:
+
+    if not message or not chat or chat.type not in ("group", "supergroup"):
         return
-    photo = DB.get("settings", {}).get("group_welcome_photo", "")
-    for member in message.new_chat_members:
-        mention = f'<a href="tg://user?id={member.id}">{member.full_name}</a>'
-        username = f"@{member.username}" if member.username else "لا يوجد"
-        joined_date = time.strftime("%Y-%m-%d", time.localtime())
-        joined_time = time.strftime("%H:%M", time.localtime())
-        text=(f"⁣⁣ᯓ˹𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 ​𝐆𝐑𝐎𝐔𝐏 ᯤ˼\n"
-              f"°•—————— {chat.title} —————•°\n"
-              f"°︙ نورت قروبنا يـ {mention} 🥂.\n"
-              f"°︙ اسمك ⇚『{mention}』\n"
-              f"°︙ ايديك ⇚『{member.id}』\n"
-              f"°︙ يوزرك ⇚『{username}』\n\n"
-              f"> °︙ تاريخ انضمامك ☜ {joined_date}\n"
-              f"> °︙ الساعة ☜ {joined_time} .\n\n"
-              f"°•—————— {chat.title} —————•°")
-        kb=InlineKeyboardMarkup([[InlineKeyboardButton(mention, url=f"tg://user?id={member.id}")],[InlineKeyboardButton("حفلات مشهير •", url="https://t.me/+Ur1mKr-uQio0ZjY8")]])
+
+    members = list(message.new_chat_members or [])
+    if not members:
+        return
+
+    st = group_settings(chat.id)
+    join_dates = st.setdefault("member_join_dates", {})
+    photo = str(DB.get("settings", {}).get("group_welcome_photo", "") or "").strip()
+    now = time.time()
+    joined_date = time.strftime("%Y-%m-%d", time.localtime(now))
+    joined_time = time.strftime("%H:%M", time.localtime(now))
+
+    for member in members:
+        # حفظ تاريخ الدخول حتى يظهر في أمر كشف لاحقًا.
+        join_dates[str(member.id)] = int(now)
+
+        mention = f'<a href="tg://user?id={member.id}">{html.escape(member.full_name or "المستخدم")}</a>'
+        username = f"@{html.escape(member.username)}" if member.username else "لا يوجد"
+        group_name = html.escape(chat.title or "الجروب")
+
+        text = (
+            "⁣⁣ᯓ˹𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 𝐆𝐑𝐎𝐔𝐏 ᯤ˼\n"
+            f"°•—————— {group_name} —————•°\n"
+            f"°︙ نورت قروبنا يـ {mention} 🥂.\n"
+            f"°︙ اسمك ⇚『{mention}』\n"
+            f"°︙ ايديك ⇚『{member.id}』\n"
+            f"°︙ يوزرك ⇚『{username}』\n\n"
+            f"> °︙ تاريخ انضمامك ☜ {joined_date}\n"
+            f"> °︙ الساعة ☜ {joined_time} .\n\n"
+            f"°•—————— {group_name} —————•°"
+        )
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(member.full_name or "العضو", url=f"tg://user?id={member.id}")],
+            [InlineKeyboardButton("حفلات مشهير •", url="https://t.me/+Ur1mKr-uQio0ZjY8")],
+        ])
+
         try:
             if photo:
-                await context.bot.send_photo(chat.id, photo=photo, caption=text, parse_mode=ParseMode.HTML, reply_markup=kb)
+                await context.bot.send_photo(
+                    chat_id=chat.id,
+                    photo=photo,
+                    caption=text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=keyboard,
+                )
             else:
-                await context.bot.send_message(chat.id, text, parse_mode=ParseMode.HTML, reply_markup=kb)
-        except Exception:
-            pass
+                await context.bot.send_message(
+                    chat_id=chat.id,
+                    text=text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=keyboard,
+                )
+        except Exception as exc:
+            # لا نخفي الخطأ؛ يظهر في Railway Logs لمعرفة سبب عدم إرسال الترحيب.
+            logger.exception("Group welcome failed in chat %s for user %s: %s", chat.id, member.id, exc)
+
+    save_db(DB)
+
+
+def protection_key_from_text(value: str) -> Optional[str]:
+    value = re.sub(r"\s+", " ", value.strip()).lower()
+    return PROTECTION_ALIASES.get(value)
+
+
+def protection_command_text_keyboard(key: str) -> InlineKeyboardMarkup:
+    return protection_penalty_keyboard(key)
+
+
+async def group_protection_text_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+    if not message or not chat or chat.type not in ("group", "supergroup") or not user:
+        return
+    try:
+        member = await context.bot.get_chat_member(chat.id, user.id)
+        if member.status not in ("administrator", "creator"):
+            await message.reply_text("الأمر للمشرفين فقط.")
+            return
+    except Exception:
+        return
+
+    raw = (message.text or "").strip()
+    m = re.match(r"^(قفل|فتح)\s+(.+)$", raw, re.UNICODE)
+    if not m:
+        return
+    action, target = m.group(1), re.sub(r"\s+", " ", m.group(2).strip())
+    target_lower = target.lower()
+
+    if target_lower in ("كل شيء", "كلشي", "الكل", "كل", "كل الحاجات"):
+        st = group_settings(chat.id)
+        enabled = action == "قفل"
+        for key in PROTECTION_KEYS:
+            st[key] = enabled
+        st["all"] = enabled
+        save_db(DB)
+        await message.reply_text(
+            f"تم {'قفل' if enabled else 'فتح'} كل شيء 5206607081334906820"
+        )
+        return
+
+    key = protection_key_from_text(target)
+    if not key:
+        await message.reply_text("المحدد غير معروف. مثال: قفل الملصقات أو فتح الروابط")
+        return
+
+    if action == "فتح":
+        st = group_settings(chat.id)
+        st[key] = False
+        st.pop(f"penalty_{key}", None)
+        st.pop(f"mute_duration_{key}", None)
+        st["all"] = all(st.get(k, False) for k in PROTECTION_KEYS)
+        save_db(DB)
+        await message.reply_text(f"تم فتح {PROTECTION_KEYS[key]} 5206607081334906820")
+        return
+
+    await message.reply_text(
+        f"اختر العقوبة عند قفل {PROTECTION_KEYS[key]}",
+        reply_markup=protection_command_text_keyboard(key),
+    )
+
+
+async def group_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    chat = update.effective_chat
+    actor = update.effective_user
+    if not message or not chat or chat.type not in ("group", "supergroup") or not actor:
+        return
+    target = resolve_target_user(message)
+    if not target:
+        await message.reply_text("استخدم كشف أو ايدي بالرد على الشخص أو اكتب ID أو @username.")
+        return
+    target_id = target.id if hasattr(target, "id") else int(target)
+    try:
+        member = await context.bot.get_chat_member(chat.id, target_id)
+        target_user = member.user
+        status = member.status
+    except Exception:
+        target_user = target if hasattr(target, "id") else None
+        status = "unknown"
+        if target_user is None:
+            await message.reply_text("لم أستطع العثور على الشخص داخل الجروب.")
+            return
+
+    username = f"@{target_user.username}" if target_user.username else "لا يوجد"
+    bio = "لا يوجد"
+    try:
+        profile = await context.bot.get_chat(target_id)
+        bio = getattr(profile, "bio", None) or "لا يوجد"
+    except Exception:
+        pass
+
+    role_map = {
+        "creator": "المالك",
+        "administrator": "مشرف",
+        "member": "عضو",
+        "restricted": "مقيد",
+        "left": "غادر",
+        "kicked": "محظور",
+    }
+    role = role_map.get(str(status), str(status))
+    st = group_settings(chat.id)
+    message_count = int(st.get("message_counts", {}).get(str(target_id), 0))
+    joined_at = st.get("member_join_dates", {}).get(str(target_id))
+    if joined_at:
+        joined_date = time.strftime("%Y-%m-%d", time.localtime(joined_at))
+    else:
+        joined_date = "غير معروف"
+    now = time.localtime()
+    current_time = time.strftime("%H:%M", now)
+    likes = int(st.setdefault("likes", {}).get(str(target_id), 0))
+    mention = f'<a href="tg://user?id={target_id}">{target_user.full_name}</a>'
+    text = (
+        f"كشف الشخص\n\n"
+        f"اسم ⇚ {mention}\n"
+        f"يوزر ⇚ {username}\n"
+        f"ايدي ⇚ {target_id}\n"
+        f"بايو ⇚ {bio}\n"
+        f"عدد رسالة ⇚ {message_count}\n"
+        f"رتبه ⇚ {role}\n"
+        f"الساعة ⇚ {current_time}\n"
+        f"تاريخ الانضمام ⇚ {joined_date}"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"❤ {likes}", callback_data=f"profile_like:{chat.id}:{target_id}")]
+    ])
+    try:
+        photos = await context.bot.get_user_profile_photos(target_id, limit=1)
+        if photos.total_count and photos.photos:
+            await context.bot.send_photo(
+                chat.id,
+                photo=photos.photos[0][-1].file_id,
+                caption=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb,
+            )
+        else:
+            await message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+    except Exception:
+        await message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
 
 async def protection_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2939,6 +3184,12 @@ def build_application() -> Application:
         group=-2,
     )
 
+    # أوامر القفل/الفتح تعمل كنص عادي بدون /
+    application.add_handler(MessageHandler(
+        filters.ChatType.GROUPS & filters.Regex(r"^\s*(?:قفل|فتح)\s+.+$"),
+        group_protection_text_command,
+    ))
+
     # أوامر الجروبات تعمل كنص عادي بدون /
     application.add_handler(MessageHandler(
         filters.ChatType.GROUPS & filters.Regex(r"^\s*حماية\s*$"),
@@ -2965,8 +3216,8 @@ def build_application() -> Application:
         lambda u,c: group_member_action(u,c,"clear"),
     ))
     application.add_handler(MessageHandler(
-        filters.ChatType.GROUPS & filters.Regex(r"^\s*كشف(?:\s+.*)?$"),
-        lambda u,c: group_member_action(u,c,"info"),
+        filters.ChatType.GROUPS & filters.Regex(r"^\s*(?:كشف|ايدي|معلومات)(?:\s+.*)?$"),
+        group_info_command,
     ))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, group_welcome_handler), group=-3)
 
