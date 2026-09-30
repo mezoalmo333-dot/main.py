@@ -23,8 +23,9 @@ from telegram import (
     BotCommand,
     BotCommandScopeDefault,
     BotCommandScopeChat,
+    MessageEntity,
 )
-from telegram.constants import ParseMode
+from telegram.constants import ParseMode, ChatMemberStatus
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -44,6 +45,11 @@ OWNER_ID = 8037399518
 
 SUBSCRIPTION_STARS = 50
 SUBSCRIPTION_DAYS = 30
+REFERRAL_POINTS_PER_INVITE = 1
+POINTS_REQUIRED_PER_SECTION = 5
+VIP_SECTION_ID = "vip"
+EMOJI_INVITE_LINK = "5141092083993412661"
+EMOJI_REFERRAL_NOTICE = "5775979900649347911"
 SUBSCRIPTION_SECONDS = 30 * 24 * 60 * 60
 
 # Persistent data directory.
@@ -65,20 +71,22 @@ DEFAULT_REQUIRED_CHANNEL = "https://t.me/mediation_King"
 REQUIRED_CHANNEL_ID = "-1003390584761"
 REQUIRED_CHANNEL_INVITE_URL = "https://t.me/+7lFrm3Ae5yliZDg0"
 
-BOT_TITLE = "MaX VIP"
+BOT_TITLE = "مملكة الدلع الحصري"
 BOT_USERNAME = "TteeRMBoT"
 ADD_TO_GROUP_URL = f"https://t.me/{BOT_USERNAME}?startgroup=true"
 
 WELCOME_TEXT = (
     "︙ نورت يـ {name} في بوت مقاطع 🤤🔥\n"
-    "︙ ضيف البوت في 5 جروبات او اشترك بـ {stars} ⭐\n\n"
+    "︙ اجمع 5 نقاط من رابط الدعوة لفتح الأقسام\n"
+    "︙ قسم VIP متاح بالنجوم ⭐\n\n"
     "اختار من الأزرار بالأسفل."
 )
 
 PAYMENT_TEXT = (
     "︙ نورت يـ {name} في بوت مقاطع 🤤🔥\n"
-    "︙ ضيف البوت في 5 جروبات او اشترك بـ {stars} ⭐\n\n"
-    "اشترك الآن أو أضفني إلى 5 مجموعات واستمتع 🤤🔥"
+    "︙ اجمع 5 نقاط من رابط الدعوة لفتح الأقسام\n"
+    "︙ قسم VIP متاح بالنجوم ⭐\n\n"
+    "استخدم رابط الدعوة للحصول على النقاط."
 )
 
 NO_ACCESS_TEXT = (
@@ -108,15 +116,13 @@ GROUP_REPLY_MESSAGES = [
 
 # ردود إضافية أدخلها صاحب البوت كما هي
 GROUP_REPLY_MESSAGES.extend([
-    "اففف اندري مبلول 🥵🔥",
-    "متيجي خاص انططلك عليه",
-    "بحب العنف اوي 🥺🔥",
-    "تعال دخلو بين شفرات كسي🔥🤤",
-    "كسي بيحرقني 🥺",
-    "متيجي تنكني 🤤",
-    "يخربيت زوبرك 🤭",
-    "بحب زوبر فوق 25سنتي",
-    "خاص بسرعةة هنزلهم في الاندر",
+    "يلا كلو ينضم للجروب الي فالبايو والي ينضم يخشلي خاص ياخد صوري نودز 🍌😍🌷💔",
+    "شـوف الـدلـع في النـ ـبـ ىذه نـ ـار 🔥🐆",
+    "مملكة الدلع الحصري:\nيلا بقا ابعت خااص ي يولا 💋",
+    "متيجي بف 🤤",
+    "يلا بينااااا😘",
+    "يلا بقا ابعت خااص ي يولا 💋",
+    "البايو هيحلبك 💕",
 ])
 
 # نطاق الحروف العربية + الإنجليزية
@@ -186,11 +192,17 @@ DEFAULT_DB = {
         "all_videos_url": ALL_VIDEOS_URL,
         "join_groups_required": 5,
         "member_join_notice": True,
+        "points_per_referral": 1,
+        "points_required_per_section": 5,
+        "vip_stars": 50,
+        "referral_code": "5141092083993412661",
+        "group_welcome_photo": "",
     },
     "broadcast": {
         "running": False,
     },
     "keyword_replies": [],
+    "group_protection": {},
 }
 
 DB: Dict[str, Any] = {}
@@ -270,6 +282,10 @@ def load_db() -> Dict[str, Any]:
     if "member_join_notice" not in db["settings"]:
         db["settings"]["member_join_notice"] = True
         changed = True
+    for _key, _default in (("points_per_referral", 1), ("points_required_per_section", 5), ("vip_stars", 50), ("referral_code", "5141092083993412661"), ("group_welcome_photo", "")):
+        if _key not in db["settings"]:
+            db["settings"][_key] = _default
+            changed = True
 
     if not db.get("required_channels"):
         db["required_channels"] = [DEFAULT_REQUIRED_CHANNEL, REQUIRED_CHANNEL_ID]
@@ -280,6 +296,15 @@ def load_db() -> Dict[str, Any]:
 
     for item in db.get("categories", []):
         normalize_category(item)
+
+    if not any(str(item.get("id")) == VIP_SECTION_ID for item in db.get("categories", [])):
+        db["categories"].insert(0, {"id": VIP_SECTION_ID, "name": "VIP ⭐", "videos": [], "children": [], "style": {"color": "success", "emoji_id": EMOJI_SUBSCRIBE, "url": ""}})
+        changed = True
+
+    for _record in db.get("users", {}).values():
+        _record.setdefault("points", 0)
+        _record.setdefault("referrals", 0)
+        _record.setdefault("referred_by", 0)
 
     if changed:
         save_db(db)
@@ -294,7 +319,7 @@ def load_db() -> Dict[str, Any]:
 
 def get_subscription_stars() -> int:
     try:
-        value = int(DB.get("settings", {}).get("subscription_stars", SUBSCRIPTION_STARS))
+        value = int(DB.get("settings", {}).get("vip_stars", DB.get("settings", {}).get("subscription_stars", SUBSCRIPTION_STARS)))
         return max(1, value)
     except (TypeError, ValueError):
         return SUBSCRIPTION_STARS
@@ -348,6 +373,9 @@ def ensure_user(user) -> Dict[str, Any]:
             "payment_charge_id": "",
             "is_subscribed": False,
             "blocked": False,
+            "points": 0,
+            "referrals": 0,
+            "referred_by": 0,
         }
     else:
         DB["users"][uid]["username"] = user.username or DB["users"][uid].get("username", "")
@@ -355,6 +383,57 @@ def ensure_user(user) -> Dict[str, Any]:
 
     save_db(DB)
     return DB["users"][uid]
+
+
+def get_user_points(user_id: int) -> int:
+    record = DB.get("users", {}).get(str(user_id), {})
+    return max(0, int(record.get("points", 0)))
+
+
+def referral_link(user_id: int) -> str:
+    return f"https://t.me/{BOT_USERNAME}?start=ref_{int(user_id)}"
+
+
+def add_referral(referrer_id: int, referred_user) -> bool:
+    if referrer_id <= 0 or referrer_id == referred_user.id:
+        return False
+    referrer = DB.get("users", {}).get(str(referrer_id))
+    referred = DB.get("users", {}).get(str(referred_user.id))
+    if not referrer or not referred:
+        return False
+    if referred.get("referred_by"):
+        return False
+    referred["referred_by"] = referrer_id
+    referrer["referrals"] = int(referrer.get("referrals", 0)) + 1
+    referrer["points"] = int(referrer.get("points", 0)) + int(DB.get("settings", {}).get("points_per_referral", REFERRAL_POINTS_PER_INVITE))
+    save_db(DB)
+    return True
+
+
+def referral_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [colored_button("رابط الدعوة", url=referral_link(user_id), style="primary", emoji_id=EMOJI_INVITE_LINK)],
+        [colored_button("النقاط", callback_data="points_status", style="success", emoji_id=EMOJI_REFERRAL_NOTICE)],
+    ])
+
+
+def points_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [colored_button("رابط الدعوة", url=referral_link(user_id), style="primary", emoji_id=EMOJI_INVITE_LINK)],
+        [colored_button("حالة النقاط", callback_data="points_status", style="success", emoji_id=EMOJI_REFERRAL_NOTICE)],
+    ])
+
+
+def vip_keyboard() -> InlineKeyboardMarkup:
+    stars = int(DB.get("settings", {}).get("vip_stars", SUBSCRIPTION_STARS))
+    return InlineKeyboardMarkup([
+        [colored_button(f"VIP بـ {stars} ⭐", callback_data="buy_vip", style="success", emoji_id=EMOJI_SUBSCRIBE)],
+        [colored_button("رجوع", callback_data="home", style="danger", emoji_id=EMOJI_HOME)],
+    ])
+
+
+def regular_sections_unlocked(user_id: int) -> bool:
+    return get_user_points(user_id) >= int(DB.get("settings", {}).get("points_required_per_section", POINTS_REQUIRED_PER_SECTION))
 
 
 def subscription_active(user_id: int) -> bool:
@@ -485,14 +564,8 @@ async def ensure_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
             await send_required_channels(update, context)
         return False
 
-    if not subscription_active(user.id):
-        if update.callback_query:
-            await safe_answer_callback(update.callback_query, "الاشتراك غير فعال.", True)
-            await send_subscription_page(update, context)
-        else:
-            await send_subscription_page(update, context)
-        return False
-
+    # بعد الاشتراك الإجباري، الدخول للواجهة الرئيسية متاح للجميع.
+    # قسم VIP وحده يطلب اشتراك النجوم، والأقسام العادية تطلب نقاط الإحالات.
     return True
 
 
@@ -629,6 +702,7 @@ def home_keyboard() -> InlineKeyboardMarkup:
     rows = chunk_rows(buttons, per_row=2)
 
     rows.append([colored_button("جميع الفيديوهات", url=str(DB.get("settings", {}).get("all_videos_url", ALL_VIDEOS_URL)), style="success", emoji_id=EMOJI_ALL_VIDEOS)])
+    rows.append([colored_button("رابط الدعوة", callback_data="referral_page", style="primary", emoji_id=EMOJI_INVITE_LINK), colored_button("النقاط", callback_data="points_status", style="primary", emoji_id=EMOJI_REFERRAL_NOTICE)])
     rows.append([colored_button("حالة الاشتراك", callback_data="subscription_status", style="primary", emoji_id=EMOJI_FACES[1])])
 
     return InlineKeyboardMarkup(rows)
@@ -653,8 +727,9 @@ def admin_keyboard() -> InlineKeyboardMarkup:
         colored_button("إضافة فيديو", callback_data="admin_add_video", style="success", emoji_id=av),
         colored_button("الأقسام", callback_data="admin_categories", style="primary", emoji_id=e),
         colored_button("الاشتراك الإجباري", callback_data="admin_required", style="primary", emoji_id=e),
-        colored_button("تفعيل اشتراك", callback_data="admin_activate", style="primary", emoji_id=e),
-        colored_button("سعر الاشتراك", callback_data="admin_price", style="primary", emoji_id=e),
+        colored_button("تفعيل VIP", callback_data="admin_activate", style="primary", emoji_id=e),
+        colored_button("إلغاء اشتراك شخص", callback_data="admin_cancel_subscription", style="danger", emoji_id=d),
+        colored_button("سعر VIP بالنجوم", callback_data="admin_price", style="primary", emoji_id=e),
         colored_button("الإذاعة", callback_data="admin_broadcast", style="success", emoji_id=e),
         colored_button("المستخدمون", callback_data="admin_users", style="primary", emoji_id=e),
         colored_button("تصدير الأعضاء", callback_data="admin_export_members", style="success", emoji_id=e),
@@ -662,6 +737,7 @@ def admin_keyboard() -> InlineKeyboardMarkup:
         colored_button("رابط جميع الفيديوهات", callback_data="admin_all_videos_url", style="primary", emoji_id=e),
         colored_button("إدارة الأدمن", callback_data="admin_admins", style="primary", emoji_id=e),
         colored_button("النصوص", callback_data="admin_texts", style="primary", emoji_id=e),
+        colored_button("صورة ترحيب الجروبات", callback_data="admin_group_welcome_photo", style="primary", emoji_id=e),
         colored_button("ردود الكلمات", callback_data="admin_keywords", style="primary", emoji_id=e),
         colored_button("إحصائيات", callback_data="admin_stats", style="primary", emoji_id=e),
     ]
@@ -756,15 +832,7 @@ def admin_texts_keyboard() -> InlineKeyboardMarkup:
 
 
 def subscription_keyboard() -> InlineKeyboardMarkup:
-    stars = get_subscription_stars()
-    return InlineKeyboardMarkup(
-        [
-            [
-                colored_button(f"اشترك بـ {stars} ⭐", callback_data="buy_subscription", style="success", emoji_id=EMOJI_SUBSCRIBE),
-                colored_button("تحقق", callback_data="subscription_status", style="primary", emoji_id=EMOJI_CHECK_SUB),
-            ],
-        ]
-    )
+    return vip_keyboard()
 
 
 async def send_required_channels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -781,8 +849,6 @@ async def send_required_channels(update: Update, context: ContextTypes.DEFAULT_T
             rows.append([colored_button("فتح القناة", url=f"https://t.me/{channel[1:]}", style="primary", emoji_id=EMOJI_ADMIN)])
 
     rows.append([colored_button("تحقق من الاشتراك", callback_data="check_required", style="success", emoji_id=EMOJI_CHECK_SUB)])
-    rows.append([colored_button(f"اشترك — {get_subscription_stars()} ⭐", callback_data="buy_subscription", style="primary", emoji_id=EMOJI_SUBSCRIBE)])
-    rows.append([colored_button(f"ضافني لـ {DB.get('settings', {}).get('join_groups_required', 5)} مجموعات واستمتع 🤤🔥", url=ADD_TO_GROUP_URL, style="primary", emoji_id=EMOJI_ADMIN)])
 
     markup = InlineKeyboardMarkup(rows)
     text = REQUIRED_CHANNEL_TEXT
@@ -894,6 +960,37 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     uid = str(update.effective_user.id)
     is_new_member = uid not in DB.get("users", {})
     user = ensure_user(update.effective_user)
+
+    # معالجة رابط الإحالة: /start ref_<ID>
+    if context.args and context.args[0].startswith("ref_"):
+        try:
+            referrer_id = int(context.args[0].split("_", 1)[1])
+        except (ValueError, IndexError):
+            referrer_id = 0
+        if is_new_member and referrer_id and add_referral(referrer_id, update.effective_user):
+            mention = f'<a href="tg://user?id={update.effective_user.id}">{update.effective_user.full_name}</a>'
+            ref_record = DB.get("users", {}).get(str(referrer_id), {})
+            try:
+                referral_text = (f"وصلك احالة جديدة  {mention}  🐤\n\n"
+                                 f"عدد احالاتك | {int(ref_record.get('referrals', 0))}  🐤")
+                # إرفاق Custom Emoji المطلوب في موضعي 🐤
+                entities = []
+                search_from = 0
+                while True:
+                    emoji_offset = referral_text.find("🐤", search_from)
+                    if emoji_offset < 0:
+                        break
+                    entities.append(MessageEntity(type="custom_emoji", offset=emoji_offset, length=2, custom_emoji_id=EMOJI_REFERRAL_NOTICE))
+                    search_from = emoji_offset + 1
+                await context.bot.send_message(
+                    chat_id=referrer_id,
+                    text=referral_text,
+                    parse_mode=ParseMode.HTML,
+                    entities=entities,
+                )
+            except Exception as exc:
+                logger.warning("Referral notification failed: %s", exc)
+
     if is_new_member and not is_admin(update.effective_user.id):
         await notify_new_member(context, update.effective_user)
 
@@ -908,10 +1005,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     joined = await user_required_channels_joined(context, update.effective_user.id)
     if not joined:
         await send_required_channels(update, context)
-        return
-
-    if not subscription_active(update.effective_user.id):
-        await send_subscription_page(update, context)
         return
 
     await send_home(update, context)
@@ -944,7 +1037,7 @@ async def buy_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             description="اشتراك شهري يفتح جميع مميزات MaX VIP.",
             payload=payload,
             currency="XTR",
-            prices=[LabeledPrice(label="اشتراك شهري", amount=get_subscription_stars())],
+            prices=[LabeledPrice(label="VIP شهري", amount=int(DB.get("settings", {}).get("vip_stars", SUBSCRIPTION_STARS)))],
         )
     except Exception as exc:
         logger.exception("Invoice error: %s", exc)
@@ -982,7 +1075,7 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
         await message.reply_text("تم استلام عملية دفع بعملة غير متوقعة.")
         return
 
-    if payment.total_amount != get_subscription_stars():
+    if payment.total_amount != int(DB.get("settings", {}).get("vip_stars", SUBSCRIPTION_STARS)):
         await message.reply_text("قيمة الاشتراك غير مطابقة.")
         return
 
@@ -1001,11 +1094,176 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
 
     await message.reply_text(
         "تم تفعيل اشتراكك بنجاح\n\n"
-        f"السعر: {SUBSCRIPTION_STARS} نجمة\n"
+        f"السعر: {int(DB.get('settings', {}).get('vip_stars', SUBSCRIPTION_STARS))} نجمة\n"
         f"المدة: {SUBSCRIPTION_DAYS} يوم\n\n"
         "يمكنك الآن فتح جميع الأقسام.",
         reply_markup=home_keyboard(),
     )
+
+
+# ============================================================
+# GROUP PROTECTION
+# ============================================================
+
+PROTECTION_KEYS = {
+    "links": "الروابط",
+    "usernames": "المعرفات واليوزرات",
+    "numbers": "الأرقام",
+    "symbols": "الرموز",
+    "photos": "الصور",
+    "videos": "الفيديوهات",
+    "voice": "الفويس",
+    "audio": "الملفات الصوتية",
+    "documents": "الملفات",
+    "animations": "GIF",
+    "stickers": "الملصقات",
+    "contacts": "جهات الاتصال",
+    "locations": "المواقع",
+    "polls": "الاستطلاعات",
+    "forwards": "إعادة التوجيه",
+    "bots": "البوتات",
+}
+
+def group_settings(chat_id: int) -> Dict[str, Any]:
+    settings = DB.setdefault("group_protection", {})
+    key = str(chat_id)
+    if key not in settings:
+        settings[key] = {k: False for k in PROTECTION_KEYS}
+        settings[key]["all"] = False
+        settings[key]["penalty"] = "delete"
+    else:
+        for k in PROTECTION_KEYS:
+            settings[key].setdefault(k, False)
+        settings[key].setdefault("all", False)
+        settings[key].setdefault("penalty", "delete")
+    return settings[key]
+
+
+def protection_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    st = group_settings(chat_id)
+    buttons=[]
+    for key, label in PROTECTION_KEYS.items():
+        state = "فتح" if st.get(key) else "قفل"
+        style = "danger" if st.get(key) else "primary"
+        buttons.append(colored_button(f"{state} {label}", callback_data=f"protect:{key}", style=style, emoji_id=EMOJI_ADMIN))
+    rows = chunk_rows(buttons, 2)
+    rows.append([colored_button("قفل كل شيء", callback_data="protect:all_on", style="danger", emoji_id=EMOJI_DELETE), colored_button("فتح كل شيء", callback_data="protect:all_off", style="success", emoji_id=EMOJI_CHECK_SUB)])
+    rows.append([colored_button("رجوع", callback_data="home", style="primary", emoji_id=EMOJI_HOME)])
+    return InlineKeyboardMarkup(rows)
+
+
+def protection_penalty_keyboard(key: str) -> InlineKeyboardMarkup:
+    label = PROTECTION_KEYS.get(key, key)
+    return InlineKeyboardMarkup([
+        [colored_button("كتم", callback_data=f"penalty:{key}:mute", style="danger", emoji_id=EMOJI_ADMIN)],
+        [colored_button("حذف", callback_data=f"penalty:{key}:delete", style="primary", emoji_id=EMOJI_DELETE)],
+        [colored_button("حظر", callback_data=f"penalty:{key}:ban", style="danger", emoji_id=EMOJI_DELETE)],
+        [colored_button("رجوع", callback_data="protect_back", style="primary", emoji_id=EMOJI_HOME)],
+    ])
+
+
+def mute_duration_keyboard(key: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [colored_button("دقيقة", callback_data=f"mute_duration:{key}:60", style="primary", emoji_id=EMOJI_ADMIN), colored_button("10 دقائق", callback_data=f"mute_duration:{key}:600", style="primary", emoji_id=EMOJI_ADMIN)],
+        [colored_button("ساعة", callback_data=f"mute_duration:{key}:3600", style="primary", emoji_id=EMOJI_ADMIN), colored_button("يوم", callback_data=f"mute_duration:{key}:86400", style="primary", emoji_id=EMOJI_ADMIN)],
+        [colored_button("رجوع", callback_data=f"penalty_menu:{key}", style="primary", emoji_id=EMOJI_HOME)],
+    ])
+
+
+def user_is_group_admin(update: Update) -> bool:
+    chat = update.effective_chat
+    user = update.effective_user
+    if not chat or chat.type not in ("group", "supergroup") or not user:
+        return False
+    try:
+        member = update._bot.get_chat_member(chat.id, user.id) if False else None
+    except Exception:
+        member = None
+    return False
+
+
+def protection_violation(message, st: Dict[str, Any]) -> Optional[str]:
+    text = (message.text or "") + " " + (message.caption or "")
+    entities = list(message.entities or []) + list(message.caption_entities or [])
+    if st.get("links") and (re.search(r"https?://|t\.me/|telegram\.me/|www\.", text, re.I) or any(getattr(e, "type", "") in ("url", "text_link") for e in entities)):
+        return "الروابط"
+    if st.get("usernames") and (re.search(r"@[A-Za-z0-9_]{3,}", text) or any(getattr(e, "type", "") in ("mention", "text_mention") for e in entities)):
+        return "المعرفات واليوزرات"
+    if st.get("numbers") and re.search(r"\d", text):
+        return "الأرقام"
+    if st.get("symbols") and text and re.search(r"[^\w\s\u0600-\u06FF]", text, re.UNICODE):
+        return "الرموز"
+    if st.get("photos") and message.photo:
+        return "الصور"
+    if st.get("videos") and (message.video or message.video_note):
+        return "الفيديوهات"
+    if st.get("voice") and message.voice:
+        return "الفويس"
+    if st.get("audio") and message.audio:
+        return "الملفات الصوتية"
+    if st.get("documents") and message.document:
+        return "الملفات"
+    if st.get("animations") and message.animation:
+        return "GIF"
+    if st.get("stickers") and message.sticker:
+        return "الملصقات"
+    if st.get("contacts") and message.contact:
+        return "جهات الاتصال"
+    if st.get("locations") and (message.location or message.venue):
+        return "المواقع"
+    if st.get("polls") and (message.poll or message.poll_answer):
+        return "الاستطلاعات"
+    if st.get("forwards") and (message.forward_origin or getattr(message, "forward_date", None)):
+        return "إعادة التوجيه"
+    if st.get("bots") and getattr(message.from_user, "is_bot", False):
+        return "البوتات"
+    return None
+
+
+async def apply_group_penalty(context, chat_id: int, user_id: int, penalty: str, duration: int = 0):
+    if penalty == "ban":
+        await context.bot.ban_chat_member(chat_id, user_id)
+    elif penalty == "mute":
+        until = int(time.time()) + max(30, duration or 3600)
+        await context.bot.restrict_chat_member(
+            chat_id, user_id,
+            permissions=__import__('telegram').ChatPermissions(can_send_messages=False),
+            until_date=until,
+        )
+
+
+async def group_protection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+    if not message or not chat or not user or chat.type not in ("group", "supergroup"):
+        return
+    if user.is_bot:
+        return
+    st = group_settings(chat.id)
+    if not st.get("all") and not any(st.get(k) for k in PROTECTION_KEYS):
+        return
+    violation = protection_violation(message, st)
+    if not violation:
+        return
+    try:
+        await message.delete()
+    except Exception as exc:
+        logger.warning("Could not delete protected message in %s: %s", chat.id, exc)
+    penalty = st.get(f"penalty_{violation}", st.get("penalty", "delete"))
+    try:
+        await apply_group_penalty(context, chat.id, user.id, penalty, st.get(f"mute_duration_{violation}", 3600))
+    except Exception as exc:
+        logger.warning("Protection penalty failed: %s", exc)
+    mention = f'<a href="tg://user?id={user.id}">{user.full_name}</a>'
+    try:
+        await context.bot.send_message(
+            chat.id,
+            f"يـ ممنوع ارسل {mention} هنا 5870734657384877785",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
 
 
 # ============================================================
@@ -1082,15 +1340,113 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         await safe_answer_callback(query, "تم التحقق.")
 
-        if is_admin(user.id) or subscription_active(user.id):
-            await send_home(update, context)
-        else:
-            await send_subscription_page(update, context)
+        await send_home(update, context)
         return
 
-    if data == "buy_subscription":
+    if data in ("buy_subscription", "buy_vip"):
         await buy_subscription(update, context)
         return
+
+    if data == "referral_page":
+        link = referral_link(user.id)
+        points = get_user_points(user.id)
+        referrals = DB.get("users", {}).get(str(user.id), {}).get("referrals", 0)
+        text = (f"رابط الدعوة الخاص بك\n\n{link}\n\n"
+                f"عدد احالاتك | {referrals}\n"
+                f"نقاطك | {points}\n"
+                f"المطلوب لفتح الأقسام | {int(DB.get('settings', {}).get('points_required_per_section', 5))}")
+        await safe_answer_callback(query)
+        try:
+            await query.edit_message_text(text, reply_markup=points_keyboard(user.id))
+        except Exception:
+            pass
+        return
+
+    if data == "points_status":
+        points = get_user_points(user.id)
+        referrals = DB.get("users", {}).get(str(user.id), {}).get("referrals", 0)
+        required = int(DB.get("settings", {}).get("points_required_per_section", 5))
+        text = f"عدد احالاتك | {referrals}\nنقاطك | {points}\nالمطلوب | {required} نقاط"
+        await safe_answer_callback(query)
+        try:
+            await query.edit_message_text(text, reply_markup=points_keyboard(user.id))
+        except Exception:
+            pass
+        return
+
+    if data == "admin_cancel_subscription":
+        if not is_admin(user.id):
+            await safe_answer_callback(query, "غير مصرح.", True)
+            return
+        context.user_data["admin_state"] = "cancel_subscription"
+        await safe_answer_callback(query)
+        await query.message.reply_text("أرسل ID أو @username للشخص الذي تريد إلغاء اشتراك VIP له.")
+        return
+
+    if data == "protect_back":
+        await safe_answer_callback(query)
+        await query.edit_message_text("إعدادات حماية الجروب", reply_markup=protection_keyboard(update.effective_chat.id))
+        return
+
+    if data.startswith("protect:") or data.startswith("penalty:") or data.startswith("penalty_menu:") or data.startswith("mute_duration:"):
+        if not update.effective_chat or update.effective_chat.type not in ("group", "supergroup"):
+            await safe_answer_callback(query, "هذا القسم للجروبات فقط.", True)
+            return
+        try:
+            member = await context.bot.get_chat_member(update.effective_chat.id, user.id)
+            if member.status not in ("administrator", "creator"):
+                await safe_answer_callback(query, "الأمر للمشرفين فقط.", True)
+                return
+        except Exception:
+            await safe_answer_callback(query, "تعذر التحقق من صلاحياتك.", True)
+            return
+        action = data.split(":")
+        st = group_settings(update.effective_chat.id)
+        if data.startswith("protect:"):
+            key = action[1]
+            if key == "all_on":
+                for k in PROTECTION_KEYS: st[k] = True
+                st["all"] = True
+                save_db(DB)
+                await safe_answer_callback(query)
+                await query.edit_message_text("تم قفل كل شيء 5206607081334906820", reply_markup=protection_keyboard(update.effective_chat.id))
+                return
+            if key == "all_off":
+                for k in PROTECTION_KEYS: st[k] = False
+                st["all"] = False
+                save_db(DB)
+                await safe_answer_callback(query)
+                await query.edit_message_text("تم فتح كل شيء 5206607081334906820", reply_markup=protection_keyboard(update.effective_chat.id))
+                return
+            await safe_answer_callback(query)
+            await query.edit_message_text(f"اختر العقوبة عند قفل {PROTECTION_KEYS.get(key, key)}", reply_markup=protection_penalty_keyboard(key))
+            return
+        if data.startswith("penalty_menu:"):
+            key=action[1]
+            await safe_answer_callback(query)
+            await query.edit_message_text(f"اختر العقوبة عند قفل {PROTECTION_KEYS.get(key, key)}", reply_markup=protection_penalty_keyboard(key))
+            return
+        if data.startswith("penalty:"):
+            key, penalty = action[1], action[2]
+            if penalty == "mute":
+                await safe_answer_callback(query)
+                await query.edit_message_text("اختار مدة الكتم", reply_markup=mute_duration_keyboard(key))
+                return
+            st[key] = True
+            st[f"penalty_{key}"] = penalty
+            save_db(DB)
+            await safe_answer_callback(query)
+            await query.edit_message_text(f"تم حفظ البيانات\n\nتم قفل {PROTECTION_KEYS.get(key, key)} 5206607081334906820", reply_markup=protection_keyboard(update.effective_chat.id))
+            return
+        if data.startswith("mute_duration:"):
+            key, duration = action[1], int(action[2])
+            st[key] = True
+            st[f"penalty_{key}"] = "mute"
+            st[f"mute_duration_{key}"] = duration
+            save_db(DB)
+            await safe_answer_callback(query)
+            await query.edit_message_text(f"تم حفظ البيانات\n\nتم قفل {PROTECTION_KEYS.get(key, key)} 5206607081334906820", reply_markup=protection_keyboard(update.effective_chat.id))
+            return
 
     if data == "subscription_status":
         await safe_answer_callback(query)
@@ -1132,6 +1488,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         if not category:
             await safe_answer_callback(query, "القسم غير موجود.", True)
+            return
+
+        if category_id == VIP_SECTION_ID:
+            if not subscription_active(user.id):
+                await safe_answer_callback(query, "قسم VIP يحتاج اشتراك نجوم.", True)
+                await send_subscription_page(update, context)
+                return
+        elif not regular_sections_unlocked(user.id) and not is_admin(user.id):
+            required = int(DB.get("settings", {}).get("points_required_per_section", 5))
+            await safe_answer_callback(query, f"تحتاج {required} نقاط من الإحالات أولًا.", True)
             return
 
         await safe_answer_callback(query)
@@ -1705,6 +2071,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             pass
         return
 
+    if data == "admin_group_welcome_photo":
+        if not is_admin(user.id):
+            await safe_answer_callback(query, "غير مصرح.", True)
+            return
+        context.user_data["admin_state"] = "group_welcome_photo"
+        await safe_answer_callback(query)
+        await query.message.reply_text("أرسل صورة ترحيب الجروبات الآن.\n\nأرسل كلمة حذف لإزالة الصورة.")
+        return
+
     if data == "admin_text_welcome":
         if not is_admin(user.id):
             return
@@ -1897,6 +2272,44 @@ async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     state = context.user_data.get("admin_state")
 
     if not state:
+        return
+
+    if state == "group_welcome_photo":
+        if message.text and message.text.strip() == "حذف":
+            DB["settings"]["group_welcome_photo"] = ""
+            save_db(DB)
+            context.user_data.pop("admin_state", None)
+            await message.reply_text("تم حذف صورة ترحيب الجروبات.", reply_markup=admin_keyboard())
+            return
+        if not message.photo:
+            await message.reply_text("أرسل صورة فقط أو اكتب حذف.")
+            return
+        DB["settings"]["group_welcome_photo"] = message.photo[-1].file_id
+        save_db(DB)
+        context.user_data.pop("admin_state", None)
+        await message.reply_text("تم حفظ صورة ترحيب الجروبات.", reply_markup=admin_keyboard())
+        return
+
+    if state == "cancel_subscription":
+        target = (message.text or "").strip()
+        target_record = None
+        if target.isdigit():
+            target_record = DB.get("users", {}).get(target)
+        else:
+            username = target.lstrip("@").lower()
+            for record in DB.get("users", {}).values():
+                if str(record.get("username", "")).lstrip("@").lower() == username:
+                    target_record = record
+                    break
+        if not target_record:
+            await message.reply_text("لم أجد الشخص في قاعدة البيانات.")
+            return
+        target_record["subscription_until"] = 0
+        target_record["is_subscribed"] = False
+        target_record["payment_charge_id"] = ""
+        save_db(DB)
+        context.user_data.pop("admin_state", None)
+        await message.reply_text("تم إلغاء اشتراك VIP للشخص.", reply_markup=admin_keyboard())
         return
 
     if state == "add_keyword":
@@ -2124,6 +2537,7 @@ async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             await message.reply_text("السعر يجب أن يكون بين 1 و100000 نجمة.")
             return
         DB.setdefault("settings", {})["subscription_stars"] = new_price
+        DB.setdefault("settings", {})["vip_stars"] = new_price
         save_db(DB)
         context.user_data.pop("admin_state", None)
         await message.reply_text(
@@ -2344,11 +2758,111 @@ async def normal_message_handler(update: Update, context: ContextTypes.DEFAULT_T
         await send_required_channels(update, context)
         return
 
-    if not subscription_active(user.id):
-        await send_subscription_page(update, context)
-        return
-
     await send_home(update, context)
+
+
+def resolve_target_user(message):
+    if message.reply_to_message and message.reply_to_message.from_user:
+        return message.reply_to_message.from_user
+    raw = (message.text or "").split(maxsplit=1)
+    if len(raw) < 2:
+        return None
+    target = raw[1].strip()
+    if target.isdigit():
+        return int(target)
+    username = target.lstrip("@").lower()
+    for rec in DB.get("users", {}).values():
+        if str(rec.get("username", "")).lstrip("@").lower() == username:
+            return int(rec.get("id"))
+    return None
+
+
+async def group_member_action(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str):
+    message, chat, actor = update.effective_message, update.effective_chat, update.effective_user
+    if not message or not chat or chat.type not in ("group", "supergroup") or not actor:
+        return
+    try:
+        me = await context.bot.get_chat_member(chat.id, actor.id)
+        if me.status not in ("administrator", "creator"):
+            await message.reply_text("الأمر للمشرفين فقط.")
+            return
+    except Exception:
+        return
+    target = resolve_target_user(message)
+    if not target:
+        await message.reply_text("استخدم الأمر بالرد على الشخص أو أرسل ID أو @username.")
+        return
+    target_id = target.id if hasattr(target, "id") else int(target)
+    try:
+        if action == "delete":
+            if message.reply_to_message:
+                await message.reply_to_message.delete()
+            await message.reply_text("تم حذف الرسالة.")
+        elif action == "kick":
+            await context.bot.ban_chat_member(chat.id, target_id)
+            await context.bot.unban_chat_member(chat.id, target_id, only_if_banned=True)
+            await message.reply_text("تم طرد الشخص.")
+        elif action == "ban":
+            await context.bot.ban_chat_member(chat.id, target_id)
+            await message.reply_text("تم حظر الشخص.")
+        elif action == "mute":
+            await context.bot.restrict_chat_member(chat.id, target_id, permissions=__import__('telegram').ChatPermissions(can_send_messages=False), until_date=int(time.time())+3600)
+            await message.reply_text("تم كتم الشخص لمدة ساعة.")
+        elif action == "clear":
+            if message.reply_to_message:
+                await message.reply_to_message.delete()
+            await message.delete()
+        elif action == "info":
+            member = await context.bot.get_chat_member(chat.id, target_id)
+            await message.reply_text(f"كشف الشخص\nID: {target_id}\nالحالة: {member.status}")
+    except Exception as exc:
+        await message.reply_text(f"تعذر تنفيذ الأمر: {exc}")
+
+
+async def group_welcome_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    chat = update.effective_chat
+    if not message or not chat or chat.type not in ("group", "supergroup") or not message.new_chat_members:
+        return
+    photo = DB.get("settings", {}).get("group_welcome_photo", "")
+    for member in message.new_chat_members:
+        mention = f'<a href="tg://user?id={member.id}">{member.full_name}</a>'
+        username = f"@{member.username}" if member.username else "لا يوجد"
+        joined_date = time.strftime("%Y-%m-%d", time.localtime())
+        joined_time = time.strftime("%H:%M", time.localtime())
+        text=(f"⁣⁣ᯓ˹𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 ​𝐆𝐑𝐎𝐔𝐏 ᯤ˼\n"
+              f"°•—————— {chat.title} —————•°\n"
+              f"°︙ نورت قروبنا يـ {mention} 🥂.\n"
+              f"°︙ اسمك ⇚『{mention}』\n"
+              f"°︙ ايديك ⇚『{member.id}』\n"
+              f"°︙ يوزرك ⇚『{username}』\n\n"
+              f"> °︙ تاريخ انضمامك ☜ {joined_date}\n"
+              f"> °︙ الساعة ☜ {joined_time} .\n\n"
+              f"°•—————— {chat.title} —————•°")
+        kb=InlineKeyboardMarkup([[InlineKeyboardButton(mention, url=f"tg://user?id={member.id}")],[InlineKeyboardButton("حفلات مشهير •", url="https://t.me/+Ur1mKr-uQio0ZjY8")]])
+        try:
+            if photo:
+                await context.bot.send_photo(chat.id, photo=photo, caption=text, parse_mode=ParseMode.HTML, reply_markup=kb)
+            else:
+                await context.bot.send_message(chat.id, text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        except Exception:
+            pass
+
+
+async def protection_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat = update.effective_chat
+    user = update.effective_user
+    if not chat or chat.type not in ("group", "supergroup") or not user:
+        return
+    try:
+        member = await context.bot.get_chat_member(chat.id, user.id)
+        if member.status not in ("administrator", "creator"):
+            await update.effective_message.reply_text("الأمر للمشرفين فقط.")
+            return
+    except Exception:
+        await update.effective_message.reply_text("تعذر التحقق من صلاحياتك.")
+        return
+    await update.effective_message.reply_text("إعدادات حماية الجروب", reply_markup=protection_keyboard(chat.id))
 
 
 # ============================================================
@@ -2416,7 +2930,47 @@ def build_application() -> Application:
     application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
-    # ✅ معالج الجروبات — يعمل قبل باقي الـ handlers
+    # حماية الجروبات قبل الردود التلقائية
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL,
+            group_protection_handler,
+        ),
+        group=-2,
+    )
+
+    # أوامر الجروبات تعمل كنص عادي بدون /
+    application.add_handler(MessageHandler(
+        filters.ChatType.GROUPS & filters.Regex(r"^\s*حماية\s*$"),
+        protection_command,
+    ))
+    application.add_handler(MessageHandler(
+        filters.ChatType.GROUPS & filters.Regex(r"^\s*كتم(?:\s+.*)?$"),
+        lambda u,c: group_member_action(u,c,"mute"),
+    ))
+    application.add_handler(MessageHandler(
+        filters.ChatType.GROUPS & filters.Regex(r"^\s*طرد(?:\s+.*)?$"),
+        lambda u,c: group_member_action(u,c,"kick"),
+    ))
+    application.add_handler(MessageHandler(
+        filters.ChatType.GROUPS & filters.Regex(r"^\s*حظر(?:\s+.*)?$"),
+        lambda u,c: group_member_action(u,c,"ban"),
+    ))
+    application.add_handler(MessageHandler(
+        filters.ChatType.GROUPS & filters.Regex(r"^\s*حذف(?:\s+.*)?$"),
+        lambda u,c: group_member_action(u,c,"delete"),
+    ))
+    application.add_handler(MessageHandler(
+        filters.ChatType.GROUPS & filters.Regex(r"^\s*مسح(?:\s+.*)?$"),
+        lambda u,c: group_member_action(u,c,"clear"),
+    ))
+    application.add_handler(MessageHandler(
+        filters.ChatType.GROUPS & filters.Regex(r"^\s*كشف(?:\s+.*)?$"),
+        lambda u,c: group_member_action(u,c,"info"),
+    ))
+    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, group_welcome_handler), group=-3)
+
+    # معالج الجروبات — الردود التلقائية
     application.add_handler(
         MessageHandler(
             filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL,
