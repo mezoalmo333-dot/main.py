@@ -42,7 +42,7 @@ from telegram.ext import (
 # ============================================================
 
 BOT_TOKEN = "8746223128:AAGyRjSb8I8pxL1TPKKvuTsSw_Wrzlg_7Cs"
-OWNER_ID = 8037399518,8095948240
+OWNER_ID = 8037399518
 
 SUBSCRIPTION_STARS = 50
 SUBSCRIPTION_DAYS = 30
