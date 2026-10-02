@@ -6,6 +6,7 @@ Pydroid 3 / Python 3.10+
 
 import asyncio
 import html
+import inspect
 import json
 import logging
 import os
@@ -43,7 +44,6 @@ from telegram.ext import (
 
 BOT_TOKEN = "8719852365:AAFaCMsqCXLzSFMANqKgZp02PQPzpDVtug4"
 OWNER_ID = 8255594932
-
 SUBSCRIPTION_STARS = 50
 SUBSCRIPTION_DAYS = 30
 REFERRAL_POINTS_PER_INVITE = 1
@@ -226,6 +226,13 @@ def save_db(db: Dict[str, Any]) -> None:
     os.replace(tmp, DATABASE_FILE)
 
 
+# python-telegram-bot versions that expose icon_custom_emoji_id can
+# render the supplied Telegram custom emoji ID natively on inline buttons.
+try:
+    _BUTTON_SUPPORTS_CUSTOM_EMOJI = "icon_custom_emoji_id" in inspect.signature(InlineKeyboardButton).parameters
+except Exception:
+    _BUTTON_SUPPORTS_CUSTOM_EMOJI = False
+
 EMOJI_ID_TO_UNICODE = {
     "5141092083993412661": "🔗",
     "5775979900649347911": "🎁",
@@ -377,7 +384,15 @@ def colored_button(
         kwargs["style"] = style
 
     if emoji_id:
-        kwargs["text"] = f"{emoji_id} {kwargs['text']}"
+        emoji_id = str(emoji_id).strip()
+        # Telegram custom-emoji IDs cannot be inserted into button text as
+        # plain strings. Use the native button icon field when supported.
+        if emoji_id.isdigit() and _BUTTON_SUPPORTS_CUSTOM_EMOJI:
+            kwargs["icon_custom_emoji_id"] = emoji_id
+        else:
+            # Fallback for normal Unicode emoji or older PTB versions.
+            display_emoji = EMOJI_ID_TO_UNICODE.get(emoji_id, emoji_id)
+            kwargs["text"] = f"{display_emoji} {kwargs['text']}"
 
     return InlineKeyboardButton(**kwargs)
 
@@ -639,7 +654,12 @@ def make_button(
     kwargs["style"] = color
 
     if emoji_id:
-        kwargs["text"] = f"{emoji_id} {kwargs['text']}"
+        emoji_id = str(emoji_id).strip()
+        if emoji_id.isdigit() and _BUTTON_SUPPORTS_CUSTOM_EMOJI:
+            kwargs["icon_custom_emoji_id"] = emoji_id
+        else:
+            display_emoji = EMOJI_ID_TO_UNICODE.get(emoji_id, emoji_id)
+            kwargs["text"] = f"{display_emoji} {kwargs['text']}"
 
     return InlineKeyboardButton(**kwargs)
 
@@ -679,7 +699,12 @@ def nested_category_keyboard(category: Dict[str, Any]) -> InlineKeyboardMarkup:
             "style": color,
         }
         if emoji_id:
-            kwargs["text"] = f"{emoji_id} {kwargs['text']}"
+            emoji_id = str(emoji_id).strip()
+            if emoji_id.isdigit() and _BUTTON_SUPPORTS_CUSTOM_EMOJI:
+                kwargs["icon_custom_emoji_id"] = emoji_id
+            else:
+                display_emoji = EMOJI_ID_TO_UNICODE.get(emoji_id, emoji_id)
+                kwargs["text"] = f"{display_emoji} {kwargs['text']}"
 
         buttons.append(InlineKeyboardButton(**kwargs))
 
@@ -3180,7 +3205,7 @@ async def group_protection_text_command(update: Update, context: ContextTypes.DE
 CUSTOM_EMOJI_LOCK = "🔒"
 CUSTOM_EMOJI_PROTECTION = "🛡️"
 # الـ Custom Emoji المطلوب في ردود الأشياء المقفولة.
-CUSTOM_EMOJI_LOCKED_REPLY = "🔒"
+CUSTOM_EMOJI_LOCKED_REPLY = EMOJI_ID_TO_UNICODE.get("5260293700088511294", "🔒")
 
 
 def protection_message_with_emoji(text: str, marker: str, emoji: str) -> tuple[str, list]:
