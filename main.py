@@ -1421,6 +1421,7 @@ async def send_group_required_message(
     context: ContextTypes.DEFAULT_TYPE,
     chat_id: int,
     user=None,
+    verification_error: Optional[str] = None,
 ) -> None:
     """رسالة الاشتراك الإجباري في الجروب مع منشن للعضو وزر تحقق."""
     display_name = html.escape((getattr(user, "full_name", None) or "العضو")) if user else "العضو"
@@ -1430,11 +1431,20 @@ async def send_group_required_message(
     else:
         mention = display_name
 
-    text = premium_message(
-        f'يـ {mention} لازم تشترك في القنوات المطلوبة أولًا.\n\n'
-        f'بعد الاشتراك اضغط زر «تحقق».',
-        "5251203410396458957",
-    )
+    if verification_error:
+        body = (
+            f'يـ {mention} لا يمكن التحقق من الاشتراك حاليًا.\n\n'
+            f'البوت لا يستطيع الوصول إلى القناة المطلوبة: '
+            f'<b>{html.escape(str(verification_error))}</b>\n'
+            f'اجعل البوت مشرفًا في القناتين ثم اضغط «تحقق».'
+        )
+    else:
+        body = (
+            f'يـ {mention} لازم تشترك في القنوات المطلوبة أولًا.\n\n'
+            f'بعد الاشتراك اضغط زر «تحقق».'
+        )
+
+    text = premium_message(body, "5251203410396458957")
 
     keyboard = InlineKeyboardMarkup([
         [colored_button(
@@ -1451,7 +1461,7 @@ async def send_group_required_message(
         )],
         [colored_button(
             "تحقق من الاشتراك",
-            callback_data="group_check_required",
+            callback_data=(f"group_check_required:{int(user_id)}" if user_id else "group_check_required"),
             style="success",
             emoji_id="5206607081334906820",
         )],
@@ -1467,19 +1477,45 @@ async def send_group_required_message(
         logger.warning("Could not send group mandatory subscription message: %s", exc)
 
 
-async def group_mandatory_subscription_ok(context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: Optional[int] = None) -> bool:
-    """Check both required channels and persist the last state per group/user."""
-    joined = True
+async def _check_group_required_channels(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+) -> tuple[bool, Optional[str]]:
+    """Return (joined, error).
+
+    error is set only when Telegram could not verify a channel. This avoids
+    treating an API/permission failure as if the user had simply not joined.
+    """
     for channel in REQUIRED_CHANNELS:
+        target = str(channel).strip()
         try:
-            member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
-            if member.status in (ChatMemberStatus.LEFT, ChatMemberStatus.KICKED):
-                joined = False
-                break
+            member = await context.bot.get_chat_member(chat_id=target, user_id=user_id)
         except Exception as exc:
-            logger.warning("Mandatory group subscription check failed for %s / %s: %s", channel, user_id, exc)
-            joined = False
-            break
+            logger.warning(
+                "Mandatory channel verification failed for %s / %s: %s",
+                target, user_id, exc,
+            )
+            return False, target
+
+        status = str(getattr(member, "status", "")).lower()
+        is_member = getattr(member, "is_member", True)
+
+        if status in (
+            str(ChatMemberStatus.LEFT).lower(),
+            str(ChatMemberStatus.KICKED).lower(),
+        ) or (status == str(ChatMemberStatus.RESTRICTED).lower() and not is_member):
+            return False, None
+
+    return True, None
+
+
+async def group_mandatory_subscription_ok(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+    chat_id: Optional[int] = None,
+) -> bool:
+    """Check both required channels and persist the last state per group/user."""
+    joined, _error_channel = await _check_group_required_channels(context, user_id)
     if chat_id is not None:
         mark_group_subscription_state(chat_id, user_id, joined)
     return joined
@@ -1517,7 +1553,23 @@ async def group_auto_reply_handler(
     was_joined = bool(
         group_subscription_state(chat.id).get(str(user.id), {}).get("joined", False)
     )
-    joined_now = await group_mandatory_subscription_ok(context, user.id, chat.id)
+    joined_now, verification_error = await _check_group_required_channels(context, user.id)
+    mark_group_subscription_state(chat.id, user.id, joined_now)
+    if verification_error:
+        # Do not mislabel a subscribed user as unsubscribed when Telegram
+        # rejected the membership lookup because of channel permissions.
+        if not is_admin(user.id):
+            try:
+                await context.bot.delete_message(
+                    chat_id=chat.id,
+                    message_id=message.message_id,
+                )
+            except Exception as exc:
+                logger.warning("Could not delete message after subscription-check error: %s", exc)
+            await send_group_required_message(
+                context, chat.id, user, verification_error=verification_error
+            )
+        return
     if not joined_now:
         try:
             actor_member = await context.bot.get_chat_member(chat.id, user.id)
@@ -1533,12 +1585,17 @@ async def group_auto_reply_handler(
 
         if not is_privileged:
             try:
-                await message.delete()
+                await context.bot.delete_message(
+                    chat_id=chat.id,
+                    message_id=message.message_id,
+                )
             except Exception as exc:
                 logger.warning(
-                    "Could not delete non-subscriber message in %s: %s",
-                    chat.id, exc
+                    "Could not delete non-subscriber message in %s/%s: %s",
+                    chat.id, message.message_id, exc,
                 )
+                # Telegram requires the bot to be an administrator with
+                # can_delete_messages in supergroups/channels.
             st = group_settings(chat.id)
             notice_key = f"mandatory_notice_sent:{user.id}"
             already_notified = bool(st.get(notice_key, False))
@@ -1622,6 +1679,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         or data.startswith("profile_like:")
         or data.startswith("unmute:")
         or data == "group_check_required"
+        or data.startswith("group_check_required:")
     )
 
     # أي أزرار للقائمة الرئيسية/الاشتراك ممنوعة داخل الجروبات، مع استثناء أزرار الحماية والكشف.
@@ -1639,26 +1697,53 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     ensure_user(user)
 
-    if data == "group_check_required":
+    if data == "group_check_required" or data.startswith("group_check_required:"):
         if not update.effective_chat or update.effective_chat.type not in ("group", "supergroup"):
             await safe_answer_callback(query, "هذا الزر للجروبات فقط.", True)
             return
+        if data.startswith("group_check_required:"):
+            try:
+                intended_user_id = int(data.split(":", 1)[1])
+            except (TypeError, ValueError):
+                await safe_answer_callback(query, "بيانات الزر غير صحيحة.", True)
+                return
+            if user.id != intended_user_id:
+                await safe_answer_callback(query, "هذا زر التحقق ليس مخصصًا لك.", True)
+                return
         chat_id = update.effective_chat.id
-        joined = await group_mandatory_subscription_ok(context, user.id, chat_id)
+        joined, error_channel = await _check_group_required_channels(context, user.id)
+        mark_group_subscription_state(chat_id, user.id, joined)
+
+        if error_channel:
+            await safe_answer_callback(
+                query,
+                "البوت غير قادر على التحقق من إحدى القنوات. تأكد أن البوت مشرف فيها.",
+                True,
+            )
+            await send_group_required_message(
+                context,
+                chat_id,
+                user,
+                verification_error=error_channel,
+            )
+            return
+
         if not joined:
             await safe_answer_callback(query, "لسه ما اشتركتش في القناتين.", True)
             await send_group_required_message(context, chat_id, user)
             return
+
+        # Clear the notice as soon as the user is verified.
+        st = group_settings(chat_id)
+        st.pop(f"mandatory_notice_sent:{user.id}", None)
+        save_db(DB)
+
         await safe_answer_callback(query, "تم التحقق من الاشتراك بنجاح.")
         try:
             if query.message:
                 await query.message.delete()
-        except Exception:
-            try:
-                if query.message:
-                    await query.edit_message_text("تم التحقق من الاشتراك ✅")
-            except Exception:
-                pass
+        except Exception as exc:
+            logger.warning("Could not delete mandatory notice after verification: %s", exc)
         return
 
     if data.startswith("unmute:"):
@@ -1676,7 +1761,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         try:
             actor_member = await context.bot.get_chat_member(chat_id, user.id)
-            if actor_member.status not in ("administrator", "creator") and not is_admin(user.id):
+            if actor_member.status not in ("administrator", "creator", ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
                 await safe_answer_callback(query, "الأمر للمشرفين فقط.", True)
                 return
         except Exception:
@@ -3253,16 +3338,60 @@ def manual_unmute_keyboard(chat_id: int, target_id: int) -> InlineKeyboardMarkup
     ])
 
 
+async def require_group_moderator(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    reply: bool = True,
+) -> bool:
+    """كل أوامر إدارة الجروب للمشرفين/المالك الفعليين في نفس الجروب فقط."""
+    message = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if not message or not chat or chat.type not in ("group", "supergroup") or not user:
+        return False
+
+    try:
+        member = await context.bot.get_chat_member(chat.id, user.id)
+        status = getattr(member, "status", "")
+        is_moderator = status in (
+            ChatMemberStatus.ADMINISTRATOR,
+            ChatMemberStatus.OWNER,
+            "administrator",
+            "creator",
+        )
+    except Exception as exc:
+        logger.warning("Could not verify group moderator status for %s/%s: %s", chat.id, user.id, exc)
+        if reply:
+            try:
+                await message.reply_text(
+                    premium_plain("تعذر التحقق من صلاحياتك كمشرف."),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+        return False
+
+    if not is_moderator:
+        if reply:
+            try:
+                await message.reply_text(
+                    premium_plain("هذا الأمر للمشرفين فقط."),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+        return False
+
+    return True
+
+
 async def group_member_action(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str):
     message, chat, actor = update.effective_message, update.effective_chat, update.effective_user
     if not message or not chat or chat.type not in ("group", "supergroup") or not actor:
         return
-    try:
-        me = await context.bot.get_chat_member(chat.id, actor.id)
-        if me.status not in ("administrator", "creator"):
-            await message.reply_text(premium_plain("الأمر للمشرفين فقط."), parse_mode=ParseMode.HTML)
-            return
-    except Exception:
+    if not await require_group_moderator(update, context):
         return
     target = resolve_target_user(message)
     if not target:
@@ -3408,18 +3537,54 @@ async def group_welcome_handler(update: Update, context: ContextTypes.DEFAULT_TY
     save_db(DB)
 
 
+async def group_subscription_test_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """تشخيص الاشتراك الإجباري وحذف الرسائل داخل الجروب."""
+    message = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+    if not message or not chat or chat.type not in ("group", "supergroup") or not user:
+        return
+
+    if not await require_group_moderator(update, context):
+        return
+
+    joined, error_channel = await _check_group_required_channels(context, user.id)
+    try:
+        me = await context.bot.get_me()
+        bot_member = await context.bot.get_chat_member(chat.id, me.id)
+        can_delete = getattr(bot_member, "can_delete_messages", None)
+        status = getattr(bot_member, "status", "")
+    except Exception:
+        can_delete = None
+        status = "unknown"
+
+    if error_channel:
+        result = (
+            f"الاشتراك: لا يمكن التحقق من القناة {html.escape(str(error_channel))}.\n"
+            f"اجعل البوت مشرفًا في القناة."
+        )
+    else:
+        result = "الاشتراك: مشترك في القناتين من جهة الفحص." if joined else "الاشتراك: غير مشترك في قناة واحدة على الأقل."
+
+    result += f"\nصلاحية حذف رسائل الجروب: {html.escape(str(can_delete))}"
+    result += f"\nحالة البوت في الجروب: {html.escape(str(status))}"
+
+    await message.reply_text(
+        premium_plain(result),
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def group_protection_text_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
     chat = update.effective_chat
     user = update.effective_user
     if not message or not chat or chat.type not in ("group", "supergroup") or not user:
         return
-    try:
-        member = await context.bot.get_chat_member(chat.id, user.id)
-        if member.status not in ("administrator", "creator"):
-            await message.reply_text("الأمر للمشرفين فقط.")
-            return
-    except Exception:
+    if not await require_group_moderator(update, context):
         return
 
     raw = (message.text or "").strip()
@@ -3479,6 +3644,8 @@ async def group_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat = update.effective_chat
     actor = update.effective_user
     if not message or not chat or chat.type not in ("group", "supergroup") or not actor:
+        return
+    if not await require_group_moderator(update, context):
         return
     target = resolve_target_user(message) or actor
     if not target:
@@ -3559,13 +3726,7 @@ async def protection_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user = update.effective_user
     if not chat or chat.type not in ("group", "supergroup") or not user:
         return
-    try:
-        member = await context.bot.get_chat_member(chat.id, user.id)
-        if member.status not in ("administrator", "creator"):
-            await update.effective_message.reply_text("الأمر للمشرفين فقط.")
-            return
-    except Exception:
-        await update.effective_message.reply_text("تعذر التحقق من صلاحياتك.")
+    if not await require_group_moderator(update, context):
         return
     await update.effective_message.reply_text("إعدادات حماية الجروب", reply_markup=protection_keyboard(chat.id))
 
@@ -3642,6 +3803,13 @@ def build_application() -> Application:
             group_protection_handler,
         ),
         group=-2,
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & filters.Regex(r"^\\s*اختبار الاشتراك\\s*$"),
+            group_subscription_test_command,
+        )
     )
 
     # أوامر القفل/الفتح تعمل كنص عادي بدون /
