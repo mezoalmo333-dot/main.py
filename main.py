@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-MaX VIP Subscription Bot — GROUP WORKING FIX
+MaX VIP Subscription Bot
 Pydroid 3 / Python 3.10+
 """
 
 import asyncio
 import html
-import inspect
 import json
 import logging
 import os
@@ -25,6 +24,7 @@ from telegram import (
     BotCommand,
     BotCommandScopeDefault,
     BotCommandScopeChat,
+    MessageEntity,
 )
 from telegram.constants import ParseMode, ChatMemberStatus
 from telegram.ext import (
@@ -33,7 +33,6 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
-    ChatMemberHandler,
     PreCheckoutQueryHandler,
     filters,
 )
@@ -42,9 +41,9 @@ from telegram.ext import (
 # CONFIGURATION
 # ============================================================
 
-BOT_TOKEN = "8719852365:AAFaCMsqCXLzSFMANqKgZp02PQPzpDVtug4"
-OWNER_ID = 803002143
-ADMIN_IDS = [8037399518]
+BOT_TOKEN = "8746223128:AAGeoJ1ojWwd2TfI26wDMcQ__Q5FRvgyrsI"
+OWNER_ID = 8037399518
+
 SUBSCRIPTION_STARS = 50
 SUBSCRIPTION_DAYS = 30
 REFERRAL_POINTS_PER_INVITE = 1
@@ -73,7 +72,7 @@ DEFAULT_REQUIRED_CHANNEL = "https://t.me/mediation_King"
 SECOND_REQUIRED_CHANNEL = "https://t.me/Bbeemmsn"
 REQUIRED_CHANNEL_ID = "-1003390584761"
 REQUIRED_CHANNEL_INVITE_URL = "https://t.me/+7lFrm3Ae5yliZDg0"
-REQUIRED_CHANNELS = ["@mediation_King", "@Bbeemmsn"]
+REQUIRED_CHANNELS = [DEFAULT_REQUIRED_CHANNEL, SECOND_REQUIRED_CHANNEL]
 
 BOT_TITLE = "مملكة الدلع الحصري"
 BOT_USERNAME = "TteeRMBoT"
@@ -107,32 +106,32 @@ REQUIRED_CHANNEL_TEXT = (
 # ============================================================
 
 GROUP_REPLY_MESSAGES = [
-    "لو عايز تعرف النظام، مستنيك خاص 💕",
-    "تعالى خاص وهقولك كل التفاصيل ❤️",
-    "لو محتاج تعرف التفاصيل ابعتلي خاص 💕",
-    "تعالى خاص يا صاحبي ❤️",
-    "لو حابب تعرف أكتر، الخاص مفتوح 💕",
-    "كل التفاصيل موجودة في الخاص ❤️",
-    "ابعتلي خاص وهقولك النظام بالكامل 💕",
-    "اللي عايز يعرف التفاصيل يتفضل خاص ❤️",
+    "تعال خاص ضروري 🫦🔥",
+    "ابعت بف هقولك",
+    "تعال فكيت البلوك",
+    "يارجال بقولك مولعة 🔥🫦",
+    "ابعتلي خاص ثانيه",
+    "تعال هقولك حاجه خاص",
+    "بقولك اي في فديوهات خاص تعال",
+    "ضيفتك ضيف وابعت خاص",
 ]
 
-# روابط الاشتراك الإجباري التي تظهر في الجروبات
-GROUP_REQUIRED_TEXT = (
-    "لاستخدام البوت داخل الجروب، لازم تشترك في القناتين أولًا.\n\n"
-    "بعد الاشتراك ابعت أي رسالة مرة ثانية وسيتم التحقق تلقائيًا."
-)
 
-PREMIUM_MESSAGE_EMOJI_ID = "5210952531676504517"
-
-def premium_message(body_html: str, emoji_id: str = PREMIUM_MESSAGE_EMOJI_ID) -> str:
-    return (
-        f'<blockquote><b><tg-emoji emoji-id="{html.escape(str(emoji_id))}">🔹</tg-emoji> '
-        f'{body_html}</b></blockquote>'
-    )
-
-def premium_plain(text: str, emoji_id: str = PREMIUM_MESSAGE_EMOJI_ID) -> str:
-    return premium_message(html.escape(str(text)), emoji_id)
+# ردود إضافية أدخلها صاحب البوت كما هي
+GROUP_REPLY_MESSAGES.extend([
+    "يلا كلو ينضم للجروب الي فالبايو والي ينضم يخشلي خاص ياخد صوري نودز 🍌😍🌷💔",
+    "شـوف الـدلـع في النـ ـبـ ىذه نـ ـار 🔥🐆",
+    "مملكة الدلع الحصري:\nيلا بقا ابعت خااص ي يولا 💋",
+    "متيجي بف 🤤",
+    "يلا بينااااا😘",
+    "يلا بقا ابعت خااص ي يولا 💋",
+    "البايو هيحلبك 💕",
+    "لو عايز تعرف النظام مستنياك خاااص 💕👅",
+    "تعالي خاص يا فحلي 💕❤️",
+    "عايزه حد زيه كبير يريحني خاااص 💕",
+    "يا دكرررري🫦💕",
+    "تعالي بعبصني بسرعه🥵",
+])
 
 # نطاق الحروف العربية + الإنجليزية
 LETTERS_PATTERN = re.compile(
@@ -155,11 +154,19 @@ EMOJI_ALL_VIDEOS = "5909008794586715815"
 EMOJI_CHECK_SUB = "5260416304224936047"
 EMOJI_HOME = "5257963315258204021"
 
+# Custom Emoji المطلوبة لهذا النظام
+EMOJI_REQUIRED_CHANNEL = "5424818078833715060"
+EMOJI_REQUIRED_CHECK = "5206607081334906820"
+EMOJI_LOCKED_REPLY = "5210952531676504517"
+EMOJI_WELCOME_NAME = "5282843764451195532"
+EMOJI_WELCOME_MEMBER_BUTTON = "5985596818912712352"
+EMOJI_WELCOME_CHANNEL_BUTTON = "5960714428394507968"
+
 EMOJI_FACES = [
     "5909242019900823049",
     "5908867262529409910",
     "5906536933533684298",
-    "5906794932219154887",
+    "5891131044756723016",
     "5906794932219154887",
 ]
 
@@ -190,7 +197,7 @@ DEFAULT_CATEGORIES = [
 DEFAULT_DB = {
     "users": {},
     "admins": [],
-    "required_channels": [DEFAULT_REQUIRED_CHANNEL, REQUIRED_CHANNEL_ID],
+    "required_channels": list(REQUIRED_CHANNELS),
     "categories": DEFAULT_CATEGORIES,
     "settings": {
         "welcome_text": WELCOME_TEXT,
@@ -238,54 +245,6 @@ def save_db(db: Dict[str, Any]) -> None:
     os.replace(tmp, DATABASE_FILE)
 
 
-# python-telegram-bot versions that expose icon_custom_emoji_id can
-# render the supplied Telegram custom emoji ID natively on inline buttons.
-try:
-    _BUTTON_SIGNATURE = inspect.signature(InlineKeyboardButton).parameters
-    _BUTTON_SUPPORTS_CUSTOM_EMOJI = "icon_custom_emoji_id" in _BUTTON_SIGNATURE
-    _BUTTON_SUPPORTS_STYLE = "style" in _BUTTON_SIGNATURE
-except Exception:
-    _BUTTON_SUPPORTS_CUSTOM_EMOJI = False
-    _BUTTON_SUPPORTS_STYLE = False
-
-EMOJI_ID_TO_UNICODE = {
-    "5141092083993412661": "🔗",
-    "5775979900649347911": "🎁",
-    "5972226216353074147": "⚙️",
-    "5974563533260590445": "➕",
-    "5976383044615934151": "🗑️",
-    "5891131044756723016": "⭐",
-    "5906597204809749180": "👕",
-    "5909008794586715815": "🎬",
-    "5260416304224936047": "✅",
-    "5257963315258204021": "🏠",
-    "5909242019900823049": "😀",
-    "5908867262529409910": "😎",
-    "5906536933533684298": "😂",
-    "5906794932219154887": "🥰",
-    "5206607081334906820": "🔒",
-    "5870734657384877785": "🛡️",
-    "5260293700088511294": "🔒",
-    "5251203410396458957": "🔔",
-    "5440539497383087970": "📢",
-    "5447203607294265305": "📢",
-}
-
-def migrate_emoji_ids(value):
-    if isinstance(value, dict):
-        for k, v in list(value.items()):
-            value[k] = migrate_emoji_ids(v)
-        return value
-    if isinstance(value, list):
-        return [migrate_emoji_ids(v) for v in value]
-    if isinstance(value, str):
-        # Keep Telegram custom-emoji IDs as numeric strings. Converting them
-        # to Unicode destroys the custom emoji information needed by
-        # icon_custom_emoji_id on inline keyboard buttons.
-        return value
-    return value
-
-
 def load_db() -> Dict[str, Any]:
     path = Path(DATABASE_FILE)
 
@@ -307,7 +266,6 @@ def load_db() -> Dict[str, Any]:
     try:
         with path.open("r", encoding="utf-8") as f:
             db = json.load(f)
-        db = migrate_emoji_ids(db)
     except Exception:
         logger.exception("Database could not be read. Recreating database.")
         db = json.loads(json.dumps(DEFAULT_DB, ensure_ascii=False))
@@ -321,10 +279,9 @@ def load_db() -> Dict[str, Any]:
             db[key] = json.loads(json.dumps(value, ensure_ascii=False))
             changed = True
 
-    for _admin_id in [OWNER_ID, *ADMIN_IDS]:
-        if _admin_id not in db["admins"]:
-            db["admins"].append(_admin_id)
-            changed = True
+    if OWNER_ID not in db["admins"]:
+        db["admins"].append(OWNER_ID)
+        changed = True
 
     db.setdefault("keyword_replies", [])
 
@@ -346,10 +303,15 @@ def load_db() -> Dict[str, Any]:
             db["settings"][_key] = _default
             changed = True
 
-    # الاشتراك الإجباري الثابت: القناتان المطلوبتان في الخاص والجروبات.
-    required_only = list(REQUIRED_CHANNELS)
-    if db.get("required_channels") != required_only:
-        db["required_channels"] = required_only
+    # القناتان المطلوبتان ثابتتان كاشتراك إجباري، مع الحفاظ على أي قنوات
+    # إضافية سبق أن أضافها صاحب البوت من لوحة الإدارة.
+    current_required = [str(x).strip() for x in db.get("required_channels", []) if str(x).strip()]
+    for mandatory_channel in REQUIRED_CHANNELS:
+        if mandatory_channel not in current_required:
+            current_required.insert(0, mandatory_channel)
+            changed = True
+    if current_required != db.get("required_channels", []):
+        db["required_channels"] = current_required
         changed = True
 
     for item in db.get("categories", []):
@@ -384,7 +346,7 @@ def get_subscription_stars() -> int:
 
 
 def is_admin(user_id: int) -> bool:
-    return user_id == OWNER_ID or user_id in ADMIN_IDS or user_id in DB.get("admins", [])
+    return user_id == OWNER_ID or user_id in DB.get("admins", [])
 
 
 def colored_button(
@@ -402,19 +364,11 @@ def colored_button(
     if url:
         kwargs["url"] = url
 
-    if style in ("primary", "success", "danger") and _BUTTON_SUPPORTS_STYLE:
+    if style in ("primary", "success", "danger"):
         kwargs["style"] = style
 
     if emoji_id:
-        emoji_id = str(emoji_id).strip()
-        # Telegram custom-emoji IDs cannot be inserted into button text as
-        # plain strings. Use the native button icon field when supported.
-        if emoji_id.isdigit() and _BUTTON_SUPPORTS_CUSTOM_EMOJI:
-            kwargs["icon_custom_emoji_id"] = emoji_id
-        else:
-            # Fallback for normal Unicode emoji or older PTB versions.
-            display_emoji = EMOJI_ID_TO_UNICODE.get(emoji_id, emoji_id)
-            kwargs["text"] = f"{display_emoji} {kwargs['text']}"
+        kwargs["icon_custom_emoji_id"] = emoji_id
 
     return InlineKeyboardButton(**kwargs)
 
@@ -574,37 +528,38 @@ async def safe_answer_callback(query, text: Optional[str] = None, show_alert: bo
 
 
 async def user_required_channels_joined(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
-    channels = DB.get("required_channels", [])
-    if not channels:
-        return True
+    """الاشتراك الإجباري: القناتان الثابتتان + أي قنوات أضافها الأدمن."""
+    configured = DB.get("required_channels", []) or []
+    channels = []
+    for channel in list(REQUIRED_CHANNELS) + list(configured):
+        value = str(channel).strip()
+        if value and value not in channels:
+            channels.append(value)
 
     for channel in channels:
-        channel = str(channel).strip()
-        if not channel:
-            continue
         if channel.startswith("https://t.me/+") or channel.startswith("http://t.me/+"):
-            # رابط الدعوة الخاص يتم عرضه للمستخدم فقط؛ التحقق الفعلي يتم عبر Chat ID.
-            # لا نوقف التحقق بسبب وجود رابط الدعوة في القائمة.
-            continue
-
-        check_target = channel
-        if channel.startswith("https://t.me/"):
-            tail = channel.rstrip("/").split("/", 3)[-1]
-            if tail and not tail.startswith("+"):
-                check_target = "@" + tail.split("?")[0]
-        elif channel.startswith("http://t.me/"):
-            tail = channel.rstrip("/").split("/", 3)[-1]
-            if tail and not tail.startswith("+"):
-                check_target = "@" + tail.split("?")[0]
+            # روابط الدعوة الخاصة لا يمكن فحص العضوية منها وحدها.
+            # يتم فحصها عبر Chat ID إذا كان محددًا في الإعدادات.
+            if channel == REQUIRED_CHANNEL_INVITE_URL:
+                check_target = REQUIRED_CHANNEL_ID
+            else:
+                continue
+        else:
+            check_target = channel
+            if channel.startswith("https://t.me/") or channel.startswith("http://t.me/"):
+                tail = channel.rstrip("/").split("/", 3)[-1]
+                if tail and not tail.startswith("+"):
+                    check_target = "@" + tail.split("?")[0]
 
         try:
             member = await context.bot.get_chat_member(chat_id=check_target, user_id=user_id)
-            status = member.status
-            if status in ("left", "kicked"):
+            status = str(member.status).lower()
+            if status in ("left", "kicked", "banned"):
                 return False
         except Exception as exc:
             logger.warning("Required channel check failed for %s / %s: %s", channel, user_id, exc)
-            continue
+            # فشل التحقق لا يُعتبر اشتراكًا؛ يمنع تجاوز الاشتراك الإجباري.
+            return False
 
     return True
 
@@ -673,16 +628,10 @@ def make_button(
         if custom_emoji:
             emoji_id = custom_emoji
 
-    if _BUTTON_SUPPORTS_STYLE:
-        kwargs["style"] = color
+    kwargs["style"] = color
 
     if emoji_id:
-        emoji_id = str(emoji_id).strip()
-        if emoji_id.isdigit() and _BUTTON_SUPPORTS_CUSTOM_EMOJI:
-            kwargs["icon_custom_emoji_id"] = emoji_id
-        else:
-            display_emoji = EMOJI_ID_TO_UNICODE.get(emoji_id, emoji_id)
-            kwargs["text"] = f"{display_emoji} {kwargs['text']}"
+        kwargs["icon_custom_emoji_id"] = emoji_id
 
     return InlineKeyboardButton(**kwargs)
 
@@ -719,16 +668,10 @@ def nested_category_keyboard(category: Dict[str, Any]) -> InlineKeyboardMarkup:
         kwargs = {
             "text": f"فيديو {index}",
             "callback_data": f"video:{category['id']}:{index-1}",
+            "style": color,
         }
-        if _BUTTON_SUPPORTS_STYLE:
-            kwargs["style"] = color
         if emoji_id:
-            emoji_id = str(emoji_id).strip()
-            if emoji_id.isdigit() and _BUTTON_SUPPORTS_CUSTOM_EMOJI:
-                kwargs["icon_custom_emoji_id"] = emoji_id
-            else:
-                display_emoji = EMOJI_ID_TO_UNICODE.get(emoji_id, emoji_id)
-                kwargs["text"] = f"{display_emoji} {kwargs['text']}"
+            kwargs["icon_custom_emoji_id"] = emoji_id
 
         buttons.append(InlineKeyboardButton(**kwargs))
 
@@ -914,23 +857,27 @@ def subscription_keyboard() -> InlineKeyboardMarkup:
 
 
 async def send_required_channels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # الاشتراك الإجباري والقائمة الرئيسية للخاص فقط — لا تظهر أي قائمة في الجروبات.
-    if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
-        return
-
-    rows = []
-
-    for channel in DB.get("required_channels", []):
-        channel = str(channel)
-
-        if channel.startswith("http://") or channel.startswith("https://"):
-            rows.append([colored_button("الاشتراك في القناة", url=channel, style="primary", emoji_id=EMOJI_ADMIN)])
-        elif channel == REQUIRED_CHANNEL_ID:
-            rows.append([colored_button("الاشتراك في القناة", url=REQUIRED_CHANNEL_INVITE_URL, style="primary", emoji_id=EMOJI_ADMIN)])
-        elif channel.startswith("@"):
-            rows.append([colored_button("فتح القناة", url=f"https://t.me/{channel[1:]}", style="primary", emoji_id=EMOJI_ADMIN)])
-
-    rows.append([colored_button("تحقق من الاشتراك", callback_data="check_required", style="success", emoji_id=EMOJI_CHECK_SUB)])
+    """رسالة الاشتراك الإجباري للخاص والجروبات مع زري القناتين وزر تحقق."""
+    rows = [
+        [colored_button(
+            "الاشتراك في mediation_King",
+            url="https://t.me/mediation_King",
+            style="primary",
+            emoji_id=EMOJI_REQUIRED_CHANNEL,
+        )],
+        [colored_button(
+            "الاشتراك في Bbeemmsn",
+            url="https://t.me/Bbeemmsn",
+            style="primary",
+            emoji_id=EMOJI_REQUIRED_CHANNEL,
+        )],
+        [colored_button(
+            "تحقق من الاشتراك",
+            callback_data="check_required",
+            style="success",
+            emoji_id=EMOJI_REQUIRED_CHECK,
+        )],
+    ]
 
     markup = InlineKeyboardMarkup(rows)
     text = REQUIRED_CHANNEL_TEXT
@@ -1063,10 +1010,20 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             try:
                 referral_text = (f"وصلك احالة جديدة  {mention}  🐤\n\n"
                                  f"عدد احالاتك | {int(ref_record.get('referrals', 0))}  🐤")
+                # إرفاق Custom Emoji المطلوب في موضعي 🐤
+                entities = []
+                search_from = 0
+                while True:
+                    emoji_offset = referral_text.find("🐤", search_from)
+                    if emoji_offset < 0:
+                        break
+                    entities.append(MessageEntity(type="custom_emoji", offset=emoji_offset, length=2, custom_emoji_id=EMOJI_REFERRAL_NOTICE))
+                    search_from = emoji_offset + 1
                 await context.bot.send_message(
                     chat_id=referrer_id,
                     text=referral_text,
                     parse_mode=ParseMode.HTML,
+                    entities=entities,
                 )
             except Exception as exc:
                 logger.warning("Referral notification failed: %s", exc)
@@ -1283,9 +1240,9 @@ def protection_penalty_keyboard(key: str) -> InlineKeyboardMarkup:
 
 
 def mute_duration_keyboard(key: str) -> InlineKeyboardMarkup:
-    # Kept for backward-compatible callback data, but mute is now permanent.
     return InlineKeyboardMarkup([
-        [colored_button("كتم دائم", callback_data=f"mute_duration:{key}:0", style="danger", emoji_id=EMOJI_ADMIN)],
+        [colored_button("دقيقة", callback_data=f"mute_duration:{key}:60", style="primary", emoji_id=EMOJI_ADMIN), colored_button("10 دقائق", callback_data=f"mute_duration:{key}:600", style="primary", emoji_id=EMOJI_ADMIN)],
+        [colored_button("ساعة", callback_data=f"mute_duration:{key}:3600", style="primary", emoji_id=EMOJI_ADMIN), colored_button("يوم", callback_data=f"mute_duration:{key}:86400", style="primary", emoji_id=EMOJI_ADMIN)],
         [colored_button("رجوع", callback_data=f"penalty_menu:{key}", style="primary", emoji_id=EMOJI_HOME)],
     ])
 
@@ -1356,9 +1313,11 @@ async def apply_group_penalty(context, chat_id: int, user_id: int, penalty: str,
     if penalty == "ban":
         await context.bot.ban_chat_member(chat_id, user_id)
     elif penalty == "mute":
+        until = int(time.time()) + max(30, duration or 3600)
         await context.bot.restrict_chat_member(
             chat_id, user_id,
             permissions=__import__('telegram').ChatPermissions(can_send_messages=False),
+            until_date=until,
         )
 
 
@@ -1393,10 +1352,15 @@ async def group_protection_handler(update: Update, context: ContextTypes.DEFAULT
         await apply_group_penalty(context, chat.id, user.id, penalty, st.get(f"mute_duration_{violation}", 3600))
     except Exception as exc:
         logger.warning("Protection penalty failed: %s", exc)
-    mention = f'<a href="tg://user?id={user.id}">{user.full_name}</a>'
+    mention = f'<a href="tg://user?id={user.id}">{html.escape(user.full_name or "المستخدم")}</a>'
+    raw_content = (message.text or message.caption or "").strip()
+    if not raw_content:
+        raw_content = PROTECTION_KEYS.get(violation, violation)
+    raw_content = html.escape(raw_content[:180])
     try:
-        violation_text = premium_message(
-            f'يـ {mention}، {html.escape(violation)} هنا ممنوع {CUSTOM_EMOJI_LOCKED_REPLY}'
+        violation_text = (
+            f"يـ {mention} {raw_content} هنا "
+            f'<tg-emoji emoji-id="{EMOJI_LOCKED_REPLY}">🔹</tg-emoji>'
         )
         await context.bot.send_message(
             chat.id,
@@ -1408,122 +1372,27 @@ async def group_protection_handler(update: Update, context: ContextTypes.DEFAULT
 
 
 # ============================================================
-# GROUP MANDATORY SUBSCRIPTION + AUTO-REPLY
+# GROUP MANDATORY SUBSCRIPTION
 # ============================================================
-
-def group_subscription_state(chat_id: int) -> Dict[str, Any]:
-    st = group_settings(chat_id)
-    return st.setdefault("mandatory_subscription_state", {})
-
-
-def mark_group_subscription_state(chat_id: int, user_id: int, joined: bool) -> None:
-    state = group_subscription_state(chat_id)
-    state[str(user_id)] = {"joined": bool(joined), "checked_at": int(time.time())}
-    save_db(DB)
-
 
 async def send_group_required_message(
     context: ContextTypes.DEFAULT_TYPE,
     chat_id: int,
-    user=None,
-    verification_error: Optional[str] = None,
 ) -> None:
-    """رسالة الاشتراك الإجباري في الجروب مع منشن للعضو وزر تحقق."""
-    display_name = html.escape((getattr(user, "full_name", None) or "العضو")) if user else "العضو"
-    user_id = getattr(user, "id", None) if user else None
-    if user_id:
-        mention = f'<a href="tg://user?id={int(user_id)}">{display_name}</a>'
-    else:
-        mention = display_name
-
-    if verification_error:
-        body = (
-            f'يـ {mention} لا يمكن التحقق من الاشتراك حاليًا.\n\n'
-            f'البوت لا يستطيع الوصول إلى القناة المطلوبة: '
-            f'<b>{html.escape(str(verification_error))}</b>\n'
-            f'اجعل البوت مشرفًا في القناتين ثم اضغط «تحقق».'
-        )
-    else:
-        body = (
-            f'يـ {mention} لازم تشترك في القنوات المطلوبة أولًا.\n\n'
-            f'بعد الاشتراك اضغط زر «تحقق».'
-        )
-
-    text = premium_message(body, "5251203410396458957")
-
-    keyboard = InlineKeyboardMarkup([
-        [colored_button(
-            "الاشتراك في القناة الأولى",
-            url="https://t.me/mediation_King",
-            style="danger",
-            emoji_id="5440539497383087970",
-        )],
-        [colored_button(
-            "الاشتراك في القناة الثانية",
-            url="https://t.me/Bbeemmsn",
-            style="danger",
-            emoji_id="5447203607294265305",
-        )],
-        [colored_button(
-            "تحقق من الاشتراك",
-            callback_data=(f"group_check_required:{int(user_id)}" if user_id else "group_check_required"),
-            style="success",
-            emoji_id="5206607081334906820",
-        )],
+    """إظهار الاشتراك الإجباري داخل الجروب."""
+    markup = InlineKeyboardMarkup([
+        [colored_button("الاشتراك في mediation_King", url="https://t.me/mediation_King", style="primary", emoji_id=EMOJI_REQUIRED_CHANNEL)],
+        [colored_button("الاشتراك في Bbeemmsn", url="https://t.me/Bbeemmsn", style="primary", emoji_id=EMOJI_REQUIRED_CHANNEL)],
+        [colored_button("تحقق من الاشتراك", callback_data="check_required", style="success", emoji_id=EMOJI_REQUIRED_CHECK)],
     ])
     try:
         await context.bot.send_message(
             chat_id=chat_id,
-            text=text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=keyboard,
+            text=REQUIRED_CHANNEL_TEXT,
+            reply_markup=markup,
         )
     except Exception as exc:
         logger.warning("Could not send group mandatory subscription message: %s", exc)
-
-
-async def _check_group_required_channels(
-    context: ContextTypes.DEFAULT_TYPE,
-    user_id: int,
-) -> tuple[bool, Optional[str]]:
-    """Return (joined, error).
-
-    error is set only when Telegram could not verify a channel. This avoids
-    treating an API/permission failure as if the user had simply not joined.
-    """
-    for channel in REQUIRED_CHANNELS:
-        target = str(channel).strip()
-        try:
-            member = await context.bot.get_chat_member(chat_id=target, user_id=user_id)
-        except Exception as exc:
-            logger.warning(
-                "Mandatory channel verification failed for %s / %s: %s",
-                target, user_id, exc,
-            )
-            return False, target
-
-        status = str(getattr(member, "status", "")).lower()
-        is_member = getattr(member, "is_member", True)
-
-        if status in (
-            str(ChatMemberStatus.LEFT).lower(),
-            str(ChatMemberStatus.KICKED).lower(),
-        ) or (status == str(ChatMemberStatus.RESTRICTED).lower() and not is_member):
-            return False, None
-
-    return True, None
-
-
-async def group_mandatory_subscription_ok(
-    context: ContextTypes.DEFAULT_TYPE,
-    user_id: int,
-    chat_id: Optional[int] = None,
-) -> bool:
-    """Check both required channels and persist the last state per group/user."""
-    joined, _error_channel = await _check_group_required_channels(context, user_id)
-    if chat_id is not None:
-        mark_group_subscription_state(chat_id, user_id, joined)
-    return joined
 
 
 # ============================================================
@@ -1531,166 +1400,55 @@ async def group_mandatory_subscription_ok(
 # ============================================================
 
 
-def normalize_reply_text(value: str) -> str:
-    value = str(value or "").casefold()
-    value = re.sub(r"[ًٌٍَُِّْـ]", "", value)
-    value = value.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
-    value = value.replace("ى", "ي").replace("ة", "ه")
-    value = re.sub(r"[^\w\u0600-\u06FF]+", " ", value, flags=re.UNICODE)
-    return re.sub(r"\s+", " ", value).strip()
-
-
-def _is_group_management_command(text: str) -> bool:
-    value = (text or "").strip()
-    if not value:
-        return False
-    # دعم الأوامر العربية سواء كرسالة عادية أو كأمر يبدأ بـ /
-    value = re.sub(r"^/", "", value, count=1)
-    value = re.sub(r"@\w+$", "", value)
-    return bool(re.match(
-        r"^(?:قفل|فتح|حماية|كتم|طرد|حظر|حذف|مسح|كشف|ايدي|ا|معلومات|اختبار|اختبار\s+الاشتراك)(?:\s+.*)?$",
-        value,
-        re.UNICODE,
-    ))
-
-
 async def group_auto_reply_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """يرد على كل رسالة عادية في الجروب برد عشوائي من الردود المضافة."""
+    """يرد على كل رسالة في الجروب باستخدام رد عشوائي من الردود المضافة في لوحة الأدمن."""
     message = update.effective_message
     chat = update.effective_chat
     user = update.effective_user
 
-    if not message or not chat or chat.type not in ("group", "supergroup") or not user:
+    if not message or not chat or not user:
         return
+
+    # لا يرد على رسائل البوتات
     if user.is_bot:
         return
 
-    # أوامر إدارة الجروب تمر إلى معالجاتها الخاصة فقط ولا تدخل في الرد التلقائي.
-    # هذا يمنع معالج الاشتراك/الردود من حذف أمر المشرف بعد تنفيذه.
-    if _is_group_management_command(message.text or ""):
-        return
-
-    # المشرفون لا يخضعون لفحص الاشتراك الإجباري، لكن رسائلهم العادية
-    # تظل تصل لمعالج الردود والحماية بشكل طبيعي.
-    is_group_moderator = False
-    try:
-        actor_member = await context.bot.get_chat_member(chat.id, user.id)
-        actor_status = str(getattr(actor_member, "status", "")).lower()
-        is_group_moderator = actor_status in ("administrator", "creator", "owner")
-    except Exception:
-        is_group_moderator = False
-
-    # الاشتراك الإجباري: لا يرد على العضو غير المشترك، ويحذف رسالته.
-    was_joined = bool(
-        group_subscription_state(chat.id).get(str(user.id), {}).get("joined", False)
-    )
-    if is_group_moderator:
-        joined_now, verification_error = True, None
-    else:
-        joined_now, verification_error = await _check_group_required_channels(context, user.id)
-    mark_group_subscription_state(chat.id, user.id, joined_now)
-    if verification_error:
-        # Do not mislabel a subscribed user as unsubscribed when Telegram
-        # rejected the membership lookup because of channel permissions.
-        if not is_admin(user.id):
-            try:
-                await context.bot.delete_message(
-                    chat_id=chat.id,
-                    message_id=message.message_id,
-                )
-            except Exception as exc:
-                logger.warning("Could not delete message after subscription-check error: %s", exc)
-            await send_group_required_message(
-                context, chat.id, user, verification_error=verification_error
-            )
-        return
-    if not joined_now:
+    # الاشتراك الإجباري مطبق في كل الجروبات.
+    if not is_admin(user.id):
+        st = group_settings(chat.id)
+        notice_key = f"mandatory_notice_{user.id}"
+        now = int(time.time())
         try:
-            actor_member = await context.bot.get_chat_member(chat.id, user.id)
-            is_privileged = (
-                actor_member.status in (
-                    ChatMemberStatus.ADMINISTRATOR,
-                    ChatMemberStatus.OWNER,
-                )
-                or is_admin(user.id)
-            )
+            joined = await user_required_channels_joined(context, user.id)
         except Exception:
-            is_privileged = is_admin(user.id)
-
-        if not is_privileged:
-            try:
-                await context.bot.delete_message(
-                    chat_id=chat.id,
-                    message_id=message.message_id,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Could not delete non-subscriber message in %s/%s: %s",
-                    chat.id, message.message_id, exc,
-                )
-                # Telegram requires the bot to be an administrator with
-                # can_delete_messages in supergroups/channels.
-            st = group_settings(chat.id)
-            notice_key = f"mandatory_notice_sent:{user.id}"
-            already_notified = bool(st.get(notice_key, False))
-            if was_joined or not already_notified:
-                st[notice_key] = True
+            joined = False
+        if not joined:
+            last_notice = int(st.get(notice_key, 0) or 0)
+            if now - last_notice >= 60:
+                st[notice_key] = now
                 save_db(DB)
-                await send_group_required_message(context, chat.id, user)
-        return
-
-    st = group_settings(chat.id)
-    st.pop(f"mandatory_notice_sent:{user.id}", None)
-    save_db(DB)
-
-    # إذا كانت الرسالة مخالفة لقفل مفعّل، يتركها لمعالج الحماية ولا يرد عليها.
-    if st.get("all") or any(st.get(k) for k in PROTECTION_KEYS):
-        if protection_violation(message, st):
+                await send_group_required_message(context, chat.id)
             return
 
-    # الردود المضافة تُستخدم كقائمة ردود عامة: لا يشترط تطابق كلمة مفتاحية.
-    # يدعم شكل قاعدة البيانات الجديد (dict) والقديم (string) ومفاتيح الردود البديلة.
-    configured_replies = []
-    stored_items = DB.get("keyword_replies", [])
-    if isinstance(stored_items, dict):
-        stored_items = list(stored_items.values())
-    if isinstance(stored_items, list):
-        for item in stored_items:
-            if isinstance(item, str):
-                response = item.strip()
-            elif isinstance(item, dict):
-                response = str(
-                    item.get("response")
-                    or item.get("reply")
-                    or item.get("text")
-                    or item.get("answer")
-                    or ""
-                ).strip()
-            else:
-                continue
-            if response:
-                configured_replies.append(response)
-
-    # كل رسالة من عضو حقيقي في الجروب تحصل على رد من الردود المضافة.
-    # القائمة الافتراضية تُستخدم فقط إذا لم تُضف أي ردود من لوحة الأدمن.
-    reply_pool = configured_replies or GROUP_REPLY_MESSAGES
-    reply_text = random.choice(reply_pool)
+    # يرد على جميع رسائل المستخدمين في الجروب، بدون اشتراط حروف عربية أو إنجليزية.
+    # يتم تجاهل رسائل البوتات فقط حتى لا يدخل البوت في حلقة ردود.
+    configured_replies = [
+        str(item.get("response", item.get("keyword", ""))).strip()
+        for item in DB.get("keyword_replies", [])
+        if str(item.get("response", item.get("keyword", ""))).strip()
+    ]
+    reply_text = random.choice(configured_replies or GROUP_REPLY_MESSAGES)
 
     try:
         await message.reply_text(
-            premium_plain(reply_text),
-            parse_mode=ParseMode.HTML,
+            reply_text,
             reply_to_message_id=message.message_id,
-            allow_sending_without_reply=True,
         )
     except Exception as exc:
-        logger.warning(
-            "Group auto-reply failed in chat %s for message %s: %s",
-            chat.id, message.message_id, exc
-        )
+        logger.warning("Group auto-reply failed: %s", exc)
 
 
 # ============================================================
@@ -1714,9 +1472,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         or data.startswith("penalty")
         or data.startswith("mute_duration:")
         or data.startswith("profile_like:")
-        or data.startswith("unmute:")
-        or data == "group_check_required"
-        or data.startswith("group_check_required:")
+        or data == "check_required"
     )
 
     # أي أزرار للقائمة الرئيسية/الاشتراك ممنوعة داخل الجروبات، مع استثناء أزرار الحماية والكشف.
@@ -1734,106 +1490,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     ensure_user(user)
 
-    if data == "group_check_required" or data.startswith("group_check_required:"):
-        if not update.effective_chat or update.effective_chat.type not in ("group", "supergroup"):
-            await safe_answer_callback(query, "هذا الزر للجروبات فقط.", True)
-            return
-        if data.startswith("group_check_required:"):
-            try:
-                intended_user_id = int(data.split(":", 1)[1])
-            except (TypeError, ValueError):
-                await safe_answer_callback(query, "بيانات الزر غير صحيحة.", True)
-                return
-            if user.id != intended_user_id:
-                await safe_answer_callback(query, "هذا زر التحقق ليس مخصصًا لك.", True)
-                return
-        chat_id = update.effective_chat.id
-        joined, error_channel = await _check_group_required_channels(context, user.id)
-        mark_group_subscription_state(chat_id, user.id, joined)
-
-        if error_channel:
-            await safe_answer_callback(
-                query,
-                "البوت غير قادر على التحقق من إحدى القنوات. تأكد أن البوت مشرف فيها.",
-                True,
-            )
-            await send_group_required_message(
-                context,
-                chat_id,
-                user,
-                verification_error=error_channel,
-            )
-            return
-
-        if not joined:
-            await safe_answer_callback(query, "لسه ما اشتركتش في القناتين.", True)
-            await send_group_required_message(context, chat_id, user)
-            return
-
-        # Clear the notice as soon as the user is verified.
-        st = group_settings(chat_id)
-        st.pop(f"mandatory_notice_sent:{user.id}", None)
-        save_db(DB)
-
-        await safe_answer_callback(query, "تم التحقق من الاشتراك بنجاح.")
-        try:
-            if query.message:
-                await query.message.delete()
-        except Exception as exc:
-            logger.warning("Could not delete mandatory notice after verification: %s", exc)
-        return
-
-    if data.startswith("unmute:"):
-        try:
-            _, chat_id_raw, target_id_raw = data.split(":", 2)
-            chat_id = int(chat_id_raw)
-            target_id = int(target_id_raw)
-        except (TypeError, ValueError):
-            await safe_answer_callback(query, "بيانات الزر غير صحيحة.", True)
-            return
-
-        if not update.effective_chat or update.effective_chat.id != chat_id:
-            await safe_answer_callback(query, "هذا الزر ليس من هذا الجروب.", True)
-            return
-
-        try:
-            actor_member = await context.bot.get_chat_member(chat_id, user.id)
-            if actor_member.status not in ("administrator", "creator", ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
-                await safe_answer_callback(query, "الأمر للمشرفين فقط.", True)
-                return
-        except Exception:
-            await safe_answer_callback(query, "تعذر التحقق من صلاحياتك.", True)
-            return
-
-        try:
-            # Restore the group's default member permissions when possible.
-            chat_info = await context.bot.get_chat(chat_id)
-            permissions = getattr(chat_info, "permissions", None)
-            if permissions is None:
-                try:
-                    permissions = __import__('telegram').ChatPermissions.all_permissions()
-                except Exception:
-                    permissions = __import__('telegram').ChatPermissions(can_send_messages=True)
-
-            await context.bot.restrict_chat_member(
-                chat_id,
-                target_id,
-                permissions=permissions,
-            )
-            await safe_answer_callback(query, "تم فك الكتم.")
-            if query.message:
-                try:
-                    await query.edit_message_text(premium_plain("تم فك كتم العضو."), parse_mode=ParseMode.HTML)
-                except Exception:
-                    try:
-                        await query.edit_message_reply_markup(reply_markup=None)
-                    except Exception:
-                        pass
-        except Exception as exc:
-            logger.exception("Manual unmute failed: %s", exc)
-            await safe_answer_callback(query, "تعذر فك الكتم.", True)
-        return
-
     if data == "noop":
         await safe_answer_callback(query)
         return
@@ -1849,10 +1505,32 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         if not joined:
             await safe_answer_callback(query, "لم يتم التحقق من الاشتراك.", True)
+            if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
+                if query.message:
+                    try:
+                        await query.message.edit_text(
+                            REQUIRED_CHANNEL_TEXT,
+                            reply_markup=InlineKeyboardMarkup([
+                                [colored_button("الاشتراك في mediation_King", url="https://t.me/mediation_King", style="primary", emoji_id=EMOJI_REQUIRED_CHANNEL)],
+                                [colored_button("الاشتراك في Bbeemmsn", url="https://t.me/Bbeemmsn", style="primary", emoji_id=EMOJI_REQUIRED_CHANNEL)],
+                                [colored_button("تحقق من الاشتراك", callback_data="check_required", style="success", emoji_id=EMOJI_REQUIRED_CHECK)],
+                            ]),
+                        )
+                    except Exception:
+                        pass
+                return
             await send_required_channels(update, context)
             return
 
         await safe_answer_callback(query, "تم التحقق.")
+
+        if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
+            try:
+                if query.message:
+                    await query.message.delete()
+            except Exception:
+                pass
+            return
 
         await send_home(update, context)
         return
@@ -1936,7 +1614,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             save_db(DB)
             await safe_answer_callback(query, "تم الفتح.")
             await query.edit_message_text(
-                f"تم فتح {PROTECTION_KEYS[key]} {CUSTOM_EMOJI_LOCK}",
+                f"تم فتح {PROTECTION_KEYS[key]} 🔹",
+                entities=[custom_emoji_entity(f"تم فتح {PROTECTION_KEYS[key]} 🔹", "🔹", CUSTOM_EMOJI_LOCK)],
                 reply_markup=protection_keyboard(update.effective_chat.id),
             )
             return
@@ -1961,7 +1640,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 save_db(DB)
                 await safe_answer_callback(query)
                 lock_text = "تم قفل كل شيء 🔹"
-                await query.edit_message_text(lock_text, reply_markup=protection_keyboard(update.effective_chat.id))
+                await query.edit_message_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)], reply_markup=protection_keyboard(update.effective_chat.id))
                 return
             if key == "all_off":
                 for k in PROTECTION_KEYS: st[k] = False
@@ -1969,7 +1648,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 save_db(DB)
                 await safe_answer_callback(query)
                 lock_text = "تم فتح كل شيء 🔹"
-                await query.edit_message_text(lock_text, reply_markup=protection_keyboard(update.effective_chat.id))
+                await query.edit_message_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)], reply_markup=protection_keyboard(update.effective_chat.id))
                 return
             await safe_answer_callback(query)
             await query.edit_message_text(f"اختر العقوبة عند قفل {PROTECTION_KEYS.get(key, key)}", reply_markup=protection_penalty_keyboard(key))
@@ -1990,7 +1669,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             save_db(DB)
             await safe_answer_callback(query)
             lock_text = f"تم حفظ البيانات\n\nتم قفل {PROTECTION_KEYS.get(key, key)} 🔹"
-            await query.edit_message_text(lock_text, reply_markup=protection_keyboard(update.effective_chat.id))
+            await query.edit_message_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)], reply_markup=protection_keyboard(update.effective_chat.id))
             return
         if data.startswith("mute_duration:"):
             key, duration = action[1], int(action[2])
@@ -2000,7 +1679,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             save_db(DB)
             await safe_answer_callback(query)
             lock_text = f"تم حفظ البيانات\n\nتم قفل {PROTECTION_KEYS.get(key, key)} 🔹"
-            await query.edit_message_text(lock_text, reply_markup=protection_keyboard(update.effective_chat.id))
+            await query.edit_message_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)], reply_markup=protection_keyboard(update.effective_chat.id))
             return
 
     if data.startswith("profile_like:"):
@@ -2606,7 +2285,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await safe_answer_callback(query, "غير مصرح.", True)
             return
         await safe_answer_callback(query)
-        text = "إدارة ردود الجروبات\n\nأضف كلمة أو عبارة وردًا مرتبطًا بها، وسيعمل الرد عند مطابقة الكلمة، كما يمكن استخدام الردود المضافة كردود عامة."
+        text = "إدارة ردود الجروبات\n\nأضف كلمة أو عبارة أو جملة، وسيستخدمها البوت كرد عشوائي على أي رسالة تصل داخل الجروب."
         await query.edit_message_text(text, reply_markup=keyword_replies_keyboard())
         return
 
@@ -2616,7 +2295,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
         context.user_data["admin_state"] = "add_keyword"
         await safe_answer_callback(query)
-        await query.edit_message_text("أرسل الكلمة والرد بهذا الشكل:\nالكلمة | الرد\n\nمثال:\nالسلام عليكم | وعليكم السلام ❤️\n\nوإذا أرسلت نصًا واحدًا فقط، سيُستخدم كنص رد عام.\n\nللإلغاء: /cancel")
+        await query.edit_message_text("أرسل الكلمة أو الجملة التي تريد أن يرد بها البوت على أي رسالة في الجروب.\n\nمثال:\nيا هلا بالجميع\n\nللإلغاء: /cancel")
         return
 
     if data.startswith("admin_kw_del:"):
@@ -2814,6 +2493,24 @@ def make_button_child_id(parent: Dict[str, Any]) -> str:
     return candidate
 
 
+def extract_custom_emoji_id(message) -> str:
+    entities = []
+
+    if getattr(message, "entities", None):
+        entities.extend(message.entities)
+
+    if getattr(message, "caption_entities", None):
+        entities.extend(message.caption_entities)
+
+    for entity in entities:
+        if getattr(entity, "type", "") == "custom_emoji":
+            custom_id = getattr(entity, "custom_emoji_id", None)
+            if custom_id:
+                return str(custom_id)
+
+    return ""
+
+
 async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     message = update.effective_message
@@ -2868,42 +2565,17 @@ async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     if state == "add_keyword":
-        value = (message.text or "").strip()
-        if not value:
+        response = (message.text or "").strip()
+        if not response:
             await message.reply_text("أرسل الكلمة أو الجملة التي تريد أن يرد بها البوت.")
             return
-        if len(value) > 4000:
+        if len(response) > 4000:
             await message.reply_text("الرد بحد أقصى 4000 حرف.")
             return
-
-        # يدعم إضافة: الكلمة | الرد
-        if "|" in value:
-            keyword, response = value.split("|", 1)
-            keyword = keyword.strip()
-            response = response.strip()
-        elif "=>" in value:
-            keyword, response = value.split("=>", 1)
-            keyword = keyword.strip()
-            response = response.strip()
-        else:
-            # التوافق مع الردود القديمة: الرد نفسه يعمل كـ keyword وكـ response.
-            keyword = value
-            response = value
-
-        if not keyword or not response:
-            await message.reply_text("الصيغة الصحيحة: الكلمة | الرد")
-            return
-
-        DB.setdefault("keyword_replies", []).append({
-            "keyword": keyword,
-            "response": response,
-        })
+        DB.setdefault("keyword_replies", []).append({"keyword": response, "response": response})
         save_db(DB)
         context.user_data.pop("admin_state", None)
-        await message.reply_text(
-            f"تمت إضافة الرد بنجاح.\\n\\nالكلمة: {keyword}\\nالرد: {response}",
-            reply_markup=keyword_replies_keyboard(),
-        )
+        await message.reply_text("تمت إضافة الرد بنجاح، وسيستخدمه البوت على أي رسالة في الجروب.", reply_markup=keyword_replies_keyboard())
         return
 
     if state == "add_category":
@@ -3056,26 +2728,19 @@ async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             save_db(DB)
             context.user_data.pop("admin_state", None)
             context.user_data.pop("admin_category_id", None)
-            await message.reply_text("تم حذف الإيموجي من الزر.", reply_markup=category_admin_keyboard(category_id))
+            await message.reply_text("تم حذف Custom Emoji من الزر.", reply_markup=category_admin_keyboard(category_id))
             return
 
-        custom_emoji_id = ""
-        for entity in (message.entities or []):
-            if getattr(entity, "type", "") == "custom_emoji" and getattr(entity, "custom_emoji_id", None):
-                custom_emoji_id = str(entity.custom_emoji_id)
-                break
-
-        emoji_value = custom_emoji_id or (message.text or "").strip()
-        if not emoji_value:
-            await message.reply_text("ابعت إيموجي مميز حقيقي من تيليجرام، أو إيموجي عادي، أو اكتب حذف.")
+        emoji_id = extract_custom_emoji_id(message)
+        if not emoji_id:
+            await message.reply_text("لم أجد Custom Emoji في الرسالة.\nأرسل Custom Emoji واحدًا.")
             return
 
-        # حفظ الـ Custom Emoji ID نفسه عند إرساله، وليس تحويله إلى نص عادي.
-        category["style"]["emoji_id"] = emoji_value
+        category["style"]["emoji_id"] = emoji_id
         save_db(DB)
         context.user_data.pop("admin_state", None)
         context.user_data.pop("admin_category_id", None)
-        await message.reply_text("تم حفظ الإيموجي الحقيقي للزر.", reply_markup=category_admin_keyboard(category_id))
+        await message.reply_text("تم حفظ Custom Emoji للزر.", reply_markup=category_admin_keyboard(category_id))
         return
 
     if state == "edit_cat_url":
@@ -3364,102 +3029,37 @@ def resolve_target_user(message):
     return None
 
 
-def manual_unmute_keyboard(chat_id: int, target_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [colored_button(
-            "فك كتم",
-            callback_data=f"unmute:{chat_id}:{target_id}",
-            style="success",
-            emoji_id=EMOJI_CHECK_SUB,
-        )]
-    ])
-
-
-async def require_group_moderator(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    *,
-    reply: bool = True,
-) -> bool:
-    """تحقق صارم: منفذ أوامر الإدارة يجب أن يكون مشرفًا فعليًا في نفس الجروب."""
-    message = update.effective_message
-    chat = update.effective_chat
-    user = update.effective_user
-
-    if not message or not chat or chat.type not in ("group", "supergroup") or not user:
-        return False
-
-    try:
-        member = await context.bot.get_chat_member(chat.id, user.id)
-        status = str(getattr(member, "status", "")).lower()
-        is_moderator = status in (
-            str(ChatMemberStatus.ADMINISTRATOR).lower(),
-            str(ChatMemberStatus.OWNER).lower(),
-            "administrator",
-            "creator",
-        )
-    except Exception as exc:
-        logger.warning("Could not verify group moderator status for %s/%s: %s", chat.id, user.id, exc)
-        if reply:
-            try:
-                await message.reply_text(
-                    premium_plain("تعذر التحقق من صلاحياتك كمشرف. تأكد أن البوت عضو في الجروب."),
-                    parse_mode=ParseMode.HTML,
-                )
-            except Exception:
-                pass
-        return False
-
-    if not is_moderator:
-        if reply:
-            try:
-                await message.reply_text(
-                    premium_plain("هذا الأمر للمشرفين فقط."),
-                    parse_mode=ParseMode.HTML,
-                )
-            except Exception:
-                pass
-        return False
-
-    return True
-
-
 async def group_member_action(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str):
     message, chat, actor = update.effective_message, update.effective_chat, update.effective_user
     if not message or not chat or chat.type not in ("group", "supergroup") or not actor:
         return
-    if not await require_group_moderator(update, context):
+    try:
+        me = await context.bot.get_chat_member(chat.id, actor.id)
+        if me.status not in ("administrator", "creator"):
+            await message.reply_text("الأمر للمشرفين فقط.")
+            return
+    except Exception:
         return
     target = resolve_target_user(message)
     if not target:
-        await message.reply_text(premium_plain("استخدم الأمر بالرد على الشخص أو أرسل ID أو @username."), parse_mode=ParseMode.HTML)
+        await message.reply_text("استخدم الأمر بالرد على الشخص أو أرسل ID أو @username.")
         return
     target_id = target.id if hasattr(target, "id") else int(target)
     try:
         if action == "delete":
             if message.reply_to_message:
                 await message.reply_to_message.delete()
-            await message.reply_text(premium_plain("تم حذف الرسالة."), parse_mode=ParseMode.HTML)
+            await message.reply_text("تم حذف الرسالة.")
         elif action == "kick":
             await context.bot.ban_chat_member(chat.id, target_id)
             await context.bot.unban_chat_member(chat.id, target_id, only_if_banned=True)
-            await message.reply_text(premium_plain("تم طرد الشخص."), parse_mode=ParseMode.HTML)
+            await message.reply_text("تم طرد الشخص.")
         elif action == "ban":
             await context.bot.ban_chat_member(chat.id, target_id)
-            await message.reply_text(premium_plain("تم حظر الشخص."), parse_mode=ParseMode.HTML)
+            await message.reply_text("تم حظر الشخص.")
         elif action == "mute":
-            # الكتم اليدوي دائم: يبقى حتى يضغط المشرف «فك كتم».
-            # لا نرسل until_date حتى لا ينتهي تلقائيًا بعد ساعة.
-            await context.bot.restrict_chat_member(
-                chat.id,
-                target_id,
-                permissions=__import__('telegram').ChatPermissions(can_send_messages=False),
-            )
-            await message.reply_text(
-                premium_plain("تم كتم الشخص.\nيظل مكتومًا حتى فك الكتم."),
-                parse_mode=ParseMode.HTML,
-                reply_markup=manual_unmute_keyboard(chat.id, target_id),
-            )
+            await context.bot.restrict_chat_member(chat.id, target_id, permissions=__import__('telegram').ChatPermissions(can_send_messages=False), until_date=int(time.time())+3600)
+            await message.reply_text("تم كتم الشخص لمدة ساعة.")
         elif action == "clear":
             if message.reply_to_message:
                 await message.reply_to_message.delete()
@@ -3467,78 +3067,76 @@ async def group_member_action(update: Update, context: ContextTypes.DEFAULT_TYPE
         elif action == "info":
             await group_info_command(update, context)
     except Exception as exc:
-        await message.reply_text(premium_plain(f"تعذر تنفيذ الأمر: {exc}"), parse_mode=ParseMode.HTML)
+        await message.reply_text(f"تعذر تنفيذ الأمر: {exc}")
+
+
+async def _get_bot_profile_photo_file_id(context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
+    """الحصول على أول صورة من صور بروفايل البوت لاستخدامها في ترحيب الجروب."""
+    try:
+        me = await context.bot.get_me()
+        photos = await context.bot.get_user_profile_photos(me.id, limit=1)
+        if photos and photos.total_count and photos.photos:
+            return photos.photos[0][-1].file_id
+    except Exception as exc:
+        logger.warning("Could not get bot profile photo: %s", exc)
+    return None
 
 
 async def group_welcome_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """ترحيب موثوق بالجروبات باستخدام تحديث العضوية، مع دعم الطريقة القديمة أيضًا."""
+    """ترحيب الجروبات بالصورة الشخصية للبوت وبالتنسيق المطلوب."""
     message = update.effective_message
-    chat_member_update = getattr(update, "chat_member", None)
-    chat = getattr(chat_member_update, "chat", None) if chat_member_update else getattr(message, "chat", None)
-
-    if not chat or chat.type not in ("group", "supergroup"):
+    chat = getattr(message, "chat", None) if message else None
+    if not message or not chat or chat.type not in ("group", "supergroup"):
         return
 
-    if chat_member_update:
-        old_status = getattr(chat_member_update.old_chat_member, "status", None)
-        new_status = getattr(chat_member_update.new_chat_member, "status", None)
-        # Join transitions: left/kicked -> member/restricted.
-        # Some Telegram update variants can report an empty old status, so
-        # accept the update when the new member status is a normal joined state.
-        if new_status not in (ChatMemberStatus.MEMBER, ChatMemberStatus.RESTRICTED):
-            return
-        if old_status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER, ChatMemberStatus.RESTRICTED):
-            return
-        member = chat_member_update.new_chat_member.user
-        members = [member] if member and not member.is_bot else []
-    else:
-        members = list(getattr(message, "new_chat_members", None) or []) if message else []
-
+    members = list(getattr(message, "new_chat_members", None) or [])
     if not members:
         return
 
     st = group_settings(chat.id)
     join_dates = st.setdefault("member_join_dates", {})
-    welcome_seen = st.setdefault("welcome_seen", {})
-    photo = str(DB.get("settings", {}).get("group_welcome_photo", "") or "").strip()
+    configured_photo = str(DB.get("settings", {}).get("group_welcome_photo", "") or "").strip()
+    bot_photo = await _get_bot_profile_photo_file_id(context)
+    photo = bot_photo or configured_photo
     now = int(time.time())
     joined_date = time.strftime("%Y-%m-%d", time.localtime(now))
-    joined_time = time.strftime("%H:%M", time.localtime(now))
 
     for member in members:
+        if getattr(member, "is_bot", False):
+            continue
         try:
-            member_key = str(member.id)
-            last_welcome = int(welcome_seen.get(member_key, 0) or 0)
-            if now - last_welcome < 5:
-                continue
-            welcome_seen[member_key] = now
-            join_dates[member_key] = now
-
+            join_dates[str(member.id)] = now
             mention = (
                 f'<a href="tg://user?id={member.id}">'
                 f'{html.escape(member.full_name or "المستخدم")}</a>'
             )
-            username = f"@{html.escape(member.username)}" if member.username else "لا يوجد"
             group_name = html.escape(chat.title or "الجروب")
+            joined_label = html.escape(joined_date)
 
-            text = premium_message(
-                f'⁣⁣ᯓ˹𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 𝐆𝐑𝐎𝐔𝐏 ᯤ˼\n'
-                f'°•—————— {group_name} —————•°\n'
-                f'°︙ نورت قروبنا يـ {mention} 🥂.\n'
-                f'°︙ اسمك ⇚『{mention}』\n'
-                f'°︙ ايديك ⇚『{member.id}』\n'
-                f'°︙ يوزرك ⇚『{username}』\n\n'
-                f'°︙ تاريخ انضمامك ☜ {joined_date}\n'
-                f'°︙ الساعة ☜ {joined_time}\n\n'
-                f'°•—————— {group_name} —————•°'
+            # نص الترحيب: الاسم وID بخط عريض واقتباس، مع Custom Emoji المطلوب.
+            text = (
+                f"<b><blockquote>هلا عمري نورت قروبنا</blockquote></b>\n"
+                f"ـــــــــــــــ[ <b>{group_name}</b> ]ـــــــــــــــ\n"
+                f"<b><blockquote>NeM › {mention} <tg-emoji emoji-id=\"{EMOJI_WELCOME_NAME}\">🔹</tg-emoji></blockquote></b>\n"
+                f"<b><blockquote>UeS › <code>{member.id}</code> <tg-emoji emoji-id=\"{EMOJI_WELCOME_NAME}\">🔹</tg-emoji></blockquote></b>\n"
+                f"ــــــــــــــــــــــــ [<b>{joined_label}</b>] ــــــــــــــــــــــــ"
             )
 
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton(member.full_name or "العضو", url=f"tg://user?id={member.id}")],
-                [InlineKeyboardButton("حفلات مشهير •", url="https://t.me/+Ur1mKr-uQio0ZjY8")],
+                [colored_button(
+                    member.full_name or "العضو المنضم",
+                    url=f"tg://user?id={member.id}",
+                    style="danger",
+                    emoji_id=EMOJI_WELCOME_MEMBER_BUTTON,
+                )],
+                [colored_button(
+                    "قناة لايفات سكس مشهير",
+                    url="https://t.me/+Ur1mKr-uQio0ZjY8",
+                    style="danger",
+                    emoji_id=EMOJI_WELCOME_CHANNEL_BUTTON,
+                )],
             ])
 
-            sent = False
             if photo:
                 try:
                     await message.reply_photo(
@@ -3548,71 +3146,25 @@ async def group_welcome_handler(update: Update, context: ContextTypes.DEFAULT_TY
                         reply_markup=keyboard,
                         allow_sending_without_reply=True,
                     )
-                    sent = True
+                    continue
                 except Exception as photo_exc:
-                    # إذا كانت صورة الترحيب القديمة غير صالحة، لا نوقف الترحيب.
-                    logger.exception(
-                        "Group welcome photo failed in chat %s for user %s: %s",
-                        chat.id, member.id, photo_exc
-                    )
-                    DB["settings"]["group_welcome_photo"] = ""
-                    photo = ""
+                    logger.warning("Group welcome photo failed in chat %s: %s", chat.id, photo_exc)
+                    if configured_photo:
+                        DB["settings"]["group_welcome_photo"] = ""
 
-            if not sent:
-                await message.reply_text(
-                    text=text,
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=keyboard,
-                    allow_sending_without_reply=True,
-                )
+            await message.reply_text(
+                text=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+                allow_sending_without_reply=True,
+            )
         except Exception as exc:
             logger.exception(
                 "Group welcome failed in chat %s for user %s: %s",
-                chat.id, getattr(member, "id", "unknown"), exc
+                chat.id, getattr(member, "id", "unknown"), exc,
             )
 
     save_db(DB)
-
-
-async def group_subscription_test_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> None:
-    """تشخيص الاشتراك الإجباري وحذف الرسائل داخل الجروب."""
-    message = update.effective_message
-    chat = update.effective_chat
-    user = update.effective_user
-    if not message or not chat or chat.type not in ("group", "supergroup") or not user:
-        return
-
-    if not await require_group_moderator(update, context):
-        return
-
-    joined, error_channel = await _check_group_required_channels(context, user.id)
-    try:
-        me = await context.bot.get_me()
-        bot_member = await context.bot.get_chat_member(chat.id, me.id)
-        can_delete = getattr(bot_member, "can_delete_messages", None)
-        status = getattr(bot_member, "status", "")
-    except Exception:
-        can_delete = None
-        status = "unknown"
-
-    if error_channel:
-        result = (
-            f"الاشتراك: لا يمكن التحقق من القناة {html.escape(str(error_channel))}.\n"
-            f"اجعل البوت مشرفًا في القناة."
-        )
-    else:
-        result = "الاشتراك: مشترك في القناتين من جهة الفحص." if joined else "الاشتراك: غير مشترك في قناة واحدة على الأقل."
-
-    result += f"\nصلاحية حذف رسائل الجروب: {html.escape(str(can_delete))}"
-    result += f"\nحالة البوت في الجروب: {html.escape(str(status))}"
-
-    await message.reply_text(
-        premium_plain(result),
-        parse_mode=ParseMode.HTML,
-    )
 
 
 async def group_protection_text_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3621,12 +3173,15 @@ async def group_protection_text_command(update: Update, context: ContextTypes.DE
     user = update.effective_user
     if not message or not chat or chat.type not in ("group", "supergroup") or not user:
         return
-    if not await require_group_moderator(update, context):
+    try:
+        member = await context.bot.get_chat_member(chat.id, user.id)
+        if member.status not in ("administrator", "creator"):
+            await message.reply_text("الأمر للمشرفين فقط.")
+            return
+    except Exception:
         return
 
     raw = (message.text or "").strip()
-    # يدعم أيضًا /قفل و /فتح مع Privacy Mode.
-    raw = re.sub(r"^/(قفل|فتح)(?:@[^\s]+)?\s*", r"\1 ", raw, count=1, flags=re.UNICODE).strip()
     m = re.match(r"^(قفل|فتح)\s+(.+)$", raw, re.UNICODE)
     if not m:
         return
@@ -3641,12 +3196,12 @@ async def group_protection_text_command(update: Update, context: ContextTypes.DE
         st["all"] = enabled
         save_db(DB)
         lock_text = f"تم {'قفل' if enabled else 'فتح'} كل شيء 🔹"
-        await message.reply_text(premium_plain(lock_text), parse_mode=ParseMode.HTML)
+        await message.reply_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)])
         return
 
     key = protection_key_from_text(target)
     if not key:
-        await message.reply_text(premium_plain("المحدد غير معروف. مثال: قفل الملصقات أو فتح الروابط"), parse_mode=ParseMode.HTML)
+        await message.reply_text("المحدد غير معروف. مثال: قفل الملصقات أو فتح الروابط")
         return
 
     if action == "فتح":
@@ -3657,25 +3212,38 @@ async def group_protection_text_command(update: Update, context: ContextTypes.DE
         st["all"] = all(st.get(k, False) for k in PROTECTION_KEYS)
         save_db(DB)
         lock_text = f"تم فتح {PROTECTION_KEYS[key]} 🔹"
-        await message.reply_text(premium_plain(lock_text), parse_mode=ParseMode.HTML)
+        await message.reply_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)])
         return
 
     await message.reply_text(
-        premium_plain(f"اختر العقوبة عند قفل {PROTECTION_KEYS[key]}"),
-        parse_mode=ParseMode.HTML,
+        f"اختر العقوبة عند قفل {PROTECTION_KEYS[key]}",
         reply_markup=protection_command_text_keyboard(key),
     )
 
 
 # معرفات الـ Custom Emoji التي أرسلها المستخدم
-CUSTOM_EMOJI_LOCK = "🔒"
-CUSTOM_EMOJI_PROTECTION = "🛡️"
-# هذا الـ ID مخصص لأيقونة القفل في الأزرار. النص يستخدم Unicode آمنًا.
-CUSTOM_EMOJI_LOCKED_REPLY = f'<tg-emoji emoji-id="{PREMIUM_MESSAGE_EMOJI_ID}">🔒</tg-emoji>'
+CUSTOM_EMOJI_LOCK = "5206607081334906820"
+CUSTOM_EMOJI_PROTECTION = "5870734657384877785"
 
 
-def protection_message_with_emoji(text: str, marker: str, emoji: str) -> tuple[str, list]:
-    return text.replace(marker, emoji, 1), []
+def custom_emoji_entity(text: str, marker: str, custom_emoji_id: str) -> MessageEntity:
+    """إنشاء Entity لإظهار Custom Emoji بدل رقم الـ ID داخل الرسالة."""
+    pos = text.find(marker)
+    if pos < 0:
+        raise ValueError("custom emoji marker not found")
+    # Telegram offsets are UTF-16 code-unit offsets.
+    offset = len(text[:pos].encode("utf-16-le")) // 2
+    length = len(marker.encode("utf-16-le")) // 2
+    return MessageEntity(
+        type="custom_emoji",
+        offset=offset,
+        length=length,
+        custom_emoji_id=custom_emoji_id,
+    )
+
+
+def protection_message_with_emoji(text: str, marker: str, emoji_id: str) -> tuple[str, list]:
+    return text.replace(marker, "🔹", 1), [custom_emoji_entity(text.replace(marker, "🔹", 1), "🔹", emoji_id)]
 
 
 async def group_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3683,8 +3251,6 @@ async def group_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat = update.effective_chat
     actor = update.effective_user
     if not message or not chat or chat.type not in ("group", "supergroup") or not actor:
-        return
-    if not await require_group_moderator(update, context):
         return
     target = resolve_target_user(message) or actor
     if not target:
@@ -3765,46 +3331,15 @@ async def protection_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user = update.effective_user
     if not chat or chat.type not in ("group", "supergroup") or not user:
         return
-    if not await require_group_moderator(update, context):
+    try:
+        member = await context.bot.get_chat_member(chat.id, user.id)
+        if member.status not in ("administrator", "creator"):
+            await update.effective_message.reply_text("الأمر للمشرفين فقط.")
+            return
+    except Exception:
+        await update.effective_message.reply_text("تعذر التحقق من صلاحياتك.")
         return
     await update.effective_message.reply_text("إعدادات حماية الجروب", reply_markup=protection_keyboard(chat.id))
-
-
-async def group_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """تشخيص سريع لعضوية البوت وصلاحياته داخل الجروب."""
-    message = update.effective_message
-    chat = update.effective_chat
-    user = update.effective_user
-    if not message or not chat or chat.type not in ("group", "supergroup"):
-        return
-
-    try:
-        bot_me = await context.bot.get_me()
-        bot_member = await context.bot.get_chat_member(chat.id, bot_me.id)
-        status = str(getattr(bot_member, "status", "unknown"))
-        can_delete = getattr(bot_member, "can_delete_messages", False)
-        can_restrict = getattr(bot_member, "can_restrict_members", False)
-        can_invite = getattr(bot_member, "can_invite_users", False)
-        actor_status = "غير معروف"
-        if user:
-            actor_member = await context.bot.get_chat_member(chat.id, user.id)
-            actor_status = str(getattr(actor_member, "status", "unknown"))
-        text = (
-            "اختبار البوت داخل الجروب\n\n"
-            f"حالة البوت: {status}\n"
-            f"حذف الرسائل: {can_delete}\n"
-            f"كتم/تقييد الأعضاء: {can_restrict}\n"
-            f"دعوة الأعضاء: {can_invite}\n"
-            f"حالة منفذ الأمر: {actor_status}\n\n"
-            "إذا كانت حالة البوت member وليس administrator، ارفعه مشرفًا وأعطه صلاحية حذف الرسائل وتقييد الأعضاء."
-        )
-        await message.reply_text(premium_plain(text), parse_mode=ParseMode.HTML)
-    except Exception as exc:
-        logger.exception("Group diagnostic failed")
-        await message.reply_text(
-            premium_plain(f"تعذر فحص صلاحيات البوت داخل الجروب: {exc}"),
-            parse_mode=ParseMode.HTML,
-        )
 
 
 # ============================================================
@@ -3869,54 +3404,6 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("addadmin", admin_add_admin_command))
     application.add_handler(CommandHandler("deladmin", admin_del_admin_command))
 
-    # أوامر إدارية إنجليزية اختيارية لتعمل حتى مع Privacy Mode في الجروب.
-    # صلاحية المنفذ تُفحص داخل كل دالة، لذلك الأعضاء العاديون لا يستطيعون تنفيذها.
-    application.add_handler(CommandHandler("protect", protection_command))
-    application.add_handler(CommandHandler("id", group_info_command))
-
-    # Telegram لا يعتبر أسماء الأوامر العربية Commands رسمية في Bot API،
-    # لذلك /اختبار و/حماية وغيرها تُعالج هنا كرسائل نصية صريحة.
-    # هذا يجعلها تعمل داخل الجروب حتى مع Privacy Mode عندما يكون البوت مشرفًا.
-    application.add_handler(MessageHandler(
-        filters.ChatType.GROUPS & filters.Regex(r"^\s*/اختبار(?:@\w+)?(?:\s+.*)?$"),
-        group_test_command,
-    ), group=-1)
-    application.add_handler(MessageHandler(
-        filters.ChatType.GROUPS & filters.Regex(r"^\s*/حماية(?:@\w+)?(?:\s+.*)?$"),
-        protection_command,
-    ), group=-1)
-    application.add_handler(MessageHandler(
-        filters.ChatType.GROUPS & filters.Regex(r"^\s*/(?:قفل|فتح)(?:@\w+)?(?:\s+.*)?$"),
-        group_protection_text_command,
-    ), group=-1)
-    application.add_handler(MessageHandler(
-        filters.ChatType.GROUPS & filters.Regex(r"^\s*/(?:كتم|طرد|حظر|حذف|مسح)(?:@\w+)?(?:\s+.*)?$"),
-        lambda u,c: group_member_action(u,c,
-            {
-                "كتم": "mute", "طرد": "kick", "حظر": "ban",
-                "حذف": "delete", "مسح": "clear",
-            }.get(re.sub(r"^/", "", (u.effective_message.text or "").split()[0]).split("@")[0], "delete")
-        ),
-    ), group=-1)
-    application.add_handler(MessageHandler(
-        filters.ChatType.GROUPS & filters.Regex(r"^\s*/(?:كشف|ايدي|ا|معلومات)(?:@\w+)?(?:\s+.*)?$"),
-        group_info_command,
-    ), group=-1)
-
-    # مسارات / إضافية: تعمل مع Privacy Mode لأنها أوامر صريحة من Telegram.
-    application.add_handler(CommandHandler("قفل", group_protection_text_command))
-    application.add_handler(CommandHandler("فتح", group_protection_text_command))
-    application.add_handler(CommandHandler("حماية", protection_command))
-    application.add_handler(CommandHandler("كتم", lambda u, c: group_member_action(u, c, "mute")))
-    application.add_handler(CommandHandler("طرد", lambda u, c: group_member_action(u, c, "kick")))
-    application.add_handler(CommandHandler("حظر", lambda u, c: group_member_action(u, c, "ban")))
-    application.add_handler(CommandHandler("حذف", lambda u, c: group_member_action(u, c, "delete")))
-    application.add_handler(CommandHandler("مسح", lambda u, c: group_member_action(u, c, "clear")))
-    application.add_handler(CommandHandler("كشف", group_info_command))
-    application.add_handler(CommandHandler("ايدي", group_info_command))
-    application.add_handler(CommandHandler("اختبار", group_test_command))
-    application.add_handler(CommandHandler("group_test", group_test_command))
-
     application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
@@ -3927,13 +3414,6 @@ def build_application() -> Application:
             group_protection_handler,
         ),
         group=-2,
-    )
-
-    application.add_handler(
-        MessageHandler(
-            filters.ChatType.GROUPS & filters.Regex(r"^\s*اختبار الاشتراك\s*$"),
-            group_subscription_test_command,
-        )
     )
 
     # أوامر القفل/الفتح تعمل كنص عادي بدون /
@@ -3971,14 +3451,7 @@ def build_application() -> Application:
         filters.ChatType.GROUPS & filters.Regex(r"^\s*(?:كشف|ايدي|ا|معلومات)(?:\s+.*)?$"),
         group_info_command,
     ))
-    # ترحيب الجروبات: ندعم الطريقتين معًا.
-    # 1) ChatMember update عندما يكون متاحًا.
-    # 2) رسالة Telegram الخدمية الجديدة new_chat_members، وهي الأكثر موثوقية
-    #    في كثير من الجروبات حتى مع Privacy Mode.
-    application.add_handler(
-        ChatMemberHandler(group_welcome_handler, ChatMemberHandler.CHAT_MEMBER),
-        group=-101,
-    )
+    # ترحيب الجروبات: أولوية عالية حتى لا يتعارض مع أي معالج رسائل آخر.
     application.add_handler(
         MessageHandler(
             filters.ChatType.GROUPS & filters.StatusUpdate.NEW_CHAT_MEMBERS,
@@ -3987,8 +3460,7 @@ def build_application() -> Application:
         group=-100,
     )
 
-    # معالج الجروبات — الرد التلقائي على كل الرسائل العادية (نصوص/وسائط/ملصقات).
-    # لرؤية رسائل الأعضاء العادية يجب تعطيل Privacy Mode من BotFather أو جعل البوت مشرفًا.
+    # معالج الجروبات — الردود التلقائية
     application.add_handler(
         MessageHandler(
             filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL,
@@ -4021,11 +3493,6 @@ def main() -> None:
     application = build_application()
 
     logger.info("Starting MaX VIP bot...")
-    logger.info("Required group channels: %s", REQUIRED_CHANNELS)
-    logger.info("Group welcome handlers: chat_member + new_chat_members")
-    logger.info("Group mandatory subscription deletion: enabled")
-    logger.info("Group commands: moderators only; bot must be added as admin for full moderation/protection")
-    logger.info("Inline button compatibility: style=%s custom_emoji=%s", _BUTTON_SUPPORTS_STYLE, _BUTTON_SUPPORTS_CUSTOM_EMOJI)
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
