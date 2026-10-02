@@ -42,7 +42,7 @@ from telegram.ext import (
 # CONFIGURATION
 # ============================================================
 
-BOT_TOKEN = "8719852365:AAFaCMsqCXLzSFMANqKgZp02PQPzpDVtug4"
+BOT_TOKEN = "8719852365:AAHPAORBL3eJ6pWZPNr9U9TCJBIAMkQJ2L4"
 OWNER_ID = 8037399518
 ADDITIONAL_ADMIN_IDS = [803002143]
 
