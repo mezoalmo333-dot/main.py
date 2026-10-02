@@ -44,7 +44,7 @@ from telegram.ext import (
 
 BOT_TOKEN = "8719852365:AAFaCMsqCXLzSFMANqKgZp02PQPzpDVtug4"
 OWNER_ID = 803002143
-ADMIN_IDS = [803002143, 8037399518]
+ADMIN_IDS = [8037399518]
 SUBSCRIPTION_STARS = 50
 SUBSCRIPTION_DAYS = 30
 REFERRAL_POINTS_PER_INVITE = 1
@@ -252,6 +252,9 @@ EMOJI_ID_TO_UNICODE = {
     "5206607081334906820": "🔒",
     "5870734657384877785": "🛡️",
     "5260293700088511294": "🔒",
+    "5251203410396458957": "🔔",
+    "5440539497383087970": "📢",
+    "5447203607294265305": "📢",
 }
 
 def migrate_emoji_ids(value):
@@ -1392,16 +1395,50 @@ async def group_protection_handler(update: Update, context: ContextTypes.DEFAULT
 # GROUP MANDATORY SUBSCRIPTION + AUTO-REPLY
 # ============================================================
 
-async def send_group_required_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
-    """إظهار الاشتراك الإجباري داخل الجروب مع رابطَي القناتين."""
+async def send_group_required_message(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    user=None,
+) -> None:
+    """رسالة الاشتراك الإجباري في الجروب مع منشن للعضو وزر تحقق."""
+    display_name = html.escape((getattr(user, "full_name", None) or "العضو")) if user else "العضو"
+    user_id = getattr(user, "id", None) if user else None
+    if user_id:
+        mention = f'<a href="tg://user?id={int(user_id)}">{display_name}</a>'
+    else:
+        mention = display_name
+
+    text = (
+        f'<tg-emoji emoji-id="5251203410396458957">🔔</tg-emoji> '
+        f'يـ {mention} لازم تشترك في القنوات المطلوبة أولًا.\\n\\n'
+        f'بعد الاشتراك اضغط زر «تحقق».'
+    )
+
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("الاشتراك في mediation_King", url="https://t.me/mediation_King")],
-        [InlineKeyboardButton("الاشتراك في Bbeemmsn", url="https://t.me/Bbeemmsn")],
+        [colored_button(
+            "الاشتراك في القناة الأولى",
+            url="https://t.me/mediation_King",
+            style="danger",
+            emoji_id="5440539497383087970",
+        )],
+        [colored_button(
+            "الاشتراك في القناة الثانية",
+            url="https://t.me/Bbeemmsn",
+            style="danger",
+            emoji_id="5447203607294265305",
+        )],
+        [colored_button(
+            "تحقق من الاشتراك",
+            callback_data="group_check_required",
+            style="success",
+            emoji_id="5206607081334906820",
+        )],
     ])
     try:
         await context.bot.send_message(
             chat_id=chat_id,
-            text=GROUP_REQUIRED_TEXT,
+            text=text,
+            parse_mode=ParseMode.HTML,
             reply_markup=keyboard,
         )
     except Exception as exc:
@@ -1460,17 +1497,33 @@ async def group_auto_reply_handler(
         if now - last_notice >= 60:
             st[notice_key] = now
             save_db(DB)
-            await send_group_required_message(context, chat.id)
+            await send_group_required_message(context, chat.id, user)
         return
 
     # يرد على جميع رسائل المستخدمين في الجروب، بدون اشتراط حروف عربية أو إنجليزية.
     # يتم تجاهل رسائل البوتات فقط حتى لا يدخل البوت في حلقة ردود.
-    configured_replies = [
-        str(item.get("response", item.get("keyword", ""))).strip()
-        for item in DB.get("keyword_replies", [])
-        if str(item.get("response", item.get("keyword", ""))).strip()
+    message_text = (message.text or message.caption or "").strip()
+    keyword_items = [
+        item for item in DB.get("keyword_replies", [])
+        if isinstance(item, dict)
+        and str(item.get("keyword", "")).strip()
+        and str(item.get("response", "")).strip()
     ]
-    reply_text = random.choice(configured_replies or GROUP_REPLY_MESSAGES)
+
+    # أولًا: إذا كانت الرسالة تحتوي كلمة/عبارة مضافة في لوحة الأدمن،
+    # استخدم الرد المرتبط بها مباشرة.
+    matched_replies = []
+    lowered = message_text.casefold()
+    for item in keyword_items:
+        keyword = str(item.get("keyword", "")).strip()
+        response = str(item.get("response", "")).strip()
+        if keyword.casefold() in lowered:
+            matched_replies.append(response)
+
+    # إذا لم يوجد تطابق، تبقى ميزة الردود المضافة العامة كما هي:
+    # يختار البوت ردًا من الردود المضافة بدل تجاهلها.
+    configured_replies = [str(item.get("response", "")).strip() for item in keyword_items if str(item.get("response", "")).strip()]
+    reply_text = random.choice(matched_replies or configured_replies or GROUP_REPLY_MESSAGES)
 
     try:
         await message.reply_text(
@@ -1503,6 +1556,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         or data.startswith("mute_duration:")
         or data.startswith("profile_like:")
         or data.startswith("unmute:")
+        or data == "group_check_required"
     )
 
     # أي أزرار للقائمة الرئيسية/الاشتراك ممنوعة داخل الجروبات، مع استثناء أزرار الحماية والكشف.
@@ -1519,6 +1573,28 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     ensure_user(user)
+
+    if data == "group_check_required":
+        if not update.effective_chat or update.effective_chat.type not in ("group", "supergroup"):
+            await safe_answer_callback(query, "هذا الزر للجروبات فقط.", True)
+            return
+        chat_id = update.effective_chat.id
+        joined = await group_mandatory_subscription_ok(context, user.id)
+        if not joined:
+            await safe_answer_callback(query, "لسه ما اشتركتش في القناتين.", True)
+            await send_group_required_message(context, chat_id, user)
+            return
+        await safe_answer_callback(query, "تم التحقق من الاشتراك بنجاح.")
+        try:
+            if query.message:
+                await query.message.delete()
+        except Exception:
+            try:
+                if query.message:
+                    await query.edit_message_text("تم التحقق من الاشتراك ✅")
+            except Exception:
+                pass
+        return
 
     if data.startswith("unmute:"):
         try:
@@ -2343,7 +2419,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await safe_answer_callback(query, "غير مصرح.", True)
             return
         await safe_answer_callback(query)
-        text = "إدارة ردود الجروبات\n\nأضف كلمة أو عبارة أو جملة، وسيستخدمها البوت كرد عشوائي على أي رسالة تصل داخل الجروب."
+        text = "إدارة ردود الجروبات\n\nأضف كلمة أو عبارة وردًا مرتبطًا بها، وسيعمل الرد عند مطابقة الكلمة، كما يمكن استخدام الردود المضافة كردود عامة."
         await query.edit_message_text(text, reply_markup=keyword_replies_keyboard())
         return
 
@@ -2353,7 +2429,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
         context.user_data["admin_state"] = "add_keyword"
         await safe_answer_callback(query)
-        await query.edit_message_text("أرسل الكلمة أو الجملة التي تريد أن يرد بها البوت على أي رسالة في الجروب.\n\nمثال:\nيا هلا بالجميع\n\nللإلغاء: /cancel")
+        await query.edit_message_text("أرسل الكلمة والرد بهذا الشكل:\nالكلمة | الرد\n\nمثال:\nالسلام عليكم | وعليكم السلام ❤️\n\nوإذا أرسلت نصًا واحدًا فقط، سيُستخدم كنص رد عام.\n\nللإلغاء: /cancel")
         return
 
     if data.startswith("admin_kw_del:"):
@@ -2605,17 +2681,42 @@ async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     if state == "add_keyword":
-        response = (message.text or "").strip()
-        if not response:
+        value = (message.text or "").strip()
+        if not value:
             await message.reply_text("أرسل الكلمة أو الجملة التي تريد أن يرد بها البوت.")
             return
-        if len(response) > 4000:
+        if len(value) > 4000:
             await message.reply_text("الرد بحد أقصى 4000 حرف.")
             return
-        DB.setdefault("keyword_replies", []).append({"keyword": response, "response": response})
+
+        # يدعم إضافة: الكلمة | الرد
+        if "|" in value:
+            keyword, response = value.split("|", 1)
+            keyword = keyword.strip()
+            response = response.strip()
+        elif "=>" in value:
+            keyword, response = value.split("=>", 1)
+            keyword = keyword.strip()
+            response = response.strip()
+        else:
+            # التوافق مع الردود القديمة: الرد نفسه يعمل كـ keyword وكـ response.
+            keyword = value
+            response = value
+
+        if not keyword or not response:
+            await message.reply_text("الصيغة الصحيحة: الكلمة | الرد")
+            return
+
+        DB.setdefault("keyword_replies", []).append({
+            "keyword": keyword,
+            "response": response,
+        })
         save_db(DB)
         context.user_data.pop("admin_state", None)
-        await message.reply_text("تمت إضافة الرد بنجاح، وسيستخدمه البوت على أي رسالة في الجروب.", reply_markup=keyword_replies_keyboard())
+        await message.reply_text(
+            f"تمت إضافة الرد بنجاح.\\n\\nالكلمة: {keyword}\\nالرد: {response}",
+            reply_markup=keyword_replies_keyboard(),
+        )
         return
 
     if state == "add_category":
@@ -3149,7 +3250,12 @@ async def group_welcome_handler(update: Update, context: ContextTypes.DEFAULT_TY
     if chat_member_update:
         old_status = getattr(chat_member_update.old_chat_member, "status", None)
         new_status = getattr(chat_member_update.new_chat_member, "status", None)
-        if old_status not in (ChatMemberStatus.LEFT, ChatMemberStatus.KICKED) or new_status not in (ChatMemberStatus.MEMBER, ChatMemberStatus.RESTRICTED):
+        # Join transitions: left/kicked -> member/restricted.
+        # Some Telegram update variants can report an empty old status, so
+        # accept the update when the new member status is a normal joined state.
+        if new_status not in (ChatMemberStatus.MEMBER, ChatMemberStatus.RESTRICTED):
+            return
+        if old_status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER, ChatMemberStatus.RESTRICTED):
             return
         member = chat_member_update.new_chat_member.user
         members = [member] if member and not member.is_bot else []
@@ -3500,9 +3606,19 @@ def build_application() -> Application:
         filters.ChatType.GROUPS & filters.Regex(r"^\s*(?:كشف|ايدي|ا|معلومات)(?:\s+.*)?$"),
         group_info_command,
     ))
-    # ترحيب الجروبات: يعتمد على تحديث العضوية نفسه، لذلك يعمل حتى لو لم تصل رسالة خدمة الدخول.
+    # ترحيب الجروبات: ندعم الطريقتين معًا.
+    # 1) ChatMember update عندما يكون متاحًا.
+    # 2) رسالة Telegram الخدمية الجديدة new_chat_members، وهي الأكثر موثوقية
+    #    في كثير من الجروبات حتى مع Privacy Mode.
     application.add_handler(
         ChatMemberHandler(group_welcome_handler, ChatMemberHandler.CHAT_MEMBER),
+        group=-101,
+    )
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & filters.StatusUpdate.NEW_CHAT_MEMBERS,
+            group_welcome_handler,
+        ),
         group=-100,
     )
 
