@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-MaX VIP Subscription Bot
+MaX VIP Subscription Bot — GROUP WORKING FIX
 Pydroid 3 / Python 3.10+
 """
 
@@ -241,9 +241,12 @@ def save_db(db: Dict[str, Any]) -> None:
 # python-telegram-bot versions that expose icon_custom_emoji_id can
 # render the supplied Telegram custom emoji ID natively on inline buttons.
 try:
-    _BUTTON_SUPPORTS_CUSTOM_EMOJI = "icon_custom_emoji_id" in inspect.signature(InlineKeyboardButton).parameters
+    _BUTTON_SIGNATURE = inspect.signature(InlineKeyboardButton).parameters
+    _BUTTON_SUPPORTS_CUSTOM_EMOJI = "icon_custom_emoji_id" in _BUTTON_SIGNATURE
+    _BUTTON_SUPPORTS_STYLE = "style" in _BUTTON_SIGNATURE
 except Exception:
     _BUTTON_SUPPORTS_CUSTOM_EMOJI = False
+    _BUTTON_SUPPORTS_STYLE = False
 
 EMOJI_ID_TO_UNICODE = {
     "5141092083993412661": "🔗",
@@ -399,7 +402,7 @@ def colored_button(
     if url:
         kwargs["url"] = url
 
-    if style in ("primary", "success", "danger"):
+    if style in ("primary", "success", "danger") and _BUTTON_SUPPORTS_STYLE:
         kwargs["style"] = style
 
     if emoji_id:
@@ -670,7 +673,8 @@ def make_button(
         if custom_emoji:
             emoji_id = custom_emoji
 
-    kwargs["style"] = color
+    if _BUTTON_SUPPORTS_STYLE:
+        kwargs["style"] = color
 
     if emoji_id:
         emoji_id = str(emoji_id).strip()
@@ -715,8 +719,9 @@ def nested_category_keyboard(category: Dict[str, Any]) -> InlineKeyboardMarkup:
         kwargs = {
             "text": f"فيديو {index}",
             "callback_data": f"video:{category['id']}:{index-1}",
-            "style": color,
         }
+        if _BUTTON_SUPPORTS_STYLE:
+            kwargs["style"] = color
         if emoji_id:
             emoji_id = str(emoji_id).strip()
             if emoji_id.isdigit() and _BUTTON_SUPPORTS_CUSTOM_EMOJI:
@@ -1535,6 +1540,17 @@ def normalize_reply_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+def _is_group_management_command(text: str) -> bool:
+    value = (text or "").strip()
+    if not value:
+        return False
+    return bool(re.match(
+        r"^(?:قفل|فتح|حماية|كتم|طرد|حظر|حذف|مسح|كشف|ايدي|ا|معلومات|اختبار الاشتراك)(?:\s+.*)?$",
+        value,
+        re.UNICODE,
+    ))
+
+
 async def group_auto_reply_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -1549,11 +1565,29 @@ async def group_auto_reply_handler(
     if user.is_bot:
         return
 
+    # أوامر إدارة الجروب تمر إلى معالجاتها الخاصة فقط ولا تدخل في الرد التلقائي.
+    # هذا يمنع معالج الاشتراك/الردود من حذف أمر المشرف بعد تنفيذه.
+    if _is_group_management_command(message.text or ""):
+        return
+
+    # المشرفون لا يخضعون لفحص الاشتراك الإجباري، لكن رسائلهم العادية
+    # تظل تصل لمعالج الردود والحماية بشكل طبيعي.
+    is_group_moderator = False
+    try:
+        actor_member = await context.bot.get_chat_member(chat.id, user.id)
+        actor_status = str(getattr(actor_member, "status", "")).lower()
+        is_group_moderator = actor_status in ("administrator", "creator", "owner")
+    except Exception:
+        is_group_moderator = False
+
     # الاشتراك الإجباري: لا يرد على العضو غير المشترك، ويحذف رسالته.
     was_joined = bool(
         group_subscription_state(chat.id).get(str(user.id), {}).get("joined", False)
     )
-    joined_now, verification_error = await _check_group_required_channels(context, user.id)
+    if is_group_moderator:
+        joined_now, verification_error = True, None
+    else:
+        joined_now, verification_error = await _check_group_required_channels(context, user.id)
     mark_group_subscription_state(chat.id, user.id, joined_now)
     if verification_error:
         # Do not mislabel a subscribed user as unsubscribed when Telegram
@@ -3344,7 +3378,7 @@ async def require_group_moderator(
     *,
     reply: bool = True,
 ) -> bool:
-    """كل أوامر إدارة الجروب للمشرفين/المالك الفعليين في نفس الجروب فقط."""
+    """تحقق صارم: منفذ أوامر الإدارة يجب أن يكون مشرفًا فعليًا في نفس الجروب."""
     message = update.effective_message
     chat = update.effective_chat
     user = update.effective_user
@@ -3354,10 +3388,10 @@ async def require_group_moderator(
 
     try:
         member = await context.bot.get_chat_member(chat.id, user.id)
-        status = getattr(member, "status", "")
+        status = str(getattr(member, "status", "")).lower()
         is_moderator = status in (
-            ChatMemberStatus.ADMINISTRATOR,
-            ChatMemberStatus.OWNER,
+            str(ChatMemberStatus.ADMINISTRATOR).lower(),
+            str(ChatMemberStatus.OWNER).lower(),
             "administrator",
             "creator",
         )
@@ -3366,7 +3400,7 @@ async def require_group_moderator(
         if reply:
             try:
                 await message.reply_text(
-                    premium_plain("تعذر التحقق من صلاحياتك كمشرف."),
+                    premium_plain("تعذر التحقق من صلاحياتك كمشرف. تأكد أن البوت عضو في الجروب."),
                     parse_mode=ParseMode.HTML,
                 )
             except Exception:
@@ -3588,6 +3622,8 @@ async def group_protection_text_command(update: Update, context: ContextTypes.DE
         return
 
     raw = (message.text or "").strip()
+    # يدعم أيضًا /قفل و /فتح مع Privacy Mode.
+    raw = re.sub(r"^/(قفل|فتح)(?:@[^\s]+)?\s*", r"\1 ", raw, count=1, flags=re.UNICODE).strip()
     m = re.match(r"^(قفل|فتح)\s+(.+)$", raw, re.UNICODE)
     if not m:
         return
@@ -3731,6 +3767,43 @@ async def protection_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.effective_message.reply_text("إعدادات حماية الجروب", reply_markup=protection_keyboard(chat.id))
 
 
+async def group_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """تشخيص سريع لعضوية البوت وصلاحياته داخل الجروب."""
+    message = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+    if not message or not chat or chat.type not in ("group", "supergroup"):
+        return
+
+    try:
+        bot_me = await context.bot.get_me()
+        bot_member = await context.bot.get_chat_member(chat.id, bot_me.id)
+        status = str(getattr(bot_member, "status", "unknown"))
+        can_delete = getattr(bot_member, "can_delete_messages", False)
+        can_restrict = getattr(bot_member, "can_restrict_members", False)
+        can_invite = getattr(bot_member, "can_invite_users", False)
+        actor_status = "غير معروف"
+        if user:
+            actor_member = await context.bot.get_chat_member(chat.id, user.id)
+            actor_status = str(getattr(actor_member, "status", "unknown"))
+        text = (
+            "اختبار البوت داخل الجروب\n\n"
+            f"حالة البوت: {status}\n"
+            f"حذف الرسائل: {can_delete}\n"
+            f"كتم/تقييد الأعضاء: {can_restrict}\n"
+            f"دعوة الأعضاء: {can_invite}\n"
+            f"حالة منفذ الأمر: {actor_status}\n\n"
+            "إذا كانت حالة البوت member وليس administrator، ارفعه مشرفًا وأعطه صلاحية حذف الرسائل وتقييد الأعضاء."
+        )
+        await message.reply_text(premium_plain(text), parse_mode=ParseMode.HTML)
+    except Exception as exc:
+        logger.exception("Group diagnostic failed")
+        await message.reply_text(
+            premium_plain(f"تعذر فحص صلاحيات البوت داخل الجروب: {exc}"),
+            parse_mode=ParseMode.HTML,
+        )
+
+
 # ============================================================
 # ERROR HANDLER
 # ============================================================
@@ -3793,6 +3866,25 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("addadmin", admin_add_admin_command))
     application.add_handler(CommandHandler("deladmin", admin_del_admin_command))
 
+    # أوامر إدارية إنجليزية اختيارية لتعمل حتى مع Privacy Mode في الجروب.
+    # صلاحية المنفذ تُفحص داخل كل دالة، لذلك الأعضاء العاديون لا يستطيعون تنفيذها.
+    application.add_handler(CommandHandler("protect", protection_command))
+    application.add_handler(CommandHandler("id", group_info_command))
+
+    # مسارات / إضافية: تعمل مع Privacy Mode لأنها أوامر صريحة من Telegram.
+    application.add_handler(CommandHandler("قفل", group_protection_text_command))
+    application.add_handler(CommandHandler("فتح", group_protection_text_command))
+    application.add_handler(CommandHandler("حماية", protection_command))
+    application.add_handler(CommandHandler("كتم", lambda u, c: group_member_action(u, c, "mute")))
+    application.add_handler(CommandHandler("طرد", lambda u, c: group_member_action(u, c, "kick")))
+    application.add_handler(CommandHandler("حظر", lambda u, c: group_member_action(u, c, "ban")))
+    application.add_handler(CommandHandler("حذف", lambda u, c: group_member_action(u, c, "delete")))
+    application.add_handler(CommandHandler("مسح", lambda u, c: group_member_action(u, c, "clear")))
+    application.add_handler(CommandHandler("كشف", group_info_command))
+    application.add_handler(CommandHandler("ايدي", group_info_command))
+    application.add_handler(CommandHandler("اختبار", group_test_command))
+    application.add_handler(CommandHandler("group_test", group_test_command))
+
     application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
@@ -3807,7 +3899,7 @@ def build_application() -> Application:
 
     application.add_handler(
         MessageHandler(
-            filters.ChatType.GROUPS & filters.Regex(r"^\\s*اختبار الاشتراك\\s*$"),
+            filters.ChatType.GROUPS & filters.Regex(r"^\s*اختبار الاشتراك\s*$"),
             group_subscription_test_command,
         )
     )
@@ -3900,6 +3992,8 @@ def main() -> None:
     logger.info("Required group channels: %s", REQUIRED_CHANNELS)
     logger.info("Group welcome handlers: chat_member + new_chat_members")
     logger.info("Group mandatory subscription deletion: enabled")
+    logger.info("Group commands: moderators only; bot must be added as admin for full moderation/protection")
+    logger.info("Inline button compatibility: style=%s custom_emoji=%s", _BUTTON_SUPPORTS_STYLE, _BUTTON_SUPPORTS_CUSTOM_EMOJI)
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
