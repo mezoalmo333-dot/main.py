@@ -123,6 +123,17 @@ GROUP_REQUIRED_TEXT = (
     "بعد الاشتراك ابعت أي رسالة مرة ثانية وسيتم التحقق تلقائيًا."
 )
 
+PREMIUM_MESSAGE_EMOJI_ID = "5210952531676504517"
+
+def premium_message(body_html: str, emoji_id: str = PREMIUM_MESSAGE_EMOJI_ID) -> str:
+    return (
+        f'<blockquote><b><tg-emoji emoji-id="{html.escape(str(emoji_id))}">🔹</tg-emoji> '
+        f'{body_html}</b></blockquote>'
+    )
+
+def premium_plain(text: str, emoji_id: str = PREMIUM_MESSAGE_EMOJI_ID) -> str:
+    return premium_message(html.escape(str(text)), emoji_id)
+
 # نطاق الحروف العربية + الإنجليزية
 LETTERS_PATTERN = re.compile(
     r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF"
@@ -1267,9 +1278,9 @@ def protection_penalty_keyboard(key: str) -> InlineKeyboardMarkup:
 
 
 def mute_duration_keyboard(key: str) -> InlineKeyboardMarkup:
+    # Kept for backward-compatible callback data, but mute is now permanent.
     return InlineKeyboardMarkup([
-        [colored_button("دقيقة", callback_data=f"mute_duration:{key}:60", style="primary", emoji_id=EMOJI_ADMIN), colored_button("10 دقائق", callback_data=f"mute_duration:{key}:600", style="primary", emoji_id=EMOJI_ADMIN)],
-        [colored_button("ساعة", callback_data=f"mute_duration:{key}:3600", style="primary", emoji_id=EMOJI_ADMIN), colored_button("يوم", callback_data=f"mute_duration:{key}:86400", style="primary", emoji_id=EMOJI_ADMIN)],
+        [colored_button("كتم دائم", callback_data=f"mute_duration:{key}:0", style="danger", emoji_id=EMOJI_ADMIN)],
         [colored_button("رجوع", callback_data=f"penalty_menu:{key}", style="primary", emoji_id=EMOJI_HOME)],
     ])
 
@@ -1340,11 +1351,9 @@ async def apply_group_penalty(context, chat_id: int, user_id: int, penalty: str,
     if penalty == "ban":
         await context.bot.ban_chat_member(chat_id, user_id)
     elif penalty == "mute":
-        until = int(time.time()) + max(30, duration or 3600)
         await context.bot.restrict_chat_member(
             chat_id, user_id,
             permissions=__import__('telegram').ChatPermissions(can_send_messages=False),
-            until_date=until,
         )
 
 
@@ -1381,7 +1390,9 @@ async def group_protection_handler(update: Update, context: ContextTypes.DEFAULT
         logger.warning("Protection penalty failed: %s", exc)
     mention = f'<a href="tg://user?id={user.id}">{user.full_name}</a>'
     try:
-        violation_text = f"يـ {mention}، {violation} هنا ممنوع {CUSTOM_EMOJI_LOCKED_REPLY}"
+        violation_text = premium_message(
+            f'يـ {mention}، {html.escape(violation)} هنا ممنوع {CUSTOM_EMOJI_LOCKED_REPLY}'
+        )
         await context.bot.send_message(
             chat.id,
             violation_text,
@@ -1394,6 +1405,17 @@ async def group_protection_handler(update: Update, context: ContextTypes.DEFAULT
 # ============================================================
 # GROUP MANDATORY SUBSCRIPTION + AUTO-REPLY
 # ============================================================
+
+def group_subscription_state(chat_id: int) -> Dict[str, Any]:
+    st = group_settings(chat_id)
+    return st.setdefault("mandatory_subscription_state", {})
+
+
+def mark_group_subscription_state(chat_id: int, user_id: int, joined: bool) -> None:
+    state = group_subscription_state(chat_id)
+    state[str(user_id)] = {"joined": bool(joined), "checked_at": int(time.time())}
+    save_db(DB)
+
 
 async def send_group_required_message(
     context: ContextTypes.DEFAULT_TYPE,
@@ -1408,10 +1430,10 @@ async def send_group_required_message(
     else:
         mention = display_name
 
-    text = (
-        f'<tg-emoji emoji-id="5251203410396458957">🔔</tg-emoji> '
-        f'يـ {mention} لازم تشترك في القنوات المطلوبة أولًا.\\n\\n'
-        f'بعد الاشتراك اضغط زر «تحقق».'
+    text = premium_message(
+        f'يـ {mention} لازم تشترك في القنوات المطلوبة أولًا.\n\n'
+        f'بعد الاشتراك اضغط زر «تحقق».',
+        "5251203410396458957",
     )
 
     keyboard = InlineKeyboardMarkup([
@@ -1445,19 +1467,22 @@ async def send_group_required_message(
         logger.warning("Could not send group mandatory subscription message: %s", exc)
 
 
-async def group_mandatory_subscription_ok(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
-    """يتحقق بشكل صارم من القناتين قبل السماح بردود البوت في أي جروب."""
+async def group_mandatory_subscription_ok(context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: Optional[int] = None) -> bool:
+    """Check both required channels and persist the last state per group/user."""
+    joined = True
     for channel in REQUIRED_CHANNELS:
         try:
             member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
-            status = member.status
-            if status in (ChatMemberStatus.LEFT, ChatMemberStatus.KICKED):
-                return False
+            if member.status in (ChatMemberStatus.LEFT, ChatMemberStatus.KICKED):
+                joined = False
+                break
         except Exception as exc:
-            # لو تعذر التحقق، لا نسمح بتجاوز الاشتراك الإجباري.
             logger.warning("Mandatory group subscription check failed for %s / %s: %s", channel, user_id, exc)
-            return False
-    return True
+            joined = False
+            break
+    if chat_id is not None:
+        mark_group_subscription_state(chat_id, user_id, joined)
+    return joined
 
 
 # ============================================================
@@ -1465,73 +1490,113 @@ async def group_mandatory_subscription_ok(context: ContextTypes.DEFAULT_TYPE, us
 # ============================================================
 
 
+def normalize_reply_text(value: str) -> str:
+    value = str(value or "").casefold()
+    value = re.sub(r"[ًٌٍَُِّْـ]", "", value)
+    value = value.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+    value = value.replace("ى", "ي").replace("ة", "ه")
+    value = re.sub(r"[^\w\u0600-\u06FF]+", " ", value, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", value).strip()
+
+
 async def group_auto_reply_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """يرد على كل رسالة في الجروب باستخدام رد عشوائي من الردود المضافة في لوحة الأدمن."""
+    """يرد على كل رسالة عادية في الجروب برد عشوائي من الردود المضافة."""
     message = update.effective_message
     chat = update.effective_chat
     user = update.effective_user
 
-    if not message or not chat or not user:
+    if not message or not chat or chat.type not in ("group", "supergroup") or not user:
         return
-
-    # لا يرد على رسائل البوتات
     if user.is_bot:
         return
 
-    # لو الرسالة من نوع مقفول، معالج الحماية هو اللي يتولى الرد؛
-    # نمنع الرد التلقائي العام عشان العضو ما ياخدش رسالتين فوق بعض.
+    # الاشتراك الإجباري: لا يرد على العضو غير المشترك، ويحذف رسالته.
+    was_joined = bool(
+        group_subscription_state(chat.id).get(str(user.id), {}).get("joined", False)
+    )
+    joined_now = await group_mandatory_subscription_ok(context, user.id, chat.id)
+    if not joined_now:
+        try:
+            actor_member = await context.bot.get_chat_member(chat.id, user.id)
+            is_privileged = (
+                actor_member.status in (
+                    ChatMemberStatus.ADMINISTRATOR,
+                    ChatMemberStatus.OWNER,
+                )
+                or is_admin(user.id)
+            )
+        except Exception:
+            is_privileged = is_admin(user.id)
+
+        if not is_privileged:
+            try:
+                await message.delete()
+            except Exception as exc:
+                logger.warning(
+                    "Could not delete non-subscriber message in %s: %s",
+                    chat.id, exc
+                )
+            st = group_settings(chat.id)
+            notice_key = f"mandatory_notice_sent:{user.id}"
+            already_notified = bool(st.get(notice_key, False))
+            if was_joined or not already_notified:
+                st[notice_key] = True
+                save_db(DB)
+                await send_group_required_message(context, chat.id, user)
+        return
+
     st = group_settings(chat.id)
+    st.pop(f"mandatory_notice_sent:{user.id}", None)
+    save_db(DB)
+
+    # إذا كانت الرسالة مخالفة لقفل مفعّل، يتركها لمعالج الحماية ولا يرد عليها.
     if st.get("all") or any(st.get(k) for k in PROTECTION_KEYS):
         if protection_violation(message, st):
             return
 
-    # الاشتراك الإجباري مطبق على كل الجروبات.
-    if not await group_mandatory_subscription_ok(context, user.id):
-        st = group_settings(chat.id)
-        notice_key = f"mandatory_notice_{user.id}"
-        now = int(time.time())
-        last_notice = int(st.get(notice_key, 0) or 0)
-        if now - last_notice >= 60:
-            st[notice_key] = now
-            save_db(DB)
-            await send_group_required_message(context, chat.id, user)
-        return
+    # الردود المضافة تُستخدم كقائمة ردود عامة: لا يشترط تطابق كلمة مفتاحية.
+    # يدعم شكل قاعدة البيانات الجديد (dict) والقديم (string) ومفاتيح الردود البديلة.
+    configured_replies = []
+    stored_items = DB.get("keyword_replies", [])
+    if isinstance(stored_items, dict):
+        stored_items = list(stored_items.values())
+    if isinstance(stored_items, list):
+        for item in stored_items:
+            if isinstance(item, str):
+                response = item.strip()
+            elif isinstance(item, dict):
+                response = str(
+                    item.get("response")
+                    or item.get("reply")
+                    or item.get("text")
+                    or item.get("answer")
+                    or ""
+                ).strip()
+            else:
+                continue
+            if response:
+                configured_replies.append(response)
 
-    # يرد على جميع رسائل المستخدمين في الجروب، بدون اشتراط حروف عربية أو إنجليزية.
-    # يتم تجاهل رسائل البوتات فقط حتى لا يدخل البوت في حلقة ردود.
-    message_text = (message.text or message.caption or "").strip()
-    keyword_items = [
-        item for item in DB.get("keyword_replies", [])
-        if isinstance(item, dict)
-        and str(item.get("keyword", "")).strip()
-        and str(item.get("response", "")).strip()
-    ]
-
-    # أولًا: إذا كانت الرسالة تحتوي كلمة/عبارة مضافة في لوحة الأدمن،
-    # استخدم الرد المرتبط بها مباشرة.
-    matched_replies = []
-    lowered = message_text.casefold()
-    for item in keyword_items:
-        keyword = str(item.get("keyword", "")).strip()
-        response = str(item.get("response", "")).strip()
-        if keyword.casefold() in lowered:
-            matched_replies.append(response)
-
-    # إذا لم يوجد تطابق، تبقى ميزة الردود المضافة العامة كما هي:
-    # يختار البوت ردًا من الردود المضافة بدل تجاهلها.
-    configured_replies = [str(item.get("response", "")).strip() for item in keyword_items if str(item.get("response", "")).strip()]
-    reply_text = random.choice(matched_replies or configured_replies or GROUP_REPLY_MESSAGES)
+    # كل رسالة من عضو حقيقي في الجروب تحصل على رد من الردود المضافة.
+    # القائمة الافتراضية تُستخدم فقط إذا لم تُضف أي ردود من لوحة الأدمن.
+    reply_pool = configured_replies or GROUP_REPLY_MESSAGES
+    reply_text = random.choice(reply_pool)
 
     try:
         await message.reply_text(
-            reply_text,
+            premium_plain(reply_text),
+            parse_mode=ParseMode.HTML,
             reply_to_message_id=message.message_id,
+            allow_sending_without_reply=True,
         )
     except Exception as exc:
-        logger.warning("Group auto-reply failed: %s", exc)
+        logger.warning(
+            "Group auto-reply failed in chat %s for message %s: %s",
+            chat.id, message.message_id, exc
+        )
 
 
 # ============================================================
@@ -1579,7 +1644,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await safe_answer_callback(query, "هذا الزر للجروبات فقط.", True)
             return
         chat_id = update.effective_chat.id
-        joined = await group_mandatory_subscription_ok(context, user.id)
+        joined = await group_mandatory_subscription_ok(context, user.id, chat_id)
         if not joined:
             await safe_answer_callback(query, "لسه ما اشتركتش في القناتين.", True)
             await send_group_required_message(context, chat_id, user)
@@ -1636,7 +1701,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await safe_answer_callback(query, "تم فك الكتم.")
             if query.message:
                 try:
-                    await query.edit_message_text("تم فك كتم العضو.")
+                    await query.edit_message_text(premium_plain("تم فك كتم العضو."), parse_mode=ParseMode.HTML)
                 except Exception:
                     try:
                         await query.edit_message_reply_markup(reply_markup=None)
@@ -3195,27 +3260,27 @@ async def group_member_action(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         me = await context.bot.get_chat_member(chat.id, actor.id)
         if me.status not in ("administrator", "creator"):
-            await message.reply_text("الأمر للمشرفين فقط.")
+            await message.reply_text(premium_plain("الأمر للمشرفين فقط."), parse_mode=ParseMode.HTML)
             return
     except Exception:
         return
     target = resolve_target_user(message)
     if not target:
-        await message.reply_text("استخدم الأمر بالرد على الشخص أو أرسل ID أو @username.")
+        await message.reply_text(premium_plain("استخدم الأمر بالرد على الشخص أو أرسل ID أو @username."), parse_mode=ParseMode.HTML)
         return
     target_id = target.id if hasattr(target, "id") else int(target)
     try:
         if action == "delete":
             if message.reply_to_message:
                 await message.reply_to_message.delete()
-            await message.reply_text("تم حذف الرسالة.")
+            await message.reply_text(premium_plain("تم حذف الرسالة."), parse_mode=ParseMode.HTML)
         elif action == "kick":
             await context.bot.ban_chat_member(chat.id, target_id)
             await context.bot.unban_chat_member(chat.id, target_id, only_if_banned=True)
-            await message.reply_text("تم طرد الشخص.")
+            await message.reply_text(premium_plain("تم طرد الشخص."), parse_mode=ParseMode.HTML)
         elif action == "ban":
             await context.bot.ban_chat_member(chat.id, target_id)
-            await message.reply_text("تم حظر الشخص.")
+            await message.reply_text(premium_plain("تم حظر الشخص."), parse_mode=ParseMode.HTML)
         elif action == "mute":
             # الكتم اليدوي دائم: يبقى حتى يضغط المشرف «فك كتم».
             # لا نرسل until_date حتى لا ينتهي تلقائيًا بعد ساعة.
@@ -3225,7 +3290,8 @@ async def group_member_action(update: Update, context: ContextTypes.DEFAULT_TYPE
                 permissions=__import__('telegram').ChatPermissions(can_send_messages=False),
             )
             await message.reply_text(
-                "تم كتم الشخص.\nيظل مكتومًا حتى فك الكتم.",
+                premium_plain("تم كتم الشخص.\nيظل مكتومًا حتى فك الكتم."),
+                parse_mode=ParseMode.HTML,
                 reply_markup=manual_unmute_keyboard(chat.id, target_id),
             )
         elif action == "clear":
@@ -3235,7 +3301,7 @@ async def group_member_action(update: Update, context: ContextTypes.DEFAULT_TYPE
         elif action == "info":
             await group_info_command(update, context)
     except Exception as exc:
-        await message.reply_text(f"تعذر تنفيذ الأمر: {exc}")
+        await message.reply_text(premium_plain(f"تعذر تنفيذ الأمر: {exc}"), parse_mode=ParseMode.HTML)
 
 
 async def group_welcome_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3267,6 +3333,7 @@ async def group_welcome_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     st = group_settings(chat.id)
     join_dates = st.setdefault("member_join_dates", {})
+    welcome_seen = st.setdefault("welcome_seen", {})
     photo = str(DB.get("settings", {}).get("group_welcome_photo", "") or "").strip()
     now = int(time.time())
     joined_date = time.strftime("%Y-%m-%d", time.localtime(now))
@@ -3274,7 +3341,12 @@ async def group_welcome_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     for member in members:
         try:
-            join_dates[str(member.id)] = now
+            member_key = str(member.id)
+            last_welcome = int(welcome_seen.get(member_key, 0) or 0)
+            if now - last_welcome < 5:
+                continue
+            welcome_seen[member_key] = now
+            join_dates[member_key] = now
 
             mention = (
                 f'<a href="tg://user?id={member.id}">'
@@ -3283,16 +3355,16 @@ async def group_welcome_handler(update: Update, context: ContextTypes.DEFAULT_TY
             username = f"@{html.escape(member.username)}" if member.username else "لا يوجد"
             group_name = html.escape(chat.title or "الجروب")
 
-            text = (
-                "⁣⁣ᯓ˹𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 𝐆𝐑𝐎𝐔𝐏 ᯤ˼\n"
-                f"°•—————— {group_name} —————•°\n"
-                f"°︙ نورت قروبنا يـ {mention} 🥂.\n"
-                f"°︙ اسمك ⇚『{mention}』\n"
-                f"°︙ ايديك ⇚『{member.id}』\n"
-                f"°︙ يوزرك ⇚『{username}』\n\n"
-                f"> °︙ تاريخ انضمامك ☜ {joined_date}\n"
-                f"> °︙ الساعة ☜ {joined_time} .\n\n"
-                f"°•—————— {group_name} —————•°"
+            text = premium_message(
+                f'⁣⁣ᯓ˹𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 𝐆𝐑𝐎𝐔𝐏 ᯤ˼\n'
+                f'°•—————— {group_name} —————•°\n'
+                f'°︙ نورت قروبنا يـ {mention} 🥂.\n'
+                f'°︙ اسمك ⇚『{mention}』\n'
+                f'°︙ ايديك ⇚『{member.id}』\n'
+                f'°︙ يوزرك ⇚『{username}』\n\n'
+                f'°︙ تاريخ انضمامك ☜ {joined_date}\n'
+                f'°︙ الساعة ☜ {joined_time}\n\n'
+                f'°•—————— {group_name} —————•°'
             )
 
             keyboard = InlineKeyboardMarkup([
@@ -3365,12 +3437,12 @@ async def group_protection_text_command(update: Update, context: ContextTypes.DE
         st["all"] = enabled
         save_db(DB)
         lock_text = f"تم {'قفل' if enabled else 'فتح'} كل شيء 🔹"
-        await message.reply_text(lock_text)
+        await message.reply_text(premium_plain(lock_text), parse_mode=ParseMode.HTML)
         return
 
     key = protection_key_from_text(target)
     if not key:
-        await message.reply_text("المحدد غير معروف. مثال: قفل الملصقات أو فتح الروابط")
+        await message.reply_text(premium_plain("المحدد غير معروف. مثال: قفل الملصقات أو فتح الروابط"), parse_mode=ParseMode.HTML)
         return
 
     if action == "فتح":
@@ -3381,11 +3453,12 @@ async def group_protection_text_command(update: Update, context: ContextTypes.DE
         st["all"] = all(st.get(k, False) for k in PROTECTION_KEYS)
         save_db(DB)
         lock_text = f"تم فتح {PROTECTION_KEYS[key]} 🔹"
-        await message.reply_text(lock_text)
+        await message.reply_text(premium_plain(lock_text), parse_mode=ParseMode.HTML)
         return
 
     await message.reply_text(
-        f"اختر العقوبة عند قفل {PROTECTION_KEYS[key]}",
+        premium_plain(f"اختر العقوبة عند قفل {PROTECTION_KEYS[key]}"),
+        parse_mode=ParseMode.HTML,
         reply_markup=protection_command_text_keyboard(key),
     )
 
@@ -3394,7 +3467,7 @@ async def group_protection_text_command(update: Update, context: ContextTypes.DE
 CUSTOM_EMOJI_LOCK = "🔒"
 CUSTOM_EMOJI_PROTECTION = "🛡️"
 # هذا الـ ID مخصص لأيقونة القفل في الأزرار. النص يستخدم Unicode آمنًا.
-CUSTOM_EMOJI_LOCKED_REPLY = "🔒"
+CUSTOM_EMOJI_LOCKED_REPLY = f'<tg-emoji emoji-id="{PREMIUM_MESSAGE_EMOJI_ID}">🔒</tg-emoji>'
 
 
 def protection_message_with_emoji(text: str, marker: str, emoji: str) -> tuple[str, list]:
@@ -3622,7 +3695,8 @@ def build_application() -> Application:
         group=-100,
     )
 
-    # معالج الجروبات — الردود التلقائية
+    # معالج الجروبات — الرد التلقائي على كل الرسائل العادية (نصوص/وسائط/ملصقات).
+    # لرؤية رسائل الأعضاء العادية يجب تعطيل Privacy Mode من BotFather أو جعل البوت مشرفًا.
     application.add_handler(
         MessageHandler(
             filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL,
@@ -3655,6 +3729,9 @@ def main() -> None:
     application = build_application()
 
     logger.info("Starting MaX VIP bot...")
+    logger.info("Required group channels: %s", REQUIRED_CHANNELS)
+    logger.info("Group welcome handlers: chat_member + new_chat_members")
+    logger.info("Group mandatory subscription deletion: enabled")
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
