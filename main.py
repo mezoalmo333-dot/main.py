@@ -1544,8 +1544,11 @@ def _is_group_management_command(text: str) -> bool:
     value = (text or "").strip()
     if not value:
         return False
+    # دعم الأوامر العربية سواء كرسالة عادية أو كأمر يبدأ بـ /
+    value = re.sub(r"^/", "", value, count=1)
+    value = re.sub(r"@\w+$", "", value)
     return bool(re.match(
-        r"^(?:قفل|فتح|حماية|كتم|طرد|حظر|حذف|مسح|كشف|ايدي|ا|معلومات|اختبار الاشتراك)(?:\s+.*)?$",
+        r"^(?:قفل|فتح|حماية|كتم|طرد|حظر|حذف|مسح|كشف|ايدي|ا|معلومات|اختبار|اختبار\s+الاشتراك)(?:\s+.*)?$",
         value,
         re.UNICODE,
     ))
@@ -3870,6 +3873,35 @@ def build_application() -> Application:
     # صلاحية المنفذ تُفحص داخل كل دالة، لذلك الأعضاء العاديون لا يستطيعون تنفيذها.
     application.add_handler(CommandHandler("protect", protection_command))
     application.add_handler(CommandHandler("id", group_info_command))
+
+    # Telegram لا يعتبر أسماء الأوامر العربية Commands رسمية في Bot API،
+    # لذلك /اختبار و/حماية وغيرها تُعالج هنا كرسائل نصية صريحة.
+    # هذا يجعلها تعمل داخل الجروب حتى مع Privacy Mode عندما يكون البوت مشرفًا.
+    application.add_handler(MessageHandler(
+        filters.ChatType.GROUPS & filters.Regex(r"^\s*/اختبار(?:@\w+)?(?:\s+.*)?$"),
+        group_test_command,
+    ), group=-1)
+    application.add_handler(MessageHandler(
+        filters.ChatType.GROUPS & filters.Regex(r"^\s*/حماية(?:@\w+)?(?:\s+.*)?$"),
+        protection_command,
+    ), group=-1)
+    application.add_handler(MessageHandler(
+        filters.ChatType.GROUPS & filters.Regex(r"^\s*/(?:قفل|فتح)(?:@\w+)?(?:\s+.*)?$"),
+        group_protection_text_command,
+    ), group=-1)
+    application.add_handler(MessageHandler(
+        filters.ChatType.GROUPS & filters.Regex(r"^\s*/(?:كتم|طرد|حظر|حذف|مسح)(?:@\w+)?(?:\s+.*)?$"),
+        lambda u,c: group_member_action(u,c,
+            {
+                "كتم": "mute", "طرد": "kick", "حظر": "ban",
+                "حذف": "delete", "مسح": "clear",
+            }.get(re.sub(r"^/", "", (u.effective_message.text or "").split()[0]).split("@")[0], "delete")
+        ),
+    ), group=-1)
+    application.add_handler(MessageHandler(
+        filters.ChatType.GROUPS & filters.Regex(r"^\s*/(?:كشف|ايدي|ا|معلومات)(?:@\w+)?(?:\s+.*)?$"),
+        group_info_command,
+    ), group=-1)
 
     # مسارات / إضافية: تعمل مع Privacy Mode لأنها أوامر صريحة من Telegram.
     application.add_handler(CommandHandler("قفل", group_protection_text_command))
