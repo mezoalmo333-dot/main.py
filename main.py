@@ -24,7 +24,6 @@ from telegram import (
     BotCommand,
     BotCommandScopeDefault,
     BotCommandScopeChat,
-    MessageEntity,
 )
 from telegram.constants import ParseMode, ChatMemberStatus
 from telegram.ext import (
@@ -33,6 +32,7 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    ChatMemberHandler,
     PreCheckoutQueryHandler,
     filters,
 )
@@ -41,7 +41,7 @@ from telegram.ext import (
 # CONFIGURATION
 # ============================================================
 
-BOT_TOKEN = "8746223128:AAGyRjSb8I8pxL1TPKKvuTsSw_Wrzlg_7Cs"
+BOT_TOKEN = "8719852365:AAFaCMsqCXLzSFMANqKgZp02PQPzpDVtug4"
 OWNER_ID = 8037399518
 
 SUBSCRIPTION_STARS = 50
@@ -49,8 +49,8 @@ SUBSCRIPTION_DAYS = 30
 REFERRAL_POINTS_PER_INVITE = 1
 POINTS_REQUIRED_PER_SECTION = 5
 VIP_SECTION_ID = "vip"
-EMOJI_INVITE_LINK = "5141092083993412661"
-EMOJI_REFERRAL_NOTICE = "5775979900649347911"
+EMOJI_INVITE_LINK = "🔗"
+EMOJI_REFERRAL_NOTICE = "🎁"
 SUBSCRIPTION_SECONDS = 30 * 24 * 60 * 60
 
 # Persistent data directory.
@@ -69,8 +69,10 @@ LEGACY_DATABASE_FILE = Path("max_vip_bot_db.json")
 
 ALL_VIDEOS_URL = "https://t.me/mediation_King"
 DEFAULT_REQUIRED_CHANNEL = "https://t.me/mediation_King"
+SECOND_REQUIRED_CHANNEL = "https://t.me/Bbeemmsn"
 REQUIRED_CHANNEL_ID = "-1003390584761"
 REQUIRED_CHANNEL_INVITE_URL = "https://t.me/+7lFrm3Ae5yliZDg0"
+REQUIRED_CHANNELS = ["@mediation_King", "@Bbeemmsn"]
 
 BOT_TITLE = "مملكة الدلع الحصري"
 BOT_USERNAME = "TteeRMBoT"
@@ -104,27 +106,21 @@ REQUIRED_CHANNEL_TEXT = (
 # ============================================================
 
 GROUP_REPLY_MESSAGES = [
-    "تعال خاص ضروري 🫦🔥",
-    "ابعت بف هقولك",
-    "تعال فكيت البلوك",
-    "يارجال بقولك مولعة 🔥🫦",
-    "ابعتلي خاص ثانيه",
-    "تعال هقولك حاجه خاص",
-    "بقولك اي في فديوهات خاص تعال",
-    "ضيفتك ضيف وابعت خاص",
+    "لو عايز تعرف النظام، مستنيك خاص 💕",
+    "تعالى خاص وهقولك كل التفاصيل ❤️",
+    "لو محتاج تعرف التفاصيل ابعتلي خاص 💕",
+    "تعالى خاص يا صاحبي ❤️",
+    "لو حابب تعرف أكتر، الخاص مفتوح 💕",
+    "كل التفاصيل موجودة في الخاص ❤️",
+    "ابعتلي خاص وهقولك النظام بالكامل 💕",
+    "اللي عايز يعرف التفاصيل يتفضل خاص ❤️",
 ]
 
-
-# ردود إضافية أدخلها صاحب البوت كما هي
-GROUP_REPLY_MESSAGES.extend([
-    "يلا كلو ينضم للجروب الي فالبايو والي ينضم يخشلي خاص ياخد صوري نودز 🍌😍🌷💔",
-    "شـوف الـدلـع في النـ ـبـ ىذه نـ ـار 🔥🐆",
-    "مملكة الدلع الحصري:\nيلا بقا ابعت خااص ي يولا 💋",
-    "متيجي بف 🤤",
-    "يلا بينااااا😘",
-    "يلا بقا ابعت خااص ي يولا 💋",
-    "البايو هيحلبك 💕",
-])
+# روابط الاشتراك الإجباري التي تظهر في الجروبات
+GROUP_REQUIRED_TEXT = (
+    "لاستخدام البوت داخل الجروب، لازم تشترك في القناتين أولًا.\n\n"
+    "بعد الاشتراك ابعت أي رسالة مرة ثانية وسيتم التحقق تلقائيًا."
+)
 
 # نطاق الحروف العربية + الإنجليزية
 LETTERS_PATTERN = re.compile(
@@ -137,22 +133,22 @@ LETTERS_PATTERN = re.compile(
 # CUSTOM EMOJI IDs
 # ============================================================
 
-EMOJI_ADMIN = "5972226216353074147"
-EMOJI_ADD_VIDEO = "5974563533260590445"
-EMOJI_DELETE = "5976383044615934151"
-EMOJI_SUBSCRIBE = "5891131044756723016"
+EMOJI_ADMIN = "⚙️"
+EMOJI_ADD_VIDEO = "➕"
+EMOJI_DELETE = "🗑️"
+EMOJI_SUBSCRIBE = "⭐"
 
-EMOJI_CLOTHES = "5906597204809749180"
-EMOJI_ALL_VIDEOS = "5909008794586715815"
-EMOJI_CHECK_SUB = "5260416304224936047"
-EMOJI_HOME = "5257963315258204021"
+EMOJI_CLOTHES = "👕"
+EMOJI_ALL_VIDEOS = "🎬"
+EMOJI_CHECK_SUB = "✅"
+EMOJI_HOME = "🏠"
 
 EMOJI_FACES = [
-    "5909242019900823049",
-    "5908867262529409910",
-    "5906536933533684298",
-    "5891131044756723016",
-    "5906794932219154887",
+    "😀",
+    "😎",
+    "😂",
+    "😍",
+    "🥰",
 ]
 
 # ============================================================
@@ -230,6 +226,38 @@ def save_db(db: Dict[str, Any]) -> None:
     os.replace(tmp, DATABASE_FILE)
 
 
+EMOJI_ID_TO_UNICODE = {
+    "5141092083993412661": "🔗",
+    "5775979900649347911": "🎁",
+    "5972226216353074147": "⚙️",
+    "5974563533260590445": "➕",
+    "5976383044615934151": "🗑️",
+    "5891131044756723016": "⭐",
+    "5906597204809749180": "👕",
+    "5909008794586715815": "🎬",
+    "5260416304224936047": "✅",
+    "5257963315258204021": "🏠",
+    "5909242019900823049": "😀",
+    "5908867262529409910": "😎",
+    "5906536933533684298": "😂",
+    "5906794932219154887": "🥰",
+    "5206607081334906820": "🔒",
+    "5870734657384877785": "🛡️",
+    "5260293700088511294": "🔒",
+}
+
+def migrate_emoji_ids(value):
+    if isinstance(value, dict):
+        for k, v in list(value.items()):
+            value[k] = migrate_emoji_ids(v)
+        return value
+    if isinstance(value, list):
+        return [migrate_emoji_ids(v) for v in value]
+    if isinstance(value, str):
+        return EMOJI_ID_TO_UNICODE.get(value, value)
+    return value
+
+
 def load_db() -> Dict[str, Any]:
     path = Path(DATABASE_FILE)
 
@@ -251,6 +279,7 @@ def load_db() -> Dict[str, Any]:
     try:
         with path.open("r", encoding="utf-8") as f:
             db = json.load(f)
+        db = migrate_emoji_ids(db)
     except Exception:
         logger.exception("Database could not be read. Recreating database.")
         db = json.loads(json.dumps(DEFAULT_DB, ensure_ascii=False))
@@ -288,9 +317,8 @@ def load_db() -> Dict[str, Any]:
             db["settings"][_key] = _default
             changed = True
 
-    # الاشتراك الإجباري الوحيد: mediation_King
-    # احذف أي قنوات/روابط إجبارية قديمة من قاعدة البيانات.
-    required_only = [DEFAULT_REQUIRED_CHANNEL]
+    # الاشتراك الإجباري الثابت: القناتان المطلوبتان في الخاص والجروبات.
+    required_only = list(REQUIRED_CHANNELS)
     if db.get("required_channels") != required_only:
         db["required_channels"] = required_only
         changed = True
@@ -349,7 +377,7 @@ def colored_button(
         kwargs["style"] = style
 
     if emoji_id:
-        kwargs["icon_custom_emoji_id"] = emoji_id
+        kwargs["text"] = f"{emoji_id} {kwargs['text']}"
 
     return InlineKeyboardButton(**kwargs)
 
@@ -611,7 +639,7 @@ def make_button(
     kwargs["style"] = color
 
     if emoji_id:
-        kwargs["icon_custom_emoji_id"] = emoji_id
+        kwargs["text"] = f"{emoji_id} {kwargs['text']}"
 
     return InlineKeyboardButton(**kwargs)
 
@@ -651,7 +679,7 @@ def nested_category_keyboard(category: Dict[str, Any]) -> InlineKeyboardMarkup:
             "style": color,
         }
         if emoji_id:
-            kwargs["icon_custom_emoji_id"] = emoji_id
+            kwargs["text"] = f"{emoji_id} {kwargs['text']}"
 
         buttons.append(InlineKeyboardButton(**kwargs))
 
@@ -986,20 +1014,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             try:
                 referral_text = (f"وصلك احالة جديدة  {mention}  🐤\n\n"
                                  f"عدد احالاتك | {int(ref_record.get('referrals', 0))}  🐤")
-                # إرفاق Custom Emoji المطلوب في موضعي 🐤
-                entities = []
-                search_from = 0
-                while True:
-                    emoji_offset = referral_text.find("🐤", search_from)
-                    if emoji_offset < 0:
-                        break
-                    entities.append(MessageEntity(type="custom_emoji", offset=emoji_offset, length=2, custom_emoji_id=EMOJI_REFERRAL_NOTICE))
-                    search_from = emoji_offset + 1
                 await context.bot.send_message(
                     chat_id=referrer_id,
                     text=referral_text,
                     parse_mode=ParseMode.HTML,
-                    entities=entities,
                 )
             except Exception as exc:
                 logger.warning("Referral notification failed: %s", exc)
@@ -1330,10 +1348,7 @@ async def group_protection_handler(update: Update, context: ContextTypes.DEFAULT
         logger.warning("Protection penalty failed: %s", exc)
     mention = f'<a href="tg://user?id={user.id}">{user.full_name}</a>'
     try:
-        violation_text = (
-            f"يـ ممنوع ارسل {mention} هنا "
-            f'<tg-emoji emoji-id="{CUSTOM_EMOJI_PROTECTION}">🔹</tg-emoji>'
-        )
+        violation_text = f"يـ {mention}، {violation} هنا ممنوع {CUSTOM_EMOJI_LOCKED_REPLY}"
         await context.bot.send_message(
             chat.id,
             violation_text,
@@ -1341,6 +1356,41 @@ async def group_protection_handler(update: Update, context: ContextTypes.DEFAULT
         )
     except Exception:
         pass
+
+
+# ============================================================
+# GROUP MANDATORY SUBSCRIPTION + AUTO-REPLY
+# ============================================================
+
+async def send_group_required_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    """إظهار الاشتراك الإجباري داخل الجروب مع رابطَي القناتين."""
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("الاشتراك في mediation_King", url="https://t.me/mediation_King")],
+        [InlineKeyboardButton("الاشتراك في Bbeemmsn", url="https://t.me/Bbeemmsn")],
+    ])
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=GROUP_REQUIRED_TEXT,
+            reply_markup=keyboard,
+        )
+    except Exception as exc:
+        logger.warning("Could not send group mandatory subscription message: %s", exc)
+
+
+async def group_mandatory_subscription_ok(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    """يتحقق بشكل صارم من القناتين قبل السماح بردود البوت في أي جروب."""
+    for channel in REQUIRED_CHANNELS:
+        try:
+            member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
+            status = member.status
+            if status in (ChatMemberStatus.LEFT, ChatMemberStatus.KICKED):
+                return False
+        except Exception as exc:
+            # لو تعذر التحقق، لا نسمح بتجاوز الاشتراك الإجباري.
+            logger.warning("Mandatory group subscription check failed for %s / %s: %s", channel, user_id, exc)
+            return False
+    return True
 
 
 # ============================================================
@@ -1362,6 +1412,25 @@ async def group_auto_reply_handler(
 
     # لا يرد على رسائل البوتات
     if user.is_bot:
+        return
+
+    # لو الرسالة من نوع مقفول، معالج الحماية هو اللي يتولى الرد؛
+    # نمنع الرد التلقائي العام عشان العضو ما ياخدش رسالتين فوق بعض.
+    st = group_settings(chat.id)
+    if st.get("all") or any(st.get(k) for k in PROTECTION_KEYS):
+        if protection_violation(message, st):
+            return
+
+    # الاشتراك الإجباري مطبق على كل الجروبات.
+    if not await group_mandatory_subscription_ok(context, user.id):
+        st = group_settings(chat.id)
+        notice_key = f"mandatory_notice_{user.id}"
+        now = int(time.time())
+        last_notice = int(st.get(notice_key, 0) or 0)
+        if now - last_notice >= 60:
+            st[notice_key] = now
+            save_db(DB)
+            await send_group_required_message(context, chat.id)
         return
 
     # يرد على جميع رسائل المستخدمين في الجروب، بدون اشتراط حروف عربية أو إنجليزية.
@@ -1522,8 +1591,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             save_db(DB)
             await safe_answer_callback(query, "تم الفتح.")
             await query.edit_message_text(
-                f"تم فتح {PROTECTION_KEYS[key]} 🔹",
-                entities=[custom_emoji_entity(f"تم فتح {PROTECTION_KEYS[key]} 🔹", "🔹", CUSTOM_EMOJI_LOCK)],
+                f"تم فتح {PROTECTION_KEYS[key]} {CUSTOM_EMOJI_LOCK}",
                 reply_markup=protection_keyboard(update.effective_chat.id),
             )
             return
@@ -1548,7 +1616,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 save_db(DB)
                 await safe_answer_callback(query)
                 lock_text = "تم قفل كل شيء 🔹"
-                await query.edit_message_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)], reply_markup=protection_keyboard(update.effective_chat.id))
+                await query.edit_message_text(lock_text, reply_markup=protection_keyboard(update.effective_chat.id))
                 return
             if key == "all_off":
                 for k in PROTECTION_KEYS: st[k] = False
@@ -1556,7 +1624,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 save_db(DB)
                 await safe_answer_callback(query)
                 lock_text = "تم فتح كل شيء 🔹"
-                await query.edit_message_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)], reply_markup=protection_keyboard(update.effective_chat.id))
+                await query.edit_message_text(lock_text, reply_markup=protection_keyboard(update.effective_chat.id))
                 return
             await safe_answer_callback(query)
             await query.edit_message_text(f"اختر العقوبة عند قفل {PROTECTION_KEYS.get(key, key)}", reply_markup=protection_penalty_keyboard(key))
@@ -1577,7 +1645,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             save_db(DB)
             await safe_answer_callback(query)
             lock_text = f"تم حفظ البيانات\n\nتم قفل {PROTECTION_KEYS.get(key, key)} 🔹"
-            await query.edit_message_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)], reply_markup=protection_keyboard(update.effective_chat.id))
+            await query.edit_message_text(lock_text, reply_markup=protection_keyboard(update.effective_chat.id))
             return
         if data.startswith("mute_duration:"):
             key, duration = action[1], int(action[2])
@@ -1587,7 +1655,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             save_db(DB)
             await safe_answer_callback(query)
             lock_text = f"تم حفظ البيانات\n\nتم قفل {PROTECTION_KEYS.get(key, key)} 🔹"
-            await query.edit_message_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)], reply_markup=protection_keyboard(update.effective_chat.id))
+            await query.edit_message_text(lock_text, reply_markup=protection_keyboard(update.effective_chat.id))
             return
 
     if data.startswith("profile_like:"):
@@ -2401,24 +2469,6 @@ def make_button_child_id(parent: Dict[str, Any]) -> str:
     return candidate
 
 
-def extract_custom_emoji_id(message) -> str:
-    entities = []
-
-    if getattr(message, "entities", None):
-        entities.extend(message.entities)
-
-    if getattr(message, "caption_entities", None):
-        entities.extend(message.caption_entities)
-
-    for entity in entities:
-        if getattr(entity, "type", "") == "custom_emoji":
-            custom_id = getattr(entity, "custom_emoji_id", None)
-            if custom_id:
-                return str(custom_id)
-
-    return ""
-
-
 async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     message = update.effective_message
@@ -2636,19 +2686,20 @@ async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             save_db(DB)
             context.user_data.pop("admin_state", None)
             context.user_data.pop("admin_category_id", None)
-            await message.reply_text("تم حذف Custom Emoji من الزر.", reply_markup=category_admin_keyboard(category_id))
+            await message.reply_text("تم حذف الإيموجي من الزر.", reply_markup=category_admin_keyboard(category_id))
             return
 
-        emoji_id = extract_custom_emoji_id(message)
-        if not emoji_id:
-            await message.reply_text("لم أجد Custom Emoji في الرسالة.\nأرسل Custom Emoji واحدًا.")
+        emoji_value = (message.text or "").strip()
+        if not emoji_value:
+            await message.reply_text("ابعت إيموجي حقيقي واحد، زي ⭐ أو 🔥 أو 🎬.")
             return
 
-        category["style"]["emoji_id"] = emoji_id
+        # حفظ إيموجي Unicode حقيقي بدل أي Custom Emoji ID.
+        category["style"]["emoji_id"] = emoji_value
         save_db(DB)
         context.user_data.pop("admin_state", None)
         context.user_data.pop("admin_category_id", None)
-        await message.reply_text("تم حفظ Custom Emoji للزر.", reply_markup=category_admin_keyboard(category_id))
+        await message.reply_text("تم حفظ الإيموجي الحقيقي للزر.", reply_markup=category_admin_keyboard(category_id))
         return
 
     if state == "edit_cat_url":
@@ -2979,14 +3030,24 @@ async def group_member_action(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def group_welcome_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """ترحيب الجروبات — يعمل على رسالة دخول الأعضاء فقط، مع fallback للصورة إذا فشل إرسالها."""
+    """ترحيب موثوق بالجروبات باستخدام تحديث العضوية، مع دعم الطريقة القديمة أيضًا."""
     message = update.effective_message
-    chat = getattr(message, "chat", None) if message else None
+    chat_member_update = getattr(update, "chat_member", None)
+    chat = getattr(chat_member_update, "chat", None) if chat_member_update else getattr(message, "chat", None)
 
-    if not message or not chat or chat.type not in ("group", "supergroup"):
+    if not chat or chat.type not in ("group", "supergroup"):
         return
 
-    members = list(getattr(message, "new_chat_members", None) or [])
+    if chat_member_update:
+        old_status = getattr(chat_member_update.old_chat_member, "status", None)
+        new_status = getattr(chat_member_update.new_chat_member, "status", None)
+        if old_status not in (ChatMemberStatus.LEFT, ChatMemberStatus.KICKED) or new_status not in (ChatMemberStatus.MEMBER, ChatMemberStatus.RESTRICTED):
+            return
+        member = chat_member_update.new_chat_member.user
+        members = [member] if member and not member.is_bot else []
+    else:
+        members = list(getattr(message, "new_chat_members", None) or []) if message else []
+
     if not members:
         return
 
@@ -3090,7 +3151,7 @@ async def group_protection_text_command(update: Update, context: ContextTypes.DE
         st["all"] = enabled
         save_db(DB)
         lock_text = f"تم {'قفل' if enabled else 'فتح'} كل شيء 🔹"
-        await message.reply_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)])
+        await message.reply_text(lock_text)
         return
 
     key = protection_key_from_text(target)
@@ -3106,7 +3167,7 @@ async def group_protection_text_command(update: Update, context: ContextTypes.DE
         st["all"] = all(st.get(k, False) for k in PROTECTION_KEYS)
         save_db(DB)
         lock_text = f"تم فتح {PROTECTION_KEYS[key]} 🔹"
-        await message.reply_text(lock_text, entities=[custom_emoji_entity(lock_text, "🔹", CUSTOM_EMOJI_LOCK)])
+        await message.reply_text(lock_text)
         return
 
     await message.reply_text(
@@ -3116,28 +3177,14 @@ async def group_protection_text_command(update: Update, context: ContextTypes.DE
 
 
 # معرفات الـ Custom Emoji التي أرسلها المستخدم
-CUSTOM_EMOJI_LOCK = "5206607081334906820"
-CUSTOM_EMOJI_PROTECTION = "5870734657384877785"
+CUSTOM_EMOJI_LOCK = "🔒"
+CUSTOM_EMOJI_PROTECTION = "🛡️"
+# الـ Custom Emoji المطلوب في ردود الأشياء المقفولة.
+CUSTOM_EMOJI_LOCKED_REPLY = "🔒"
 
 
-def custom_emoji_entity(text: str, marker: str, custom_emoji_id: str) -> MessageEntity:
-    """إنشاء Entity لإظهار Custom Emoji بدل رقم الـ ID داخل الرسالة."""
-    pos = text.find(marker)
-    if pos < 0:
-        raise ValueError("custom emoji marker not found")
-    # Telegram offsets are UTF-16 code-unit offsets.
-    offset = len(text[:pos].encode("utf-16-le")) // 2
-    length = len(marker.encode("utf-16-le")) // 2
-    return MessageEntity(
-        type="custom_emoji",
-        offset=offset,
-        length=length,
-        custom_emoji_id=custom_emoji_id,
-    )
-
-
-def protection_message_with_emoji(text: str, marker: str, emoji_id: str) -> tuple[str, list]:
-    return text.replace(marker, "🔹", 1), [custom_emoji_entity(text.replace(marker, "🔹", 1), "🔹", emoji_id)]
+def protection_message_with_emoji(text: str, marker: str, emoji: str) -> tuple[str, list]:
+    return text.replace(marker, emoji, 1), []
 
 
 async def group_info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3345,12 +3392,9 @@ def build_application() -> Application:
         filters.ChatType.GROUPS & filters.Regex(r"^\s*(?:كشف|ايدي|ا|معلومات)(?:\s+.*)?$"),
         group_info_command,
     ))
-    # ترحيب الجروبات: أولوية عالية حتى لا يتعارض مع أي معالج رسائل آخر.
+    # ترحيب الجروبات: يعتمد على تحديث العضوية نفسه، لذلك يعمل حتى لو لم تصل رسالة خدمة الدخول.
     application.add_handler(
-        MessageHandler(
-            filters.ChatType.GROUPS & filters.StatusUpdate.NEW_CHAT_MEMBERS,
-            group_welcome_handler,
-        ),
+        ChatMemberHandler(group_welcome_handler, ChatMemberHandler.CHAT_MEMBER),
         group=-100,
     )
 
