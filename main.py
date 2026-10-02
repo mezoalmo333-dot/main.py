@@ -119,6 +119,17 @@ GROUP_REPLY_MESSAGES = [
     "تعالي خاص يا فحلي 💕❤️",
     "عايزه حد زيه كبير يريحني خاااص 💕",
     "يا دكرررري🫦💕",
+    "تعالي بعبصني بسرعه🥵",
+    "باييييووووو نارر 🤤",
+    "تعال امصلك",
+    "متيجي تنكني",
+    "اففففف اندري مبلول اوي 🥵",
+    "شيل زبرك",
+    "احط ع كـسي نوتيلا ومين الكلب اللي يجي يلحس 😉😂🫦",
+    "تعالي خاص اريحك",
+    "مين يركب فيا اوي ويخليها تترج اوي ويتعبني احح",
+    "انا تعبانه اوي عايزه دكتور مين هنا يعالجني 🥵😂♥️",
+    "عايـزه حد يغتصبني",
 ]
 
 # روابط الاشتراك الإجباري التي تظهر في الجروبات
@@ -1562,11 +1573,14 @@ async def group_auto_reply_handler(
 
     reply_text = random.choice(reply_pool)
     safe_reply = html.escape(reply_text)
+    # إظهار الـ Custom Emoji داخل كل رد محفوظ.
+    reply_custom_emoji = tg_emoji("5210952531676504517", "🔞")
+    formatted_reply = f"{safe_reply} {reply_custom_emoji}"
 
     try:
         logger.info("GROUP_REPLY_SEND chat=%s user=%s", chat.id, user.id)
         await message.reply_text(
-            bot_text(safe_reply),
+            bot_text(formatted_reply),
             parse_mode=ParseMode.HTML,
             reply_to_message_id=message.message_id,
         )
@@ -1576,7 +1590,7 @@ async def group_auto_reply_handler(
         try:
             await context.bot.send_message(
                 chat_id=chat.id,
-                text=bot_text(safe_reply),
+                text=bot_text(formatted_reply),
                 parse_mode=ParseMode.HTML,
             )
         except Exception:
