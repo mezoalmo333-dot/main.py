@@ -43,14 +43,15 @@ from telegram.ext import (
 # ============================================================
 
 BOT_TOKEN = "8719852365:AAFaCMsqCXLzSFMANqKgZp02PQPzpDVtug4"
-OWNER_ID = 8255594932
+OWNER_ID = 803002143
+ADMIN_IDS = [803002143, 8037399518]
 SUBSCRIPTION_STARS = 50
 SUBSCRIPTION_DAYS = 30
 REFERRAL_POINTS_PER_INVITE = 1
 POINTS_REQUIRED_PER_SECTION = 5
 VIP_SECTION_ID = "vip"
-EMOJI_INVITE_LINK = "🔗"
-EMOJI_REFERRAL_NOTICE = "🎁"
+EMOJI_INVITE_LINK = "5141092083993412661"
+EMOJI_REFERRAL_NOTICE = "5775979900649347911"
 SUBSCRIPTION_SECONDS = 30 * 24 * 60 * 60
 
 # Persistent data directory.
@@ -133,22 +134,22 @@ LETTERS_PATTERN = re.compile(
 # CUSTOM EMOJI IDs
 # ============================================================
 
-EMOJI_ADMIN = "⚙️"
-EMOJI_ADD_VIDEO = "➕"
-EMOJI_DELETE = "🗑️"
-EMOJI_SUBSCRIBE = "⭐"
+EMOJI_ADMIN = "5972226216353074147"
+EMOJI_ADD_VIDEO = "5974563533260590445"
+EMOJI_DELETE = "5976383044615934151"
+EMOJI_SUBSCRIBE = "5891131044756723016"
 
-EMOJI_CLOTHES = "👕"
-EMOJI_ALL_VIDEOS = "🎬"
-EMOJI_CHECK_SUB = "✅"
-EMOJI_HOME = "🏠"
+EMOJI_CLOTHES = "5906597204809749180"
+EMOJI_ALL_VIDEOS = "5909008794586715815"
+EMOJI_CHECK_SUB = "5260416304224936047"
+EMOJI_HOME = "5257963315258204021"
 
 EMOJI_FACES = [
-    "😀",
-    "😎",
-    "😂",
-    "😍",
-    "🥰",
+    "5909242019900823049",
+    "5908867262529409910",
+    "5906536933533684298",
+    "5906794932219154887",
+    "5906794932219154887",
 ]
 
 # ============================================================
@@ -261,7 +262,10 @@ def migrate_emoji_ids(value):
     if isinstance(value, list):
         return [migrate_emoji_ids(v) for v in value]
     if isinstance(value, str):
-        return EMOJI_ID_TO_UNICODE.get(value, value)
+        # Keep Telegram custom-emoji IDs as numeric strings. Converting them
+        # to Unicode destroys the custom emoji information needed by
+        # icon_custom_emoji_id on inline keyboard buttons.
+        return value
     return value
 
 
@@ -300,9 +304,10 @@ def load_db() -> Dict[str, Any]:
             db[key] = json.loads(json.dumps(value, ensure_ascii=False))
             changed = True
 
-    if OWNER_ID not in db["admins"]:
-        db["admins"].append(OWNER_ID)
-        changed = True
+    for _admin_id in [OWNER_ID, *ADMIN_IDS]:
+        if _admin_id not in db["admins"]:
+            db["admins"].append(_admin_id)
+            changed = True
 
     db.setdefault("keyword_replies", [])
 
@@ -362,7 +367,7 @@ def get_subscription_stars() -> int:
 
 
 def is_admin(user_id: int) -> bool:
-    return user_id == OWNER_ID or user_id in DB.get("admins", [])
+    return user_id == OWNER_ID or user_id in ADMIN_IDS or user_id in DB.get("admins", [])
 
 
 def colored_button(
@@ -1497,6 +1502,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         or data.startswith("penalty")
         or data.startswith("mute_duration:")
         or data.startswith("profile_like:")
+        or data.startswith("unmute:")
     )
 
     # أي أزرار للقائمة الرئيسية/الاشتراك ممنوعة داخل الجروبات، مع استثناء أزرار الحماية والكشف.
@@ -1513,6 +1519,57 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     ensure_user(user)
+
+    if data.startswith("unmute:"):
+        try:
+            _, chat_id_raw, target_id_raw = data.split(":", 2)
+            chat_id = int(chat_id_raw)
+            target_id = int(target_id_raw)
+        except (TypeError, ValueError):
+            await safe_answer_callback(query, "بيانات الزر غير صحيحة.", True)
+            return
+
+        if not update.effective_chat or update.effective_chat.id != chat_id:
+            await safe_answer_callback(query, "هذا الزر ليس من هذا الجروب.", True)
+            return
+
+        try:
+            actor_member = await context.bot.get_chat_member(chat_id, user.id)
+            if actor_member.status not in ("administrator", "creator") and not is_admin(user.id):
+                await safe_answer_callback(query, "الأمر للمشرفين فقط.", True)
+                return
+        except Exception:
+            await safe_answer_callback(query, "تعذر التحقق من صلاحياتك.", True)
+            return
+
+        try:
+            # Restore the group's default member permissions when possible.
+            chat_info = await context.bot.get_chat(chat_id)
+            permissions = getattr(chat_info, "permissions", None)
+            if permissions is None:
+                try:
+                    permissions = __import__('telegram').ChatPermissions.all_permissions()
+                except Exception:
+                    permissions = __import__('telegram').ChatPermissions(can_send_messages=True)
+
+            await context.bot.restrict_chat_member(
+                chat_id,
+                target_id,
+                permissions=permissions,
+            )
+            await safe_answer_callback(query, "تم فك الكتم.")
+            if query.message:
+                try:
+                    await query.edit_message_text("تم فك كتم العضو.")
+                except Exception:
+                    try:
+                        await query.edit_message_reply_markup(reply_markup=None)
+                    except Exception:
+                        pass
+        except Exception as exc:
+            logger.exception("Manual unmute failed: %s", exc)
+            await safe_answer_callback(query, "تعذر فك الكتم.", True)
+        return
 
     if data == "noop":
         await safe_answer_callback(query)
@@ -2714,12 +2771,18 @@ async def admin_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             await message.reply_text("تم حذف الإيموجي من الزر.", reply_markup=category_admin_keyboard(category_id))
             return
 
-        emoji_value = (message.text or "").strip()
+        custom_emoji_id = ""
+        for entity in (message.entities or []):
+            if getattr(entity, "type", "") == "custom_emoji" and getattr(entity, "custom_emoji_id", None):
+                custom_emoji_id = str(entity.custom_emoji_id)
+                break
+
+        emoji_value = custom_emoji_id or (message.text or "").strip()
         if not emoji_value:
-            await message.reply_text("ابعت إيموجي حقيقي واحد، زي ⭐ أو 🔥 أو 🎬.")
+            await message.reply_text("ابعت إيموجي مميز حقيقي من تيليجرام، أو إيموجي عادي، أو اكتب حذف.")
             return
 
-        # حفظ إيموجي Unicode حقيقي بدل أي Custom Emoji ID.
+        # حفظ الـ Custom Emoji ID نفسه عند إرساله، وليس تحويله إلى نص عادي.
         category["style"]["emoji_id"] = emoji_value
         save_db(DB)
         context.user_data.pop("admin_state", None)
@@ -3013,6 +3076,17 @@ def resolve_target_user(message):
     return None
 
 
+def manual_unmute_keyboard(chat_id: int, target_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [colored_button(
+            "فك كتم",
+            callback_data=f"unmute:{chat_id}:{target_id}",
+            style="success",
+            emoji_id=EMOJI_CHECK_SUB,
+        )]
+    ])
+
+
 async def group_member_action(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str):
     message, chat, actor = update.effective_message, update.effective_chat, update.effective_user
     if not message or not chat or chat.type not in ("group", "supergroup") or not actor:
@@ -3042,8 +3116,17 @@ async def group_member_action(update: Update, context: ContextTypes.DEFAULT_TYPE
             await context.bot.ban_chat_member(chat.id, target_id)
             await message.reply_text("تم حظر الشخص.")
         elif action == "mute":
-            await context.bot.restrict_chat_member(chat.id, target_id, permissions=__import__('telegram').ChatPermissions(can_send_messages=False), until_date=int(time.time())+3600)
-            await message.reply_text("تم كتم الشخص لمدة ساعة.")
+            # الكتم اليدوي دائم: يبقى حتى يضغط المشرف «فك كتم».
+            # لا نرسل until_date حتى لا ينتهي تلقائيًا بعد ساعة.
+            await context.bot.restrict_chat_member(
+                chat.id,
+                target_id,
+                permissions=__import__('telegram').ChatPermissions(can_send_messages=False),
+            )
+            await message.reply_text(
+                "تم كتم الشخص.\nيظل مكتومًا حتى فك الكتم.",
+                reply_markup=manual_unmute_keyboard(chat.id, target_id),
+            )
         elif action == "clear":
             if message.reply_to_message:
                 await message.reply_to_message.delete()
@@ -3204,8 +3287,8 @@ async def group_protection_text_command(update: Update, context: ContextTypes.DE
 # معرفات الـ Custom Emoji التي أرسلها المستخدم
 CUSTOM_EMOJI_LOCK = "🔒"
 CUSTOM_EMOJI_PROTECTION = "🛡️"
-# الـ Custom Emoji المطلوب في ردود الأشياء المقفولة.
-CUSTOM_EMOJI_LOCKED_REPLY = EMOJI_ID_TO_UNICODE.get("5260293700088511294", "🔒")
+# هذا الـ ID مخصص لأيقونة القفل في الأزرار. النص يستخدم Unicode آمنًا.
+CUSTOM_EMOJI_LOCKED_REPLY = "🔒"
 
 
 def protection_message_with_emoji(text: str, marker: str, emoji: str) -> tuple[str, list]:
