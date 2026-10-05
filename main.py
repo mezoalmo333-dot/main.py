@@ -23,6 +23,7 @@ No real-money betting, wagering, withdrawal, or gambling logic is included.
 import json
 import logging
 import os
+import random
 import uuid
 from html import escape
 from pathlib import Path
@@ -60,6 +61,14 @@ MAX_TOPUP = 100000
 
 # Telegram Stars: 1 Star = 1 service-credit unit.
 STARS_PER_CREDIT = 3
+
+# Investment section: transparent random-result demo only.
+# The displayed result is not added to the user's balance and is not withdrawable.
+INVESTMENT_MIN_BALANCE = 150
+INVESTMENT_RESULT_MIN = 1000
+INVESTMENT_RESULT_MAX = 50000
+INVESTMENT_RESULT_EMOJI_ID = "5461151367559141950"
+INVESTMENT_BUTTON_EMOJI_ID = "5974217466270716579"
 
 ASK_AMOUNT, ASK_SENDER, ASK_RECEIPT = range(3)
 ADMIN_CASH, ADMIN_IMAGE, ADMIN_BROADCAST_CONTENT, ADMIN_BROADCAST_BUTTONS, ADMIN_ADD, ADMIN_FUNDS = range(10, 16)
@@ -414,15 +423,95 @@ async def investment_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     user = get_user(u.id, u.first_name, u.username) if u else None
-    current_balance = user.get("credits", 0) if user else 0
+    current_balance = int(user.get("credits", 0)) if user else 0
+
+    if current_balance < INVESTMENT_MIN_BALANCE:
+        text = bold_quote(
+            "قسم الاستثمار\n\n"
+            f"رصيدك الحالي: {current_balance} جنيه\n\n"
+            f"لازم يكون رصيدك {INVESTMENT_MIN_BALANCE} جنيه أو أكثر للدخول إلى قسم الاستثمار."
+        )
+        keyboard = InlineKeyboardMarkup([
+            [styled_button("تعبئة رصيد", "topup", "primary", "5206607081334906820")],
+            [styled_button("رجوع", "back_main", "danger", "5260293700088511294")],
+        ])
+        await q.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+        return
+
+    emoji = tg_emoji(INVESTMENT_RESULT_EMOJI_ID, "⭐")
     text = bold_quote(
-        "قسم الاستثمار\n\n"
+        f"{emoji} أرباحك الآن جاهزة\n\n"
         f"رصيدك الحالي: {current_balance} جنيه\n\n"
-        "يمكنك متابعة تفاصيل الاستثمار من هذا القسم."
+        "اضغط الزر لاختيار نتيجة عشوائية من 1000 إلى 50000 جنيه.\n"
+        "هذه نتيجة تجريبية للعرض فقط وليست ربحًا نقديًا أو رصيدًا قابلًا للسحب."
     )
-    await q.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+    keyboard = InlineKeyboardMarkup([
+        [styled_button("اختيار نتيجة عشوائية", "investment_result", "success", INVESTMENT_BUTTON_EMOJI_ID)],
         [styled_button("رجوع", "back_main", "danger", "5260293700088511294")],
-    ]))
+    ])
+    try:
+        await q.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+    except BadRequest:
+        await q.edit_message_text(
+            bold_quote(
+                "⭐ أرباحك الآن جاهزة\n\n"
+                f"رصيدك الحالي: {current_balance} جنيه\n\n"
+                "اضغط الزر لاختيار نتيجة عشوائية من 1000 إلى 50000 جنيه.\n"
+                "هذه نتيجة تجريبية للعرض فقط وليست ربحًا نقديًا أو رصيدًا قابلًا للسحب."
+            ),
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+
+
+async def investment_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    if u and is_blocked(u.id):
+        if update.callback_query:
+            await update.callback_query.answer("أنت محظور من البوت.", show_alert=True)
+        return
+
+    q = update.callback_query
+    await q.answer()
+    user = get_user(u.id, u.first_name, u.username) if u else None
+    current_balance = int(user.get("credits", 0)) if user else 0
+
+    if current_balance < INVESTMENT_MIN_BALANCE:
+        await q.edit_message_text(
+            bold_quote(
+                "قسم الاستثمار\n\n"
+                f"رصيدك الحالي: {current_balance} جنيه\n\n"
+                f"لازم يكون رصيدك {INVESTMENT_MIN_BALANCE} جنيه أو أكثر للدخول إلى قسم الاستثمار."
+            ),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [styled_button("تعبئة رصيد", "topup", "primary", "5206607081334906820")],
+                [styled_button("رجوع", "back_main", "danger", "5260293700088511294")],
+            ]),
+        )
+        return
+
+    amount = random.randint(INVESTMENT_RESULT_MIN, INVESTMENT_RESULT_MAX)
+    emoji = tg_emoji(INVESTMENT_RESULT_EMOJI_ID, "⭐")
+    text = bold_quote(
+        f"{emoji} تم اختيار النتيجة: {amount} جنيه\n\n"
+        "هذه نتيجة عشوائية تجريبية فقط، ولا يتم إضافتها إلى رصيدك ولا تمثل أرباحًا نقدية أو مبلغًا قابلًا للسحب."
+    )
+    keyboard = InlineKeyboardMarkup([
+        [styled_button("اختيار نتيجة أخرى", "investment_result", "success", INVESTMENT_BUTTON_EMOJI_ID)],
+        [styled_button("رجوع", "back_main", "danger", "5260293700088511294")],
+    ])
+    try:
+        await q.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+    except BadRequest:
+        await q.edit_message_text(
+            bold_quote(
+                f"⭐ تم اختيار النتيجة: {amount} جنيه\n\n"
+                "هذه نتيجة عشوائية تجريبية فقط، ولا يتم إضافتها إلى رصيدك ولا تمثل أرباحًا نقدية أو مبلغًا قابلًا للسحب."
+            ),
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
 
 
 async def how_to_use(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1625,6 +1714,7 @@ def build_app():
     )
 
     app.add_handler(CallbackQueryHandler(investment_now, pattern=r"^investment_now$"))
+    app.add_handler(CallbackQueryHandler(investment_result, pattern=r"^investment_result$"))
     app.add_handler(CallbackQueryHandler(how_to_use, pattern=r"^howto$"))
     app.add_handler(CallbackQueryHandler(support_button, pattern=r"^support$"))
     app.add_handler(CallbackQueryHandler(back_main, pattern=r"^back_main$"))
