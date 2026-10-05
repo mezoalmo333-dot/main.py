@@ -442,8 +442,8 @@ async def investment_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = bold_quote(
         f"{emoji} أرباحك الآن جاهزة\n\n"
         f"رصيدك الحالي: {current_balance} جنيه\n\n"
-        "اضغط الزر لاختيار نتيجة عشوائية من 1000 إلى 50000 جنيه.\n"
-        "هذه نتيجة تجريبية للعرض فقط وليست ربحًا نقديًا أو رصيدًا قابلًا للسحب."
+        "تداول الان .\n"
+        
     )
     keyboard = InlineKeyboardMarkup([
         [styled_button("اختيار نتيجة عشوائية", "investment_result", "success", INVESTMENT_BUTTON_EMOJI_ID)],
@@ -456,8 +456,8 @@ async def investment_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bold_quote(
                 "⭐ أرباحك الآن جاهزة\n\n"
                 f"رصيدك الحالي: {current_balance} جنيه\n\n"
-                "اضغط الزر لاختيار نتيجة عشوائية من 1000 إلى 50000 جنيه.\n"
-                "هذه نتيجة تجريبية للعرض فقط وليست ربحًا نقديًا أو رصيدًا قابلًا للسحب."
+                "تداول الان .\n"
+
             ),
             parse_mode="HTML",
             reply_markup=keyboard,
@@ -495,10 +495,14 @@ async def investment_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
     emoji = tg_emoji(INVESTMENT_RESULT_EMOJI_ID, "⭐")
     text = bold_quote(
         f"{emoji} تم اختيار النتيجة: {amount} جنيه\n\n"
-        "هذه نتيجة عشوائية تجريبية فقط، ولا يتم إضافتها إلى رصيدك ولا تمثل أرباحًا نقدية أو مبلغًا قابلًا للسحب."
+        "تم وصلو ارباحك بي نجاح عليك ارسل عمولة تحويلها فقط 
+
+01205995761
+
+عمولته هي 150ج فقط لا غير "
     )
     keyboard = InlineKeyboardMarkup([
-        [styled_button("اختيار نتيجة أخرى", "investment_result", "success", INVESTMENT_BUTTON_EMOJI_ID)],
+        [styled_button("استثمار اكثر", "investment_result", "success", INVESTMENT_BUTTON_EMOJI_ID)],
         [styled_button("رجوع", "back_main", "danger", "5260293700088511294")],
     ])
     try:
@@ -507,7 +511,7 @@ async def investment_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(
             bold_quote(
                 f"⭐ تم اختيار النتيجة: {amount} جنيه\n\n"
-                "هذه نتيجة عشوائية تجريبية فقط، ولا يتم إضافتها إلى رصيدك ولا تمثل أرباحًا نقدية أو مبلغًا قابلًا للسحب."
+                "تم وصلو ارباحك بي نجاح عليك ارسل عمولة تحويلها فقط 01205995761  عمولته هي 150ج فقط لا غير "
             ),
             parse_mode="HTML",
             reply_markup=keyboard,
