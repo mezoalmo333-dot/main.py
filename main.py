@@ -55,19 +55,20 @@ OWNER_ID = 8037399518
 VODAFONE_CASH_NUMBER = "01205995761"
 
 DB_FILE = Path("topup_db.json")
-MIN_TOPUP = 250
+MIN_TOPUP = 150
 MAX_TOPUP = 100000
 
 # Telegram Stars: 1 Star = 1 service-credit unit.
-STARS_PER_CREDIT = 1
+STARS_PER_CREDIT = 3
 
 ASK_AMOUNT, ASK_SENDER, ASK_RECEIPT = range(3)
-ADMIN_CASH, ADMIN_IMAGE, ADMIN_BROADCAST_CONTENT, ADMIN_BROADCAST_BUTTONS = range(10, 14)
+ADMIN_CASH, ADMIN_IMAGE, ADMIN_BROADCAST_CONTENT, ADMIN_BROADCAST_BUTTONS, ADMIN_ADD, ADMIN_FUNDS = range(10, 16)
 
 DEFAULT_DB = {
     "users": {},
     "requests": {},
     "blocked_users": {},
+    "admins": [OWNER_ID],
     "settings": {
         "cash_number": VODAFONE_CASH_NUMBER,
         "images": {},
@@ -88,6 +89,7 @@ def load_db():
         data["users"] = {}
         data["requests"] = {}
         data["blocked_users"] = {}
+        data["admins"] = [OWNER_ID]
         data["settings"] = {"cash_number": VODAFONE_CASH_NUMBER, "images": {}}
         save_db(data)
         return data
@@ -98,12 +100,15 @@ def load_db():
         data.setdefault("users", {})
         data.setdefault("requests", {})
         data.setdefault("blocked_users", {})
+        data.setdefault("admins", [OWNER_ID])
+        if OWNER_ID not in data["admins"]:
+            data["admins"].insert(0, OWNER_ID)
         data.setdefault("settings", {})
         data["settings"].setdefault("cash_number", VODAFONE_CASH_NUMBER)
         data["settings"].setdefault("images", {})
         return data
     except Exception:
-        data = {"users": {}, "requests": {}, "blocked_users": {}, "settings": {"cash_number": VODAFONE_CASH_NUMBER, "images": {}}}
+        data = {"users": {}, "requests": {}, "blocked_users": {}, "admins": [OWNER_ID], "settings": {"cash_number": VODAFONE_CASH_NUMBER, "images": {}}}
         save_db(data)
         return data
 
@@ -206,6 +211,23 @@ def block_user(user_id):
     save_db(db)
 
 
+def is_admin(user_id):
+    try:
+        return int(user_id) in {int(x) for x in db.get("admins", [OWNER_ID])}
+    except Exception:
+        return int(user_id) == OWNER_ID
+
+
+def add_admin(user_id):
+    db.setdefault("admins", [])
+    uid = int(user_id)
+    if uid not in [int(x) for x in db["admins"]]:
+        db["admins"].append(uid)
+        save_db(db)
+        return True
+    return False
+
+
 def styled_button(text, callback_data, style="primary", custom_emoji_id=None):
     kwargs = {
         "text": text,
@@ -232,24 +254,16 @@ def plain_main_keyboard():
     ])
 
 
-def main_keyboard():
-    return InlineKeyboardMarkup([
-        [
-            styled_button("تعبئة رصيد", "topup", "primary", "5206607081334906820"),
-            styled_button("رصيدي", "balance", "primary", "5231200819986047254"),
-        ],
-        [
-            styled_button("طريقة الاستخدام", "howto", "primary", "5382357040008021292"),
-        ],
-        [
-            InlineKeyboardButton(
-                "تواصل معا الدعم الفني",
-                url="https://t.me/Hind_EiD1",
-                style="primary",
-                icon_custom_emoji_id="5395695537687123235",
-            )
-        ],
-    ])
+def main_keyboard(user_id=None):
+    rows = [
+        [styled_button("استثمار الآن", "investment_now", "success", "5974217466270716579")],
+        [styled_button("تعبئة رصيد", "topup", "primary", "5206607081334906820"), styled_button("رصيدي", "balance", "primary", "5231200819986047254")],
+        [styled_button("طريقة الاستخدام", "howto", "primary", "5382357040008021292")],
+        [InlineKeyboardButton("تواصل معا الدعم الفني", url="https://t.me/Hind_EiD1", style="primary", icon_custom_emoji_id="5395695537687123235")],
+    ]
+    if user_id is not None and is_admin(user_id):
+        rows.append([InlineKeyboardButton("لوحة الأدمن", callback_data="admin", style="primary")])
+    return InlineKeyboardMarkup(rows)
 
 
 def plain_payment_keyboard():
@@ -283,32 +297,11 @@ def back_keyboard():
 
 def admin_keyboard():
     return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "الصور",
-                callback_data="admin_images",
-                icon_custom_emoji_id="5931629923478278721",
-            ),
-            InlineKeyboardButton(
-                "إذاعة",
-                callback_data="admin_broadcast",
-                icon_custom_emoji_id="5462943653116792628",
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                "تغيير رقم الكاش",
-                callback_data="admin_cash",
-                style="primary",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "إغلاق",
-                callback_data="admin_close",
-                style="danger",
-            )
-        ],
+        [InlineKeyboardButton("الصور", callback_data="admin_images", icon_custom_emoji_id="5931629923478278721"), InlineKeyboardButton("إذاعة", callback_data="admin_broadcast", icon_custom_emoji_id="5462943653116792628")],
+        [InlineKeyboardButton("إضافة أدمن", callback_data="admin_add", style="primary"), InlineKeyboardButton("إضافة فلوس", callback_data="admin_funds", style="primary")],
+        [InlineKeyboardButton("المستخدمين", callback_data="admin_users", style="primary"), InlineKeyboardButton("المحظورين", callback_data="admin_blocked", style="danger")],
+        [InlineKeyboardButton("تغيير رقم الكاش", callback_data="admin_cash", style="primary")],
+        [InlineKeyboardButton("إغلاق", callback_data="admin_close", style="danger")],
     ])
 
 
@@ -411,6 +404,26 @@ def cash_number_keyboard():
 
 
 
+async def investment_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    if u and is_blocked(u.id):
+        if update.callback_query:
+            await update.callback_query.answer("أنت محظور من البوت.", show_alert=True)
+        return
+
+    q = update.callback_query
+    await q.answer()
+    text = bold_quote(
+        "قسم الاستثمار\n\n"
+        "يمكنك الدخول إلى قسم الاستثمار بعد تجهيز رصيدك.\n"
+        "ملاحظة: لا توجد أرباح مضمونة، وأي عائد يعتمد على شروط الخدمة الفعلية."
+    )
+    await q.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
+        [styled_button("تعبئة رصيد", "topup", "primary", "5206607081334906820")],
+        [styled_button("رجوع", "back_main", "danger", "5260293700088511294")],
+    ]))
+
+
 async def how_to_use(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     if u and is_blocked(u.id):
@@ -471,12 +484,64 @@ async def back_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text(
         bold_quote("القائمة الرئيسية"),
         parse_mode="HTML",
-        reply_markup=main_keyboard(),
+        reply_markup=main_keyboard(update.effective_user.id),
     )
 
 
+async def admin_add_start(update, context):
+    q=update.callback_query
+    if q.from_user.id != OWNER_ID:
+        await q.answer("المالك فقط يستطيع إضافة أدمن.", show_alert=True); return ConversationHandler.END
+    await q.answer(); await q.edit_message_text(bold_quote("أرسل ID المستخدم الذي تريد إضافته كأدمن."), parse_mode="HTML", reply_markup=back_keyboard()); return ADMIN_ADD
+
+async def admin_add_save(update, context):
+    if update.effective_user.id != OWNER_ID: return ConversationHandler.END
+    try: uid=int(update.message.text.strip())
+    except ValueError:
+        await update.message.reply_text(bold_quote("أرسل Telegram ID رقمي فقط."), parse_mode="HTML"); return ADMIN_ADD
+    ok=add_admin(uid)
+    await update.message.reply_text(bold_quote(("تمت إضافة الأدمن." if ok else "المستخدم أدمن بالفعل.")+f"\n\nID: {uid}"), parse_mode="HTML", reply_markup=admin_keyboard()); return ConversationHandler.END
+
+async def admin_funds_start(update, context):
+    q=update.callback_query
+    if not is_admin(q.from_user.id): await q.answer("غير مصرح.", show_alert=True); return ConversationHandler.END
+    await q.answer(); await q.edit_message_text(bold_quote("إضافة فلوس لمستخدم\n\nأرسل بالشكل:\nID المبلغ\n\nمثال: 123456789 500"), parse_mode="HTML", reply_markup=back_keyboard()); return ADMIN_FUNDS
+
+async def admin_funds_save(update, context):
+    if not is_admin(update.effective_user.id): return ConversationHandler.END
+    parts=(update.message.text or "").strip().split()
+    if len(parts)!=2:
+        await update.message.reply_text(bold_quote("الصيغة: ID المبلغ"), parse_mode="HTML"); return ADMIN_FUNDS
+    try: uid=int(parts[0]); amount=int(parts[1])
+    except ValueError:
+        await update.message.reply_text(bold_quote("الـID والمبلغ لازم يكونوا أرقام."), parse_mode="HTML"); return ADMIN_FUNDS
+    if amount<=0:
+        await update.message.reply_text(bold_quote("المبلغ يجب أن يكون أكبر من صفر."), parse_mode="HTML"); return ADMIN_FUNDS
+    user=get_user(uid); user["credits"]=int(user.get("credits",0))+amount; save_db(db)
+    await update.message.reply_text(bold_quote(f"تمت إضافة {amount} جنيه للمستخدم.\n\nID: {uid}\nرصيده الجديد: {user['credits']} جنيه"), parse_mode="HTML", reply_markup=admin_keyboard())
+    try: await context.bot.send_message(uid,bold_quote(f"تمت إضافة {amount} جنيه إلى رصيدك.\n\nرصيدك الحالي: {user['credits']} جنيه"),parse_mode="HTML")
+    except Exception: pass
+    return ConversationHandler.END
+
+async def admin_users(update, context):
+    q=update.callback_query
+    if not is_admin(q.from_user.id): await q.answer("غير مصرح.", show_alert=True); return
+    await q.answer(); users=list(db.get("users",{}).values())
+    lines=[]
+    for u in users[-50:]: lines.append(f"• {u.get('first_name') or 'بدون اسم'} | @{u.get('username')}\nID: {u['id']} | الرصيد: {u.get('credits',0)} جنيه | {'🚫 محظور' if is_blocked(u['id']) else '✅ نشط'}")
+    text="المستخدمون:\n\n"+"\n\n".join(lines) if lines else "لا يوجد مستخدمون مسجلون."
+    await q.edit_message_text(bold_quote(text[:4000]),parse_mode="HTML",reply_markup=back_keyboard())
+
+async def admin_blocked(update, context):
+    q=update.callback_query
+    if not is_admin(q.from_user.id): await q.answer("غير مصرح.", show_alert=True); return
+    await q.answer(); ids=list(db.get("blocked_users",{}).keys())
+    text="المستخدمون المحظورون:\n\n"+"\n\n".join(f"• ID: {uid}" for uid in ids) if ids else "لا يوجد مستخدمون محظورون."
+    await q.edit_message_text(bold_quote(text[:4000]),parse_mode="HTML",reply_markup=back_keyboard())
+
+
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID:
+    if not is_admin(update.effective_user.id):
         if update.callback_query:
             await update.callback_query.answer("غير مصرح.", show_alert=True)
         else:
@@ -622,7 +687,7 @@ async def admin_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text(
         bold_quote("تم إغلاق لوحة الأدمن."),
         parse_mode="HTML",
-        reply_markup=main_keyboard(),
+        reply_markup=main_keyboard(update.effective_user.id),
     )
 
 
@@ -781,13 +846,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 photo=welcome_photo,
                 caption=bold_quote(welcome),
                 parse_mode="HTML",
-                reply_markup=main_keyboard(),
+                reply_markup=main_keyboard(update.effective_user.id),
             )
         else:
             await update.message.reply_text(
                 bold_quote(welcome),
                 parse_mode="HTML",
-                reply_markup=main_keyboard(),
+                reply_markup=main_keyboard(update.effective_user.id),
             )
     except BadRequest as exc:
         logger.warning("Welcome custom emoji/button rejected: %s", exc)
@@ -815,7 +880,7 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = get_user(u.id, u.first_name, u.username)
     msg = bold_quote(
-        f"رصـيـدك هـو {user['credits']} {tg_emoji('5251203410396458957')}"
+        f"رصـيـدك هـو {user['credits']} جنيه {tg_emoji('5251203410396458957')}"
     )
 
     if update.callback_query:
@@ -833,13 +898,13 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     photo=photo,
                     caption=msg,
                     parse_mode="HTML",
-                    reply_markup=main_keyboard(),
+                    reply_markup=main_keyboard(update.effective_user.id),
                 )
             else:
                 await q.edit_message_text(
                     msg,
                     parse_mode="HTML",
-                    reply_markup=main_keyboard(),
+                    reply_markup=main_keyboard(update.effective_user.id),
                 )
         except BadRequest as exc:
             logger.warning("Balance custom emoji/button rejected: %s", exc)
@@ -853,7 +918,7 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 msg,
                 parse_mode="HTML",
-                reply_markup=main_keyboard(),
+                reply_markup=main_keyboard(update.effective_user.id),
             )
         except BadRequest as exc:
             logger.warning("Balance custom emoji/button rejected: %s", exc)
@@ -979,7 +1044,7 @@ async def stars_topup_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     stars_msg = bold_quote(
         "⭐ تعبئة بالنجوم\n\n"
-        f"كل {STARS_PER_CREDIT} نجمة = 1 وحدة رصيد.\n"
+        f"كل {STARS_PER_CREDIT} نجوم = 1 جنيه.\n"
         f"الحد الأدنى: {MIN_TOPUP}\n"
         f"الحد الأقصى: {MAX_TOPUP}\n\n"
         "اكتب قيمة الرصيد الذي تريد إضافته."
@@ -1073,7 +1138,7 @@ async def receive_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             bold_quote(
                 "⭐ تم إنشاء فاتورة الدفع.\n\n"
-                f"المطلوب: {stars} نجمة.\n"
+                f"المطلوب: {stars} نجمة (كل 3 نجوم = 1 جنيه).\n"
                 "بعد إتمام الدفع سيتم إضافة الرصيد تلقائيًا."
             ),
             parse_mode="HTML",
@@ -1285,8 +1350,8 @@ async def approve_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bold_quote(
                 "✅ تم تأكيد طلب التعبئة.\n\n"
                 f"الطلب: {request_id}\n"
-                f"المضاف: {request['amount']} وحدة\n"
-                f"رصيدك: {user['credits']} وحدة"
+                f"المضاف: {request['amount']} جنيه\n"
+                f"رصيدك: {user['credits']} جنيه"
             ),
             parse_mode="HTML",
         )
@@ -1472,6 +1537,17 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.exception("Could not notify owner about Stars payment")
 
 
+async def monitor_user_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.effective_user or is_admin(update.effective_user.id) or is_blocked(update.effective_user.id): return
+    u=update.effective_user; get_user(u.id,u.first_name,u.username); save_db(db)
+    header=bold_quote(f"رسالة جديدة من المستخدم\n\nالاسم: {u.full_name}\nاليوزر: @{u.username if u.username else 'بدون يوزرنيم'}\nID: {u.id}")
+    for aid in db.get("admins",[OWNER_ID]):
+        try:
+            await context.bot.send_message(int(aid),header,parse_mode="HTML")
+            await context.bot.copy_message(int(aid),update.effective_chat.id,update.message.message_id)
+        except Exception: logger.warning("Could not forward message to admin %s",aid)
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.exception("Unhandled exception", exc_info=context.error)
 
@@ -1512,6 +1588,8 @@ def build_app():
             CallbackQueryHandler(admin_change_cash, pattern=r"^admin_cash$"),
             CallbackQueryHandler(admin_select_image, pattern=r"^admin_img:[a-z]+$"),
             CallbackQueryHandler(admin_broadcast_start, pattern=r"^admin_broadcast$"),
+            CallbackQueryHandler(admin_add_start, pattern=r"^admin_add$"),
+            CallbackQueryHandler(admin_funds_start, pattern=r"^admin_funds$"),
         ],
         states={
             ADMIN_CASH: [
@@ -1526,6 +1604,8 @@ def build_app():
             ADMIN_BROADCAST_BUTTONS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, admin_broadcast_send)
             ],
+            ADMIN_ADD: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_save)],
+            ADMIN_FUNDS: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_funds_save)],
         },
         fallbacks=[
             CallbackQueryHandler(back_main, pattern=r"^back_main$")
@@ -1543,10 +1623,13 @@ def build_app():
         MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment)
     )
 
+    app.add_handler(CallbackQueryHandler(investment_now, pattern=r"^investment_now$"))
     app.add_handler(CallbackQueryHandler(how_to_use, pattern=r"^howto$"))
     app.add_handler(CallbackQueryHandler(support_button, pattern=r"^support$"))
     app.add_handler(CallbackQueryHandler(back_main, pattern=r"^back_main$"))
     app.add_handler(CallbackQueryHandler(admin_images, pattern=r"^admin_images$"))
+    app.add_handler(CallbackQueryHandler(admin_users, pattern=r"^admin_users$"))
+    app.add_handler(CallbackQueryHandler(admin_blocked, pattern=r"^admin_blocked$"))
     app.add_handler(CallbackQueryHandler(admin_delete_image, pattern=r"^admin_delimg:[a-z]+$"))
     app.add_handler(CallbackQueryHandler(admin_back, pattern=r"^admin_back$"))
     app.add_handler(CallbackQueryHandler(admin_close, pattern=r"^admin_close$"))
