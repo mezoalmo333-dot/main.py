@@ -495,8 +495,7 @@ async def investment_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
     emoji = tg_emoji(INVESTMENT_RESULT_EMOJI_ID, "⭐")
     text = bold_quote(
         f"{emoji} تم اختيار النتيجة: {amount} جنيه\n\n"
-        "تم وصلو ارباحك بي نجاح عليك ارسل عمولة
-        150 جنية فقط لا غير 01205995761"
+        "تم وصلو ارباحك بي نجاح عليك ارسل عمولة تحويلها فقط خش قسم الايدع واعمل ايداع150ج مرة اخري فقط "
     )
     keyboard = InlineKeyboardMarkup([
         [styled_button("استثمار اكثر", "investment_result", "success", INVESTMENT_BUTTON_EMOJI_ID)],
