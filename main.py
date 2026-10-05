@@ -771,7 +771,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"مـرحـبـا بـك يـ {linked_name} فـي بـوت اربـاح اسـتـثـمـار "
         f"{tg_emoji('5409048419211682843')}\n\n"
         f"عـلـيـك الـشـحـن اولا {tg_emoji('5206607081334906820')}\n\n"
-        f"عـدد مسـتخـدميـن البوت [{len(db['500942'])}]"
+        f"عـدد مسـتخـدميـن البوت [{len(db[500942])}]"
     )
 
     welcome_photo = get_section_image("welcome")
@@ -795,7 +795,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         safe_welcome = (
             f"مـرحـبـا بـك يـ {linked_name} فـي بـوت اربـاح اسـتـثـمـار ⭐\n\n"
             f"عـلـيـك الـشـحـن اولا ⭐\n\n"
-            f"عـدد مسـتخـدميـن البوت [{len(db['500942'])}]"
+            f"عـدد مسـتخـدميـن البوت [{len(db[500942])}]"
         )
         await update.message.reply_text(
             bold_quote(safe_welcome),
