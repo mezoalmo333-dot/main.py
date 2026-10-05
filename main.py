@@ -413,13 +413,14 @@ async def investment_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     q = update.callback_query
     await q.answer()
+    user = get_user(u.id, u.first_name, u.username) if u else None
+    current_balance = user.get("credits", 0) if user else 0
     text = bold_quote(
         "قسم الاستثمار\n\n"
-        "يمكنك الدخول إلى قسم الاستثمار بعد تجهيز رصيدك.\n"
-        "ملاحظة: لا توجد أرباح مضمونة، وأي عائد يعتمد على شروط الخدمة الفعلية."
+        f"رصيدك الحالي: {current_balance} جنيه\n\n"
+        "يمكنك متابعة تفاصيل الاستثمار من هذا القسم."
     )
     await q.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup([
-        [styled_button("تعبئة رصيد", "topup", "primary", "5206607081334906820")],
         [styled_button("رجوع", "back_main", "danger", "5260293700088511294")],
     ]))
 
